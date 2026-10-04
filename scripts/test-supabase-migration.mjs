@@ -1,0 +1,167 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { PGlite } from "@electric-sql/pglite";
+
+const migration = await readFile(
+  new URL("../supabase/migrations/202610030001_tenant_documents_security.sql", import.meta.url),
+  "utf8",
+);
+const companySeed = await readFile(
+  new URL("../supabase/migrations/202610040001_seed_kilax_dammy_recruit.sql", import.meta.url),
+  "utf8",
+);
+const candidateSeed = await readFile(
+  new URL("../supabase/migrations/202610040002_import_kilax_candidate_roster.sql", import.meta.url),
+  "utf8",
+);
+const companyBrandingMigration = await readFile(
+  new URL("../supabase/migrations/202610040003_company_branding.sql", import.meta.url),
+  "utf8",
+);
+const defaultRolesMigration = await readFile(
+  new URL("../supabase/migrations/202610040004_company_default_roles.sql", import.meta.url),
+  "utf8",
+);
+const database = new PGlite();
+
+const companyA = "10000000-0000-4000-8000-000000000001";
+const companyB = "10000000-0000-4000-8000-000000000002";
+const companyC = "10000000-0000-4000-8000-000000000003";
+const userA = "20000000-0000-4000-8000-000000000001";
+const userB = "20000000-0000-4000-8000-000000000002";
+const roleA = "30000000-0000-4000-8000-000000000001";
+const candidateA = "40000000-0000-4000-8000-000000000001";
+const candidateB = "40000000-0000-4000-8000-000000000002";
+const documentCv = "50000000-0000-4000-8000-000000000001";
+const documentMedical = "50000000-0000-4000-8000-000000000002";
+
+try {
+  await database.exec(`
+    create role anon;
+    create role authenticated;
+    create schema auth;
+    create table auth.users (
+      id uuid primary key,
+      raw_user_meta_data jsonb not null default '{}'::jsonb
+    );
+    create function auth.uid() returns uuid
+      language sql stable
+      as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+  `);
+  await database.exec(migration);
+  await database.exec(companySeed);
+  await database.exec(candidateSeed);
+  await database.exec(companyBrandingMigration);
+  await database.exec(defaultRolesMigration);
+
+  const seededCompany = await database.query(
+    "select id, name, status from public.companies where id = $1",
+    ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
+  );
+  assert.deepEqual(seededCompany.rows, [{
+    id: "7b4f08da-81a8-4f4b-9f74-31c326dae701",
+    name: "Kilax Dammy Recruit",
+    status: "trial",
+  }]);
+  const companyLogoColumn = await database.query(
+    "select logo_url from public.companies where id = $1",
+    ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
+  );
+  assert.equal(companyLogoColumn.rows[0].logo_url, "");
+  const seededRoles = await database.query(
+    "select name, description from public.company_roles where company_id = $1 order by name",
+    ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
+  );
+  assert.ok(seededRoles.rows.some((role) => role.name === "CEO" && role.description.length > 0));
+  assert.ok(seededRoles.rows.some((role) => role.name === "Documents Officer"));
+  const financeUserPermissions = await database.query(
+    `select permission.code from public.role_permissions role_permission
+      join public.company_roles role on role.id = role_permission.role_id
+      join public.permissions permission on permission.code = role_permission.permission_code
+      where role.company_id = $1 and role.name = 'Finance User' order by permission.code`,
+    ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
+  );
+  assert.deepEqual(financeUserPermissions.rows.map((permission) => permission.code), ["finance.create", "finance.view"]);
+
+  await database.exec(`insert into public.companies (id, name) values ('${companyC}', 'New Company')`);
+  const futureCompanyRoles = await database.query(
+    "select count(*)::integer as count from public.company_roles where company_id = $1",
+    [companyC],
+  );
+  assert.equal(futureCompanyRoles.rows[0].count, 10);
+  const seededCandidates = await database.query(
+    "select count(*)::integer as count from public.candidates where company_id = $1",
+    ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
+  );
+  assert.equal(seededCandidates.rows[0].count, 17);
+  const seededPassports = await database.query(
+    "select count(*)::integer as count from public.candidate_passports where company_id = $1",
+    ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
+  );
+  assert.equal(seededPassports.rows[0].count, 17);
+
+  await database.exec(`
+    insert into auth.users (id) values ('${userA}'), ('${userB}');
+    insert into public.companies (id, name) values
+      ('${companyA}', 'Company A'), ('${companyB}', 'Company B');
+    insert into public.company_roles (id, company_id, name) values
+      ('${roleA}', '${companyA}', 'Recruiter');
+    insert into public.company_memberships (company_id, user_id, role_id) values
+      ('${companyA}', '${userA}', '${roleA}');
+    insert into public.role_permissions (role_id, company_id, permission_code) values
+      ('${roleA}', '${companyA}', 'candidates.view'),
+      ('${roleA}', '${companyA}', 'candidates.create'),
+      ('${roleA}', '${companyA}', 'documents.view'),
+      ('${roleA}', '${companyA}', 'documents.download');
+    insert into public.candidates (id, company_id, file_number, first_name, last_name) values
+      ('${candidateA}', '${companyA}', 'A-001', 'Candidate', 'A'),
+      ('${candidateB}', '${companyB}', 'B-001', 'Candidate', 'B');
+    insert into public.candidate_documents (
+      id, company_id, candidate_id, file_name, original_file_name, file_type,
+      mime_type, file_size, storage_path, document_type, uploaded_by
+    ) values
+      ('${documentCv}', '${companyA}', '${candidateA}', 'cv.pdf', 'cv.pdf', 'pdf',
+        'application/pdf', 100, 'company/${companyA}/candidates/${candidateA}/cv/60000000-0000-4000-8000-000000000001.pdf', 'cv', '${userA}'),
+      ('${documentMedical}', '${companyA}', '${candidateA}', 'medical.pdf', 'medical.pdf', 'pdf',
+        'application/pdf', 100, 'company/${companyA}/candidates/${candidateA}/medical/60000000-0000-4000-8000-000000000002.pdf', 'medical', '${userA}');
+  `);
+
+  await database.exec("set role authenticated");
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+
+  const visibleCandidates = await database.query("select id from public.candidates order by id");
+  assert.deepEqual(visibleCandidates.rows.map((row) => row.id), [candidateA]);
+
+  const visibleDocuments = await database.query("select id from public.candidate_documents order by id");
+  assert.deepEqual(visibleDocuments.rows.map((row) => row.id), [documentCv]);
+
+  const medicalDownload = await database.query(
+    "select public.can_access_candidate_document($1, 'medical', 'download') as allowed",
+    [companyA],
+  );
+  assert.equal(medicalDownload.rows[0].allowed, false);
+
+  await database.exec("reset role");
+  await database.exec(`
+    insert into public.role_permissions (role_id, company_id, permission_code) values
+      ('${roleA}', '${companyA}', 'medical_documents.view'),
+      ('${roleA}', '${companyA}', 'documents.edit');
+  `);
+  await database.exec("set role authenticated");
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+
+  await assert.rejects(
+    database.query("update public.candidate_documents set document_type = 'other' where id = $1", [documentMedical]),
+    /immutable/,
+  );
+  await assert.rejects(
+    database.query(
+      "insert into public.candidates (company_id, file_number, first_name, last_name) values ($1, 'B-002', 'Other', 'Tenant')",
+      [companyB],
+    ),
+  );
+
+  console.log("Supabase migration and tenant RLS checks passed.");
+} finally {
+  await database.close();
+}

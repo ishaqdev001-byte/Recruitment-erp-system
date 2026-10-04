@@ -1,0 +1,13 @@
+node_modules/
+.next/
+out/
+coverage/
+.cache/
+.env*
+*.tsbuildinfo
+*-debug.log*
+logs/
+*.log
+.claude-replay.*
+.tmp-*
+

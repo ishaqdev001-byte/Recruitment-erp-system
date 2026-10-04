@@ -23,7 +23,7 @@ Run `pnpm dev` to start the development server, `pnpm build` to create a product
 
 ## Supabase user management
 
-Apply `supabase/migrations/202610040003_company_branding.sql` before starting the updated app. The company user invitation and role-management API also requires `SUPABASE_SERVICE_ROLE_KEY` in the server environment; keep this key private and never expose it through a `NEXT_PUBLIC_` variable.
+Apply all pending migrations through `supabase/migrations/202610040007_candidate_profile_details.sql` before starting the updated app. The company user invitation and role-management API also requires `SUPABASE_SERVICE_ROLE_KEY` in the server environment; keep this key private and never expose it through a `NEXT_PUBLIC_` variable.
 
 ## Styling
 

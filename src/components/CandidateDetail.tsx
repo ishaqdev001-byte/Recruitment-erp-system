@@ -5,7 +5,7 @@ import type { Candidate } from "./Candidates";
 interface Props {
   candidate: Candidate;
   isNew: boolean;
-  onSave: (c: Candidate) => void;
+  onSave: (c: Candidate) => void | Promise<void>;
   onBack: () => void;
 }
 
@@ -119,9 +119,23 @@ const activityLog = [
 export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Props) {
   const [form, setForm] = useState<Candidate>({ ...candidate });
   const [activeTab, setActiveTab] = useState<Tab>("Personal");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   const set = (key: keyof Candidate, val: string | string[] | number) =>
     setForm((f) => ({ ...f, [key]: val }));
+
+  const saveCandidate = async () => {
+    setSaving(true);
+    setSaveError("");
+    try {
+      await onSave(form);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to save candidate.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -160,6 +174,7 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
       <div className="flex-1 overflow-auto p-6">
         {activeTab === "Personal" && (
           <div className="responsive-grid-4 grid grid-cols-4 gap-4">
+            <Field label="File Number" value={form.fileNumber} onChange={(v) => set("fileNumber", v)} required />
             <Field label="First Name" value={form.firstName} onChange={(v) => set("firstName", v)} required />
             <Field label="Last Name" value={form.lastName} onChange={(v) => set("lastName", v)} required />
             <Field label="Other Names" value={form.otherNames} onChange={(v) => set("otherNames", v)} />
@@ -176,7 +191,7 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
               options={["Male", "Female"]} />
             <SelectField label="Religion" value={form.religion} onChange={(v) => set("religion", v)} required
               options={["Christian", "Muslim", "Hindu", "Other"]} />
-            <div /> {/* spacer */}
+            <Field label="Nationality" value={form.nationality ?? ""} onChange={(v) => set("nationality", v)} />
 
             <SelectField label="Abroad Status" value={form.abroadStatus} onChange={(v) => set("abroadStatus", v)} required
               options={["Yes", "No"]} />
@@ -266,27 +281,27 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
         {activeTab === "Education & Skills" && (
           <div className="responsive-grid-4 grid grid-cols-4 gap-4">
             <SectionHeader title="Education" />
-            <div className="col-span-2"><Field label="Highest Qualification" value="" onChange={() => {}} placeholder="e.g. Bachelor's Degree" /></div>
-            <div className="col-span-2"><Field label="Institution" value="" onChange={() => {}} placeholder="e.g. Makerere University" /></div>
-            <Field label="Year Completed" value="" onChange={() => {}} placeholder="e.g. 2015" />
-            <div className="col-span-3"><Field label="Field of Study" value="" onChange={() => {}} placeholder="e.g. Business Administration" /></div>
+            <div className="col-span-2"><Field label="Highest Qualification" value={form.educationQualification ?? ""} onChange={(v) => set("educationQualification", v)} placeholder="e.g. Bachelor's Degree" /></div>
+            <div className="col-span-2"><Field label="Institution" value={form.educationInstitution ?? ""} onChange={(v) => set("educationInstitution", v)} placeholder="e.g. Makerere University" /></div>
+            <Field label="Year Completed" value={form.educationYearCompleted ?? ""} onChange={(v) => set("educationYearCompleted", v)} placeholder="e.g. 2015" />
+            <div className="col-span-3"><Field label="Field of Study" value={form.educationField ?? ""} onChange={(v) => set("educationField", v)} placeholder="e.g. Business Administration" /></div>
 
             <SectionHeader title="Employment History" />
-            <div className="col-span-2"><Field label="Last Employer" value="" onChange={() => {}} placeholder="Company name" /></div>
-            <div className="col-span-2"><Field label="Job Title" value="" onChange={() => {}} placeholder="e.g. Administrator" /></div>
-            <Field label="From" value="" onChange={() => {}} type="date" />
-            <Field label="To" value="" onChange={() => {}} type="date" />
-            <div className="col-span-4"><Field label="Duties / Description" value="" onChange={() => {}} placeholder="Brief description of responsibilities" /></div>
+            <div className="col-span-2"><Field label="Last Employer" value={form.lastEmployer ?? ""} onChange={(v) => set("lastEmployer", v)} placeholder="Company name" /></div>
+            <div className="col-span-2"><Field label="Job Title" value={form.previousJobTitle ?? ""} onChange={(v) => set("previousJobTitle", v)} placeholder="e.g. Administrator" /></div>
+            <Field label="From" value={form.employmentFrom ?? ""} onChange={(v) => set("employmentFrom", v)} type="date" />
+            <Field label="To" value={form.employmentTo ?? ""} onChange={(v) => set("employmentTo", v)} type="date" />
+            <div className="col-span-4"><Field label="Duties / Description" value={form.employmentDuties ?? ""} onChange={(v) => set("employmentDuties", v)} placeholder="Brief description of responsibilities" /></div>
 
             <SectionHeader title="Skills & Languages" />
-            <div className="col-span-2"><Field label="Key Skills" value="" onChange={() => {}} placeholder="e.g. Cooking, Cleaning, Childcare" /></div>
-            <div className="col-span-2"><Field label="Languages Spoken" value="" onChange={() => {}} placeholder="e.g. English, Luganda, Arabic" /></div>
-            <div className="col-span-4"><Field label="Certifications" value="" onChange={() => {}} placeholder="e.g. Food Handlers Certificate, First Aid" /></div>
+            <div className="col-span-2"><Field label="Key Skills" value={form.keySkills ?? ""} onChange={(v) => set("keySkills", v)} placeholder="e.g. Cooking, Cleaning, Childcare" /></div>
+            <div className="col-span-2"><Field label="Languages Spoken" value={form.languagesSpoken ?? ""} onChange={(v) => set("languagesSpoken", v)} placeholder="e.g. English, Luganda, Arabic" /></div>
+            <div className="col-span-4"><Field label="Certifications" value={form.certifications ?? ""} onChange={(v) => set("certifications", v)} placeholder="e.g. Food Handlers Certificate, First Aid" /></div>
 
             <SectionHeader title="Notes" />
             <div className="col-span-4">
               <label className="text-xs font-600 block mb-1" style={{ color: "var(--muted-foreground)" }}>Recruiter Notes</label>
-              <textarea rows={4} placeholder="Internal notes about this candidate..." className="w-full px-3 py-2 text-sm rounded border outline-none resize-y"
+              <textarea rows={4} value={form.recruiterNotes ?? ""} onChange={(event) => set("recruiterNotes", event.target.value)} placeholder="Internal notes about this candidate..." className="w-full px-3 py-2 text-sm rounded border outline-none resize-y"
                 style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} />
             </div>
           </div>
@@ -429,14 +444,16 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
             Cancel
           </button>
           <button
-            onClick={() => onSave(form)}
-            className="px-6 py-2 text-sm font-700 rounded"
+            onClick={() => void saveCandidate()}
+            disabled={saving}
+            className="px-6 py-2 text-sm font-700 rounded disabled:opacity-50"
             style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
           >
-            {isNew ? "Create Candidate" : "Save Changes"}
+            {saving ? "Saving…" : isNew ? "Register Candidate" : "Save Changes"}
           </button>
         </div>
       </div>
+      {saveError ? <p role="alert" className="border-t px-6 py-2 text-sm text-red-600" style={{ borderColor: "var(--border)" }}>{saveError}</p> : null}
     </div>
   );
 }

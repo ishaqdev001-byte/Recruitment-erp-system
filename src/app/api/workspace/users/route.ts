@@ -47,13 +47,14 @@ export async function GET() {
     const admin = createAdminClient();
     if (!admin) return NextResponse.json({ error: "Set SUPABASE_SERVICE_ROLE_KEY in .env.local and restart the Next.js server to enable user management." }, { status: 503, headers: responseHeaders });
 
-    const [rolesResult, membershipsResult, permissionsResult] = await Promise.all([
+    const [rolesResult, membershipsResult, permissionsResult, companyResult] = await Promise.all([
       admin.from("company_roles").select("id, name, description, created_at").eq("company_id", access.companyId).order("name"),
       admin.from("company_memberships").select("user_id, status, role_id, role:company_roles(name)").eq("company_id", access.companyId).order("created_at"),
       admin.from("permissions").select("code, description").order("code"),
+      admin.from("companies").select("primary_admin_user_id").eq("id", access.companyId).single(),
     ]);
-    if (rolesResult.error || membershipsResult.error || permissionsResult.error) {
-      console.error("Workspace user management query failed", rolesResult.error ?? membershipsResult.error ?? permissionsResult.error);
+    if (rolesResult.error || membershipsResult.error || permissionsResult.error || companyResult.error) {
+      console.error("Workspace user management query failed", rolesResult.error ?? membershipsResult.error ?? permissionsResult.error ?? companyResult.error);
       return NextResponse.json({ error: "Unable to load company users and roles." }, { status: 500, headers: responseHeaders });
     }
 
@@ -84,6 +85,7 @@ export async function GET() {
         roleId: membership.role_id,
         role: role ?? roleNameById.get(membership.role_id) ?? "Unknown role",
         status: membership.status === "disabled" ? "disabled" : authUser?.confirmed_at ? membership.status : "invited",
+        isPrimaryAdmin: membership.user_id === companyResult.data.primary_admin_user_id,
       };
     });
 
@@ -121,9 +123,11 @@ export async function POST(request: Request) {
         .eq("user_id", userId)
         .maybeSingle();
       if (membershipError || !membership) return NextResponse.json({ error: "User is not a member of this company." }, { status: 404, headers: responseHeaders });
+      const { data: company, error: companyError } = await admin.from("companies").select("primary_admin_user_id").eq("id", access.companyId).single();
+      if (companyError) return NextResponse.json({ error: "Unable to verify protected company users." }, { status: 500, headers: responseHeaders });
       const targetRole = membership.role as unknown as { name: string } | { name: string }[] | null;
       const targetRoleName = Array.isArray(targetRole) ? targetRole[0]?.name : targetRole?.name;
-      if (targetRoleName === "Company Owner / Primary Administrator" || targetRoleName === "Primary Administrator") {
+      if (userId === company.primary_admin_user_id || targetRoleName === "Company Owner / Primary Administrator" || targetRoleName === "Primary Administrator") {
         return NextResponse.json({ error: "The primary company administrator account is protected from user-management actions." }, { status: 403, headers: responseHeaders });
       }
 
@@ -214,8 +218,11 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Enter a valid name, email, and role." }, { status: 400, headers: responseHeaders });
       }
 
-      const { data: role, error: roleError } = await admin.from("company_roles").select("id").eq("id", roleId).eq("company_id", access.companyId).maybeSingle();
+      const { data: role, error: roleError } = await admin.from("company_roles").select("id, name").eq("id", roleId).eq("company_id", access.companyId).maybeSingle();
       if (roleError || !role) return NextResponse.json({ error: "Selected role does not belong to this company." }, { status: 400, headers: responseHeaders });
+      if (role.name === "Company Owner / Primary Administrator" || role.name === "Primary Administrator") {
+        return NextResponse.json({ error: "The primary administrator role is reserved for the protected company user." }, { status: 400, headers: responseHeaders });
+      }
 
       const { data: inviteData, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, { data: { full_name: name } });
       if (inviteError || !inviteData.user) {

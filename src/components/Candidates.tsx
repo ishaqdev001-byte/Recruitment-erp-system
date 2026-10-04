@@ -73,6 +73,20 @@ export interface Candidate {
   branch: string;
   verification: string;
   photo: string;
+  nationality?: string;
+  educationQualification?: string;
+  educationInstitution?: string;
+  educationYearCompleted?: string;
+  educationField?: string;
+  lastEmployer?: string;
+  previousJobTitle?: string;
+  employmentFrom?: string;
+  employmentTo?: string;
+  employmentDuties?: string;
+  keySkills?: string;
+  languagesSpoken?: string;
+  certifications?: string;
+  recruiterNotes?: string;
 }
 
 const stageColor: Record<string, string> = {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 
-type UserRecord = { id: string; name: string; email: string; roleId: string; role: string; status: string };
+type UserRecord = { id: string; name: string; email: string; roleId: string; role: string; status: string; isPrimaryAdmin: boolean };
 type RoleRecord = { id: string; name: string; description: string; created_at: string };
 type PermissionRecord = { code: string; description: string };
 type RolePermissionRecord = { role_id: string; permission_code: string };
@@ -175,16 +175,16 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
                   <tr key={user.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                     <td className="px-4 py-3 font-600" style={{ color: "var(--foreground)" }}>{user.name}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{user.email}</td>
-                    <td className="px-4 py-3">{user.role === "Company Owner / Primary Administrator" || user.role === "Primary Administrator" ? <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{user.role}</span> : <select aria-label={`Role for ${user.name}`} value={user.roleId} disabled={user.id === currentUserId || userActionPending === user.id} onChange={(event) => void manageUser(user, "change-role", event.target.value)} className="max-w-56 rounded border px-2 py-1 text-xs disabled:opacity-50" style={fieldStyle}>{data.roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select>}</td>
+                    <td className="px-4 py-3">{user.isPrimaryAdmin ? <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{user.role}</span> : <select aria-label={`Role for ${user.name}`} value={user.roleId} disabled={user.id === currentUserId || userActionPending === user.id} onChange={(event) => void manageUser(user, "change-role", event.target.value)} className="max-w-56 rounded border px-2 py-1 text-xs disabled:opacity-50" style={fieldStyle}>{data.roles.filter((role) => role.name !== "Company Owner / Primary Administrator" && role.name !== "Primary Administrator").map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select>}</td>
                     <td className="px-4 py-3"><span className="rounded px-2 py-1 text-xs font-600" style={{ color: user.status === "active" ? "#10b981" : user.status === "disabled" ? "#ef4444" : "#f59e0b", background: user.status === "active" ? "#10b98120" : user.status === "disabled" ? "#ef444420" : "#f59e0b20" }}>{user.status === "active" ? "Active" : user.status === "disabled" ? "Deactivated" : "Invited"}</span></td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        {user.role === "Company Owner / Primary Administrator" || user.role === "Primary Administrator" ? null : user.id === currentUserId ? <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Current user</span> : user.status === "invited" ? (
+                        {user.isPrimaryAdmin ? <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Protected company user</span> : user.id === currentUserId ? <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Current user</span> : user.status === "invited" ? (
                           <button type="button" disabled={userActionPending === user.id} onClick={() => void manageUser(user, "revoke-invite")} className="rounded border px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Revoke invite</button>
                         ) : (
                           <button type="button" disabled={userActionPending === user.id} onClick={() => void manageUser(user, "set-status")} className="rounded border px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: "var(--border)", color: user.status === "disabled" ? "#10b981" : "#f59e0b" }}>{user.status === "disabled" ? "Activate" : "Deactivate"}</button>
                         )}
-                        <button type="button" disabled={userActionPending === user.id} onClick={() => void manageUser(user, "delete-user")} className="rounded border px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: "#ef444440", color: "#ef4444" }}>Delete</button>
+                        {!user.isPrimaryAdmin && user.id !== currentUserId ? <button type="button" disabled={userActionPending === user.id} onClick={() => void manageUser(user, "delete-user")} className="rounded border px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: "#ef444440", color: "#ef4444" }}>Delete</button> : null}
                       </div>
                     </td>
                   </tr>

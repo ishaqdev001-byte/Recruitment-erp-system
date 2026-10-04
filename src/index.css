@@ -40,20 +40,20 @@
 }
 
 [data-theme='light'] {
-  --background: #f4f7fb;
+  --background: #f8fafc;
   --foreground: #0f172a;
   --card: #ffffff;
   --card-foreground: #0f172a;
-  --primary: #f59e0b;
-  --primary-foreground: #101828;
-  --secondary: #edf2fa;
-  --secondary-foreground: #5b6475;
-  --muted: #e8edf7;
-  --muted-foreground: #64748b;
-  --accent: #f59e0b;
-  --accent-foreground: #101828;
-  --border: #dfe7f3;
-  --ring: #f59e0b;
+  --primary: #b45309;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #334155;
+  --muted: #e2e8f0;
+  --muted-foreground: #475569;
+  --accent: #c2410c;
+  --accent-foreground: #ffffff;
+  --border: #cbd5e1;
+  --ring: #b45309;
 }
 
 [data-density='compact'] {

@@ -22,6 +22,18 @@ const defaultRolesMigration = await readFile(
   new URL("../supabase/migrations/202610040004_company_default_roles.sql", import.meta.url),
   "utf8",
 );
+const primaryUserProtectionMigration = await readFile(
+  new URL("../supabase/migrations/202610040005_protect_primary_company_user.sql", import.meta.url),
+  "utf8",
+);
+const documentEditorMigration = await readFile(
+  new URL("../supabase/migrations/202610040006_track_document_editor.sql", import.meta.url),
+  "utf8",
+);
+const candidateProfileMigration = await readFile(
+  new URL("../supabase/migrations/202610040007_candidate_profile_details.sql", import.meta.url),
+  "utf8",
+);
 const database = new PGlite();
 
 const companyA = "10000000-0000-4000-8000-000000000001";
@@ -29,6 +41,7 @@ const companyB = "10000000-0000-4000-8000-000000000002";
 const companyC = "10000000-0000-4000-8000-000000000003";
 const userA = "20000000-0000-4000-8000-000000000001";
 const userB = "20000000-0000-4000-8000-000000000002";
+const userC = "20000000-0000-4000-8000-000000000003";
 const roleA = "30000000-0000-4000-8000-000000000001";
 const candidateA = "40000000-0000-4000-8000-000000000001";
 const candidateB = "40000000-0000-4000-8000-000000000002";
@@ -53,6 +66,9 @@ try {
   await database.exec(candidateSeed);
   await database.exec(companyBrandingMigration);
   await database.exec(defaultRolesMigration);
+  await database.exec(primaryUserProtectionMigration);
+  await database.exec(documentEditorMigration);
+  await database.exec(candidateProfileMigration);
 
   const seededCompany = await database.query(
     "select id, name, status from public.companies where id = $1",
@@ -89,11 +105,38 @@ try {
     [companyC],
   );
   assert.equal(futureCompanyRoles.rows[0].count, 10);
+  const primaryRole = await database.query(
+    "select id from public.company_roles where company_id = $1 and name = 'Company Owner / Primary Administrator'",
+    [companyC],
+  );
+  await database.exec(`insert into auth.users (id) values ('${userC}')`);
+  await database.query(
+    "insert into public.company_memberships (company_id, user_id, role_id) values ($1, $2, $3)",
+    [companyC, userC, primaryRole.rows[0].id],
+  );
+  const protectedPrimary = await database.query(
+    "select primary_admin_user_id from public.companies where id = $1",
+    [companyC],
+  );
+  assert.equal(protectedPrimary.rows[0].primary_admin_user_id, userC);
+  await assert.rejects(
+    database.query("update public.company_memberships set status = 'disabled' where company_id = $1 and user_id = $2", [companyC, userC]),
+    /primary company administrator membership is protected/,
+  );
+  await assert.rejects(
+    database.query("delete from public.company_memberships where company_id = $1 and user_id = $2", [companyC, userC]),
+    /primary company administrator membership is protected/,
+  );
   const seededCandidates = await database.query(
     "select count(*)::integer as count from public.candidates where company_id = $1",
     ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
   );
   assert.equal(seededCandidates.rows[0].count, 17);
+  const candidateDetails = await database.query(
+    "select details from public.candidates where company_id = $1 limit 1",
+    ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
+  );
+  assert.deepEqual(candidateDetails.rows[0].details, {});
   const seededPassports = await database.query(
     "select count(*)::integer as count from public.candidate_passports where company_id = $1",
     ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
@@ -125,6 +168,11 @@ try {
       ('${documentMedical}', '${companyA}', '${candidateA}', 'medical.pdf', 'medical.pdf', 'pdf',
         'application/pdf', 100, 'company/${companyA}/candidates/${candidateA}/medical/60000000-0000-4000-8000-000000000002.pdf', 'medical', '${userA}');
   `);
+  const originalDocumentEditor = await database.query(
+    "select updated_by from public.candidate_documents where id = $1",
+    [documentCv],
+  );
+  assert.equal(originalDocumentEditor.rows[0].updated_by, userA);
 
   await database.exec("set role authenticated");
   await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
@@ -142,6 +190,15 @@ try {
   assert.equal(medicalDownload.rows[0].allowed, false);
 
   await database.exec("reset role");
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userB]);
+  await database.query("update public.candidate_documents set notes = 'Updated by another company user' where id = $1", [documentCv]);
+  const changedDocumentEditor = await database.query(
+    "select updated_by from public.candidate_documents where id = $1",
+    [documentCv],
+  );
+  assert.equal(changedDocumentEditor.rows[0].updated_by, userB);
+  await database.exec("reset role");
+
   await database.exec(`
     insert into public.role_permissions (role_id, company_id, permission_code) values
       ('${roleA}', '${companyA}', 'medical_documents.view'),

@@ -1,3 +1,4 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { createDocumentStoragePath, DocumentInputError, isDocumentType, isUuid, validateDocumentUpload } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -24,7 +25,7 @@ export async function GET(_request: Request, context: RouteContext<"/api/candida
 
     const { data, error } = await supabase
       .from("candidate_documents")
-      .select("id, file_name, original_file_name, file_type, mime_type, file_size, document_type, uploaded_by, created_at, updated_at, expires_at, notes, status")
+      .select("id, file_name, original_file_name, file_type, mime_type, file_size, document_type, uploaded_by, updated_by, created_at, updated_at, expires_at, notes, status")
       .eq("candidate_id", candidateId)
       .order("created_at", { ascending: false });
 
@@ -32,7 +33,25 @@ export async function GET(_request: Request, context: RouteContext<"/api/candida
       console.error("Candidate document listing failed", error);
       return privateJson({ error: "Unable to load documents." }, 500);
     }
-    return privateJson({ documents: data });
+    const actorIds = [...new Set((data ?? []).flatMap((document) => [document.uploaded_by, document.updated_by].filter((id): id is string => Boolean(id))))];
+    const actorNames = new Map<string, string>();
+    if (user.user_metadata?.full_name) actorNames.set(user.id, String(user.user_metadata.full_name));
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (actorIds.length && supabaseUrl && serviceRoleKey) {
+      const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      const { data: profiles, error: profilesError } = await admin.from("profiles").select("id, display_name").in("id", actorIds);
+      if (profilesError) console.error("Document actor names could not be loaded", profilesError);
+      for (const profile of profiles ?? []) {
+        if (profile.display_name) actorNames.set(profile.id, profile.display_name);
+      }
+    }
+
+    return privateJson({ documents: (data ?? []).map((document) => ({
+      ...document,
+      uploaded_by_name: actorNames.get(document.uploaded_by) ?? "Company user",
+      updated_by_name: actorNames.get(document.updated_by ?? document.uploaded_by) ?? "Company user",
+    })) });
   } catch (error) {
     console.error("Candidate document listing failed", error);
     return privateJson({ error: "Document service is unavailable." }, 503);
@@ -85,10 +104,11 @@ export async function POST(request: Request, context: RouteContext<"/api/candida
         storage_path: uploadedStoragePath,
         document_type: documentType,
         uploaded_by: user.id,
+        updated_by: user.id,
         expires_at: expiresAt || null,
         notes: typeof notes === "string" ? notes : "",
       })
-      .select("id, file_name, original_file_name, file_type, mime_type, file_size, document_type, uploaded_by, created_at, updated_at, expires_at, notes, status")
+      .select("id, file_name, original_file_name, file_type, mime_type, file_size, document_type, uploaded_by, updated_by, created_at, updated_at, expires_at, notes, status")
       .single();
 
     if (error) {

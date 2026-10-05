@@ -34,6 +34,18 @@ const candidateProfileMigration = await readFile(
   new URL("../supabase/migrations/202610040007_candidate_profile_details.sql", import.meta.url),
   "utf8",
 );
+const recruitmentAgentsMigration = await readFile(
+  new URL("../supabase/migrations/202610040008_recruitment_agents.sql", import.meta.url),
+  "utf8",
+);
+const employersMigration = await readFile(
+  new URL("../supabase/migrations/202610040009_employers.sql", import.meta.url),
+  "utf8",
+);
+const projectsMigration = await readFile(
+  new URL("../supabase/migrations/202610040010_projects.sql", import.meta.url),
+  "utf8",
+);
 const database = new PGlite();
 
 const companyA = "10000000-0000-4000-8000-000000000001";
@@ -43,6 +55,7 @@ const userA = "20000000-0000-4000-8000-000000000001";
 const userB = "20000000-0000-4000-8000-000000000002";
 const userC = "20000000-0000-4000-8000-000000000003";
 const roleA = "30000000-0000-4000-8000-000000000001";
+const statusRole = "30000000-0000-4000-8000-000000000002";
 const candidateA = "40000000-0000-4000-8000-000000000001";
 const candidateB = "40000000-0000-4000-8000-000000000002";
 const documentCv = "50000000-0000-4000-8000-000000000001";
@@ -69,6 +82,11 @@ try {
   await database.exec(primaryUserProtectionMigration);
   await database.exec(documentEditorMigration);
   await database.exec(candidateProfileMigration);
+  await database.exec(recruitmentAgentsMigration);
+  await database.exec(recruitmentAgentsMigration);
+  await database.exec(employersMigration);
+  await database.exec(employersMigration);
+  await database.exec(projectsMigration);
 
   const seededCompany = await database.query(
     "select id, name, status from public.companies where id = $1",
@@ -104,11 +122,22 @@ try {
     "select count(*)::integer as count from public.company_roles where company_id = $1",
     [companyC],
   );
-  assert.equal(futureCompanyRoles.rows[0].count, 10);
+  assert.equal(futureCompanyRoles.rows[0].count, 11);
   const primaryRole = await database.query(
     "select id from public.company_roles where company_id = $1 and name = 'Company Owner / Primary Administrator'",
     [companyC],
   );
+  const futureProjectPermissions = await database.query(
+    `select role.name, role_permission.permission_code
+      from public.role_permissions role_permission
+      join public.company_roles role on role.id = role_permission.role_id
+      where role.company_id = $1 and role.name in ('Company Owner / Primary Administrator', 'Branch Manager')
+        and role_permission.permission_code like 'projects.%'
+      order by role.name, role_permission.permission_code`,
+    [companyC],
+  );
+  assert.ok(futureProjectPermissions.rows.some((permission) => permission.name === "Company Owner / Primary Administrator" && permission.permission_code === "projects.status"));
+  assert.ok(!futureProjectPermissions.rows.some((permission) => permission.name === "Branch Manager" && permission.permission_code === "projects.status"));
   await database.exec(`insert into auth.users (id) values ('${userC}')`);
   await database.query(
     "insert into public.company_memberships (company_id, user_id, role_id) values ($1, $2, $3)",
@@ -148,14 +177,26 @@ try {
     insert into public.companies (id, name) values
       ('${companyA}', 'Company A'), ('${companyB}', 'Company B');
     insert into public.company_roles (id, company_id, name) values
-      ('${roleA}', '${companyA}', 'Recruiter');
+      ('${roleA}', '${companyA}', 'Recruiter'),
+      ('${statusRole}', '${companyA}', 'Status Manager');
     insert into public.company_memberships (company_id, user_id, role_id) values
-      ('${companyA}', '${userA}', '${roleA}');
+      ('${companyA}', '${userA}', '${roleA}'),
+      ('${companyA}', '${userB}', '${statusRole}');
     insert into public.role_permissions (role_id, company_id, permission_code) values
       ('${roleA}', '${companyA}', 'candidates.view'),
       ('${roleA}', '${companyA}', 'candidates.create'),
       ('${roleA}', '${companyA}', 'documents.view'),
       ('${roleA}', '${companyA}', 'documents.download');
+    insert into public.role_permissions (role_id, company_id, permission_code) values
+      ('${roleA}', '${companyA}', 'employers.view'),
+      ('${roleA}', '${companyA}', 'employers.create'),
+      ('${roleA}', '${companyA}', 'projects.view'),
+      ('${roleA}', '${companyA}', 'projects.create'),
+      ('${roleA}', '${companyA}', 'projects.edit'),
+      ('${roleA}', '${companyA}', 'projects.delete'),
+      ('${roleA}', '${companyA}', 'projects.status'),
+      ('${statusRole}', '${companyA}', 'projects.view'),
+      ('${statusRole}', '${companyA}', 'projects.status');
     insert into public.candidates (id, company_id, file_number, first_name, last_name) values
       ('${candidateA}', '${companyA}', 'A-001', 'Candidate', 'A'),
       ('${candidateB}', '${companyB}', 'B-001', 'Candidate', 'B');
@@ -179,6 +220,44 @@ try {
 
   const visibleCandidates = await database.query("select id from public.candidates order by id");
   assert.deepEqual(visibleCandidates.rows.map((row) => row.id), [candidateA]);
+
+  await database.query(
+    `insert into public.employers (company_id, created_by, company_name, contact_persons, phone_numbers, email_addresses, countries)
+      values ($1, $2, 'Company A Employer', array['Contact'], array['+1 555 0100'], array['contact@example.com'], array['Uganda'])`,
+    [companyA, userA],
+  );
+  const visibleEmployers = await database.query("select company_name from public.employers order by company_name");
+  assert.deepEqual(visibleEmployers.rows.map((row) => row.company_name), ["Company A Employer"]);
+  const contractor = await database.query("select id from public.employers where company_id = $1", [companyA]);
+  const projectId = "70000000-0000-4000-8000-000000000001";
+  await database.query(
+    `insert into public.projects (id, company_id, contractor_id, contractor_name, project_name, country, salary_range, age_bracket, total_demand, interview_mode, created_by)
+      values ($1, $2, $3, 'Company A Employer', 'Project A', 'Uganda', 'UGX 1,000,000', '21-35', 10, 'Online', $4)`,
+    [projectId, companyA, contractor.rows[0].id, userA],
+  );
+  const visibleProjects = await database.query("select id from public.projects order by id");
+  assert.deepEqual(visibleProjects.rows.map((row) => row.id), [projectId]);
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userB]);
+  await database.query("update public.projects set status = 'inactive' where id = $1", [projectId]);
+  await assert.rejects(
+    database.query("update public.projects set project_name = 'Unauthorized Edit' where id = $1", [projectId]),
+    /status-only change/,
+  );
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+  await assert.rejects(
+    database.query(
+      `insert into public.projects (company_id, contractor_id, contractor_name, project_name, country, salary_range, age_bracket, total_demand, interview_mode, created_by)
+        values ($1, $2, 'Company A Employer', 'Cross-tenant Project', 'Uganda', 'UGX 1,000,000', '21-35', 10, 'Online', $3)`,
+      [companyB, contractor.rows[0].id, userA],
+    ),
+  );
+  await assert.rejects(
+    database.query(
+      `insert into public.employers (company_id, created_by, company_name, contact_persons, phone_numbers, email_addresses, countries)
+        values ($1, $2, 'Company B Employer', array['Contact'], array['+1 555 0100'], array['contact@example.com'], array['Uganda'])`,
+      [companyB, userA],
+    ),
+  );
 
   const visibleDocuments = await database.query("select id from public.candidate_documents order by id");
   assert.deepEqual(visibleDocuments.rows.map((row) => row.id), [documentCv]);

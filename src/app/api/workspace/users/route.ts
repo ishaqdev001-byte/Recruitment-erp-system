@@ -60,7 +60,7 @@ export async function GET() {
 
     const userIds = (membershipsResult.data ?? []).map((membership) => membership.user_id);
     const [{ data: profiles }, { data: authUsers, error: authUsersError }, { data: rolePermissions, error: rolePermissionsError }] = await Promise.all([
-      userIds.length ? admin.from("profiles").select("id, display_name").in("id", userIds) : Promise.resolve({ data: [] as { id: string; display_name: string }[] }),
+      userIds.length ? admin.from("profiles").select("id, display_name, phone, branch").in("id", userIds) : Promise.resolve({ data: [] as { id: string; display_name: string; phone: string; branch: string }[] }),
       admin.auth.admin.listUsers({ perPage: 1000 }),
       rolesResult.data?.length
         ? admin.from("role_permissions").select("role_id, permission_code").eq("company_id", access.companyId)
@@ -71,7 +71,7 @@ export async function GET() {
       return NextResponse.json({ error: "Unable to load user details." }, { status: 500, headers: responseHeaders });
     }
 
-    const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile.display_name]));
+    const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
     const authUserById = new Map((authUsers?.users ?? []).map((authUser) => [authUser.id, authUser]));
     const roleNameById = new Map((rolesResult.data ?? []).map((roleRecord) => [roleRecord.id, roleRecord.name]));
     const users = (membershipsResult.data ?? []).map((membership) => {
@@ -80,8 +80,10 @@ export async function GET() {
       const role = Array.isArray(joinedRole) ? joinedRole[0]?.name : joinedRole?.name;
       return {
         id: membership.user_id,
-        name: profileById.get(membership.user_id) || String(authUser?.user_metadata?.full_name ?? "User"),
+        name: profileById.get(membership.user_id)?.display_name || String(authUser?.user_metadata?.full_name ?? "User"),
         email: authUser?.email ?? "",
+        phone: profileById.get(membership.user_id)?.phone ?? "",
+        branch: profileById.get(membership.user_id)?.branch ?? "",
         roleId: membership.role_id,
         role: role ?? roleNameById.get(membership.role_id) ?? "Unknown role",
         status: membership.status === "disabled" ? "disabled" : authUser?.confirmed_at ? membership.status : "invited",
@@ -213,9 +215,11 @@ export async function POST(request: Request) {
     if (body.action === "invite-user") {
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+      const phone = typeof body.phone === "string" ? body.phone.trim() : "";
+      const branch = typeof body.branch === "string" ? body.branch.trim() : "";
       const roleId = typeof body.roleId === "string" ? body.roleId : "";
-      if (!name || name.length > 200 || !/^\S+@\S+\.\S+$/.test(email) || !roleId) {
-        return NextResponse.json({ error: "Enter a valid name, email, and role." }, { status: 400, headers: responseHeaders });
+      if (!name || name.length > 200 || !/^\S+@\S+\.\S+$/.test(email) || !roleId || phone.length > 100 || branch.length > 200) {
+        return NextResponse.json({ error: "Enter a valid name, email, role, phone, and branch." }, { status: 400, headers: responseHeaders });
       }
 
       const { data: role, error: roleError } = await admin.from("company_roles").select("id, name").eq("id", roleId).eq("company_id", access.companyId).maybeSingle();
@@ -230,7 +234,7 @@ export async function POST(request: Request) {
       }
 
       const userId = inviteData.user.id;
-      const { error: profileError } = await admin.from("profiles").upsert({ id: userId, display_name: name });
+      const { error: profileError } = await admin.from("profiles").upsert({ id: userId, display_name: name, phone, branch });
       const { error: membershipError } = profileError ? { error: profileError } : await admin.from("company_memberships").insert({
         company_id: access.companyId,
         user_id: userId,
@@ -242,7 +246,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Invitation was created but could not be assigned to the company role." }, { status: 500, headers: responseHeaders });
       }
 
-      return NextResponse.json({ user: { id: userId, name, email, roleId, status: "invited" } }, { status: 201, headers: responseHeaders });
+      return NextResponse.json({ user: { id: userId, name, email, phone, branch, roleId, status: "invited" } }, { status: 201, headers: responseHeaders });
     }
 
     return NextResponse.json({ error: "Unsupported user management action." }, { status: 400, headers: responseHeaders });

@@ -7,6 +7,9 @@ import TopBar from "./components/TopBar";
 import Dashboard from "./components/LiveDashboard";
 import Candidates from "./components/CandidateRoster";
 import UsersRoles from "./components/UsersRoles";
+import Agents from "./components/Agents";
+import Contractors from "./components/Employers";
+import Projects from "./components/Projects";
 import { createSupabaseBrowserClient } from "./lib/supabase/browser";
 
 export type View =
@@ -26,7 +29,8 @@ export type View =
   | "reports"
   | "users"
   | "settings"
-  | "employers"
+  | "contractors"
+  | "projects"
   | "invoices"
   | "tasks"
   | "communications"
@@ -334,6 +338,12 @@ export default function App() {
         return <Candidates />;
       case "users":
         return <UsersRoles companyId={session?.companyId ?? ""} currentUserId={session?.userId ?? ""} />;
+      case "agents":
+        return <Agents />;
+      case "contractors":
+        return <Contractors />;
+      case "projects":
+        return <Projects />;
       default:
         return <DatabaseModulePending view={view} />;
     }

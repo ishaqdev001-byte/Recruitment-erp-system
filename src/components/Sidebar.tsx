@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Building2,
+  BriefcaseBusiness,
   ChartNoAxesCombined,
   ChevronDown,
   CircleDollarSign,
@@ -24,15 +25,21 @@ import type { View, WorkspaceRole } from "../App";
 
 type NavItem =
   | { type: "item"; id: View; label: string; icon: LucideIcon }
-  | { type: "group"; label: string; icon: LucideIcon; children: { id: View; label: string; icon: LucideIcon }[] };
+  | { type: "group"; id: "finance" | "employers"; label: string; icon: LucideIcon; children: { id: View; label: string; icon: LucideIcon }[] };
 
 const nav: NavItem[] = [
   { type: "item",  id: "dashboard",      label: "Dashboard",         icon: LayoutDashboard },
   { type: "item",  id: "candidates",     label: "Candidates",        icon: UsersRound },
   { type: "item",  id: "agents",         label: "Agents",            icon: UserRoundCog },
-  { type: "item",  id: "employers",      label: "Employers/Clients", icon: Building2 },
   {
-    type: "group", label: "Finance", icon: WalletCards,
+    type: "group", id: "employers", label: "Employers", icon: Building2,
+    children: [
+      { id: "contractors", label: "Contractors", icon: UsersRound },
+      { id: "projects", label: "Projects", icon: BriefcaseBusiness },
+    ],
+  },
+  {
+    type: "group", id: "finance", label: "Finance", icon: WalletCards,
     children: [
       { id: "finance",   label: "Overview",          icon: WalletCards },
       { id: "invoices",  label: "Invoices",          icon: ReceiptText },
@@ -52,9 +59,15 @@ const nav: NavItem[] = [
 ];
 
 const financeViews = new Set<View>(["finance", "invoices", "payments", "paychecks"]);
+const employerViews = new Set<View>(["contractors", "projects"]);
 
 export default function Sidebar({ active, onNavigate, role, userName, companyName, companyLogo, mobileOpen, onLogout }: { active: View; onNavigate: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void }) {
-  const [financeOpen, setFinanceOpen] = useState(financeViews.has(active));
+  const [openGroups, setOpenGroups] = useState({ finance: financeViews.has(active), employers: employerViews.has(active) });
+
+  useEffect(() => {
+    if (financeViews.has(active)) setOpenGroups((current) => current.finance ? current : { ...current, finance: true });
+    if (employerViews.has(active)) setOpenGroups((current) => current.employers ? current : { ...current, employers: true });
+  }, [active]);
 
   return (
     <aside className={`app-sidebar fixed inset-y-0 left-0 z-50 flex h-dvh w-64 shrink-0 flex-col border-r transition-transform duration-200 lg:relative lg:z-auto lg:h-full lg:w-52 ${mobileOpen ? "app-sidebar-open" : ""}`} style={{ background: "var(--card)", borderColor: "var(--border)" }}>
@@ -96,22 +109,24 @@ export default function Sidebar({ active, onNavigate, role, userName, companyNam
 
           // Group
           const Icon = item.icon;
-          const isGroupActive = financeViews.has(active);
+          const groupViews = item.id === "finance" ? financeViews : employerViews;
+          const isGroupActive = groupViews.has(active);
+          const groupOpen = openGroups[item.id];
           return (
             <div key={idx}>
               <button
-                onClick={() => setFinanceOpen((o) => !o)}
+                onClick={() => setOpenGroups((current) => ({ ...current, [item.id]: !current[item.id] }))}
                 className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded text-xs font-600 transition-all duration-150"
                 style={{
-                  background: isGroupActive && !financeOpen ? "var(--secondary)" : "transparent",
+                  background: isGroupActive && !groupOpen ? "var(--secondary)" : "transparent",
                   color: isGroupActive ? "var(--primary)" : "var(--muted-foreground)",
-                  borderLeft: isGroupActive && !financeOpen ? "2px solid var(--primary)" : "2px solid transparent",
+                  borderLeft: isGroupActive && !groupOpen ? "2px solid var(--primary)" : "2px solid transparent",
                 }}>
                 <Icon size={15} strokeWidth={1.8} aria-hidden="true" />
                 <span className="flex-1 text-left">{item.label}</span>
-                <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" style={{ transform: financeOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 150ms" }} />
+                <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" style={{ transform: groupOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 150ms" }} />
               </button>
-              {financeOpen && (
+              {groupOpen && (
                 <div className="ml-3 mt-0.5 space-y-0.5 border-l pl-2.5" style={{ borderColor: "var(--border)" }}>
                   {item.children.map((child) => {
                     const CIcon = child.icon;

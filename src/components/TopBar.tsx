@@ -13,7 +13,7 @@ const searchIndex: CommandItem[] = [
   { label: "Godfrey Kamuhangire", sub: "Candidate · CRSL-957214073", view: "candidates", group: "Candidates" },
   { label: "Alice Namukasa", sub: "Candidate · CRSL-283710044", view: "candidates", group: "Candidates" },
   { label: "Staff Backend Engineer", sub: "Job · Engineering", view: "jobs", group: "Jobs" },
-  { label: "Gulf Manpower Ltd", sub: "Employer · Saudi Arabia", view: "employers", group: "Employers" },
+  { label: "Gulf Manpower Ltd", sub: "Contractor · Saudi Arabia", view: "contractors", group: "Contractors" },
   { label: "Director Vicent", sub: "Agent · Kampala", view: "agents", group: "Agents" },
   { label: "Passport A00846507", sub: "Passport Custody · In Company Custody", view: "passport", group: "Passport" },
   { label: "Invoice INV-2026-003", sub: "Invoice · Gulf Manpower Ltd · UGX 3.2M", view: "invoices", group: "Invoices" },
@@ -346,8 +346,8 @@ export default function TopBar({
               ) : (
                 <div className="space-y-2">
                   {[
-                    { title: "Candidates", items: results.filter((item) => ["candidates", "agents", "employers"].includes(item.view)) },
-                    { title: "Jobs & People", items: results.filter((item) => ["jobs", "agents", "employers"].includes(item.view)) },
+                    { title: "Candidates", items: results.filter((item) => ["candidates", "agents", "contractors"].includes(item.view)) },
+                    { title: "Jobs & People", items: results.filter((item) => ["jobs", "agents", "contractors", "projects"].includes(item.view)) },
                     { title: "Operations", items: results.filter((item) => ["invoices", "payments", "documents", "tasks", "reports"].includes(item.view)) },
                   ].filter((group) => group.items.length > 0).map((group) => (
                     <div key={group.title} className="space-y-1">

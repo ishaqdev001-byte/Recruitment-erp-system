@@ -8,6 +8,9 @@ import Dashboard from "./components/LiveDashboard";
 import Candidates from "./components/CandidateRoster";
 import UsersRoles from "./components/UsersRoles";
 import Agents from "./components/Agents";
+import Finance from "./components/Finance";
+import Invoices from "./components/InvoiceWorkspace";
+import Suppliers from "./components/Suppliers";
 import Contractors from "./components/Employers";
 import Projects from "./components/Projects";
 import { createSupabaseBrowserClient } from "./lib/supabase/browser";
@@ -16,6 +19,7 @@ export type View =
   | "dashboard"
   | "candidates"
   | "agents"
+  | "suppliers"
   | "jobs"
   | "interviews"
   | "offers"
@@ -138,7 +142,7 @@ async function resolveUserWorkspace(user: User) {
   const supabase = createSupabaseBrowserClient();
   const { data: membership, error } = await supabase
     .from("company_memberships")
-    .select("company_id, company:companies!inner(id, name, status, logo_url), role:company_roles!inner(name)")
+    .select("company_id, company:companies!inner(id, name, status, logo_url, registration_number, country, city, office_address, phone, email, website), role:company_roles!inner(name)")
     .eq("user_id", user.id)
     .eq("status", "active")
     .limit(1)
@@ -147,7 +151,7 @@ async function resolveUserWorkspace(user: User) {
   if (error) throw new Error("Unable to load your company membership. Check the Supabase migration and RLS policies.");
   if (!membership) throw new Error("Your Supabase account has no active company membership yet.");
 
-  const companyValue = membership.company as unknown as { id: string; name: string; status: string; logo_url: string } | { id: string; name: string; status: string; logo_url: string }[];
+  const companyValue = membership.company as unknown as { id: string; name: string; status: string; logo_url: string; registration_number: string; country: string; city: string; office_address: string; phone: string; email: string; website: string } | { id: string; name: string; status: string; logo_url: string; registration_number: string; country: string; city: string; office_address: string; phone: string; email: string; website: string }[];
   const companyRecord = Array.isArray(companyValue) ? companyValue[0] : companyValue;
   const roleValue = membership.role as unknown as { name: string } | { name: string }[];
   const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue;
@@ -162,13 +166,13 @@ async function resolveUserWorkspace(user: User) {
   const company: CompanyProfile = {
     id: companyRecord.id,
     name: companyRecord.name,
-    registrationNumber: "",
-    country: "",
-    city: "",
-    officeAddress: "",
-    phone: "",
-    email: "",
-    website: "",
+    registrationNumber: companyRecord.registration_number ?? "",
+    country: companyRecord.country ?? "",
+    city: companyRecord.city ?? "",
+    officeAddress: companyRecord.office_address ?? "",
+    phone: companyRecord.phone ?? "",
+    email: companyRecord.email ?? "",
+    website: companyRecord.website ?? "",
     logo: companyRecord.logo_url ?? "",
     status: companyRecord.status === "trial" ? "Trial" : companyRecord.status === "active" ? "Active" : "Pending Verification",
     currency: "UGX",
@@ -340,6 +344,12 @@ export default function App() {
         return <UsersRoles companyId={session?.companyId ?? ""} currentUserId={session?.userId ?? ""} />;
       case "agents":
         return <Agents />;
+      case "finance":
+        return <Finance />;
+      case "invoices":
+        return <Invoices />;
+      case "suppliers":
+        return <Suppliers />;
       case "contractors":
         return <Contractors />;
       case "projects":

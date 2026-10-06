@@ -46,6 +46,14 @@ const projectsMigration = await readFile(
   new URL("../supabase/migrations/202610040010_projects.sql", import.meta.url),
   "utf8",
 );
+const suppliersMigration = await readFile(
+  new URL("../supabase/migrations/202610040011_suppliers.sql", import.meta.url),
+  "utf8",
+);
+const invoicesMigration = await readFile(
+  new URL("../supabase/migrations/202610040012_invoices.sql", import.meta.url),
+  "utf8",
+);
 const database = new PGlite();
 
 const companyA = "10000000-0000-4000-8000-000000000001";
@@ -87,6 +95,10 @@ try {
   await database.exec(employersMigration);
   await database.exec(employersMigration);
   await database.exec(projectsMigration);
+  await database.exec(suppliersMigration);
+  await database.exec(suppliersMigration);
+  await database.exec(invoicesMigration);
+  await database.exec(invoicesMigration);
 
   const seededCompany = await database.query(
     "select id, name, status from public.companies where id = $1",
@@ -138,6 +150,16 @@ try {
   );
   assert.ok(futureProjectPermissions.rows.some((permission) => permission.name === "Company Owner / Primary Administrator" && permission.permission_code === "projects.status"));
   assert.ok(!futureProjectPermissions.rows.some((permission) => permission.name === "Branch Manager" && permission.permission_code === "projects.status"));
+  const futureSupplierPermissions = await database.query(
+    `select role.name, role_permission.permission_code
+      from public.role_permissions role_permission
+      join public.company_roles role on role.id = role_permission.role_id
+      where role.company_id = $1 and role.name = 'Company Owner / Primary Administrator'
+        and role_permission.permission_code like 'suppliers.%'
+      order by role_permission.permission_code`,
+    [companyC],
+  );
+  assert.deepEqual(futureSupplierPermissions.rows.map((permission) => permission.permission_code), ["suppliers.create", "suppliers.view"]);
   await database.exec(`insert into auth.users (id) values ('${userC}')`);
   await database.query(
     "insert into public.company_memberships (company_id, user_id, role_id) values ($1, $2, $3)",
@@ -195,6 +217,10 @@ try {
       ('${roleA}', '${companyA}', 'projects.edit'),
       ('${roleA}', '${companyA}', 'projects.delete'),
       ('${roleA}', '${companyA}', 'projects.status'),
+      ('${roleA}', '${companyA}', 'suppliers.view'),
+      ('${roleA}', '${companyA}', 'suppliers.create'),
+      ('${roleA}', '${companyA}', 'finance.view'),
+      ('${roleA}', '${companyA}', 'finance.create'),
       ('${statusRole}', '${companyA}', 'projects.view'),
       ('${statusRole}', '${companyA}', 'projects.status');
     insert into public.candidates (id, company_id, file_number, first_name, last_name) values
@@ -237,6 +263,41 @@ try {
   );
   const visibleProjects = await database.query("select id from public.projects order by id");
   assert.deepEqual(visibleProjects.rows.map((row) => row.id), [projectId]);
+  const supplierId = "80000000-0000-4000-8000-000000000001";
+  await database.query(
+    `insert into public.suppliers (id, company_id, created_by, supplier_name, contact_person, phone, email, branch)
+      values ($1, $2, $3, 'Supplier A', 'Contact A', '+1 555 0101', 'supplier@example.com', 'Kampala')`,
+    [supplierId, companyA, userA],
+  );
+  const visibleSuppliers = await database.query("select id from public.suppliers order by id");
+  assert.deepEqual(visibleSuppliers.rows.map((row) => row.id), [supplierId]);
+  const recipientOptions = await database.query("select recipient_type, recipient_name from public.list_invoice_recipients($1) order by recipient_type", [companyA]);
+  assert.deepEqual(recipientOptions.rows.map((recipient) => recipient.recipient_type), ["candidate", "contractor", "supplier"]);
+  const createdInvoice = await database.query(
+    `insert into public.invoices (company_id, recipient_type, recipient_id, recipient_name, description, amount, due_date, created_by)
+      values ($1, 'candidate', $2, 'Untrusted Recipient Name', 'Recruitment invoice', 100, '2026-10-15', $3)
+      returning id, invoice_number, status`,
+    [companyA, candidateA, userA],
+  );
+  assert.match(createdInvoice.rows[0].invoice_number, /^INV-\d{4}-\d{5}$/);
+  assert.equal(createdInvoice.rows[0].status, "sent");
+  const invoiceId = createdInvoice.rows[0].id;
+  const savedRecipientName = await database.query("select recipient_name from public.invoices where id = $1", [invoiceId]);
+  assert.equal(savedRecipientName.rows[0].recipient_name, "Candidate A");
+  await database.query("select public.record_invoice_payment($1, $2)", [invoiceId, 40]);
+  const partialInvoice = await database.query("select status from public.invoices where id = $1", [invoiceId]);
+  assert.equal(partialInvoice.rows[0].status, "partially_paid");
+  await database.query("select public.record_invoice_payment($1, $2)", [invoiceId, 60]);
+  const paidInvoice = await database.query("select status from public.invoices where id = $1", [invoiceId]);
+  assert.equal(paidInvoice.rows[0].status, "paid");
+  await assert.rejects(database.query("select public.record_invoice_payment($1, $2)", [invoiceId, 1]), /exceeds the outstanding/);
+  await assert.rejects(
+    database.query(
+      `insert into public.invoices (company_id, recipient_type, recipient_id, recipient_name, description, amount, due_date, created_by)
+        values ($1, 'candidate', $2, 'Candidate B', 'Cross-tenant invoice', 100, '2026-10-15', $3)`,
+      [companyB, candidateB, userA],
+    ),
+  );
   await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userB]);
   await database.query("update public.projects set status = 'inactive' where id = $1", [projectId]);
   await assert.rejects(
@@ -255,6 +316,13 @@ try {
     database.query(
       `insert into public.employers (company_id, created_by, company_name, contact_persons, phone_numbers, email_addresses, countries)
         values ($1, $2, 'Company B Employer', array['Contact'], array['+1 555 0100'], array['contact@example.com'], array['Uganda'])`,
+      [companyB, userA],
+    ),
+  );
+  await assert.rejects(
+    database.query(
+      `insert into public.suppliers (company_id, created_by, supplier_name, contact_person, phone, email, branch)
+        values ($1, $2, 'Cross-tenant Supplier', 'Contact', '+1 555 0102', 'other@example.com', 'Kampala')`,
       [companyB, userA],
     ),
   );

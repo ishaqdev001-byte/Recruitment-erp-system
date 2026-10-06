@@ -27,6 +27,8 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
   const detail = (key: string) => details[key];
   const text = (key: string) => typeof detail(key) === "string" ? detail(key) as string : "";
   const list = (key: string) => Array.isArray(detail(key)) ? detail(key) as string[] : [];
+  const passportNumber = text("passportNumber");
+  const storedPassportStatus = text("passportStatus");
   return {
     id: record.id,
     fileNumber: record.file_number,
@@ -48,10 +50,14 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
     agent: record.agent_name,
     mediaChannel: list("mediaChannel"),
     nin: text("nin"),
-    passportNumber: text("passportNumber"),
+    passportNumber,
     passportIssue: text("passportIssue"),
     passportExpiry: text("passportExpiry"),
-    passportStatus: text("passportStatus") || "Pending",
+    passportStatus: storedPassportStatus === "Available" || storedPassportStatus === "With Agent"
+      ? storedPassportStatus
+      : record.agent_name ? "With Agent" : "Available",
+    passportBranch: text("passportBranch"),
+    passportStorageLocation: text("passportStorageLocation"),
     height: text("height"),
     weight: text("weight"),
     shirtSize: text("shirtSize"),

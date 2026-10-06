@@ -22,6 +22,7 @@ function Field({
       </label>
       <input
         type={type}
+        required={required}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
@@ -45,6 +46,7 @@ function SelectField({
       </label>
       <select
         value={value}
+        required={required}
         onChange={(e) => onChange(e.target.value)}
         className="w-full px-3 py-2 text-sm rounded border outline-none"
         style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
@@ -219,6 +221,11 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
             <Field label="Passport Number" value={form.passportNumber} onChange={(v) => set("passportNumber", v)} />
             <Field label="Issue Date" value={form.passportIssue} onChange={(v) => set("passportIssue", v)} type="date" />
             <Field label="Expiry Date" value={form.passportExpiry} onChange={(v) => set("passportExpiry", v)} type="date" />
+            <SelectField label="Passport Status" value={form.passportStatus} onChange={(v) => set("passportStatus", v)} options={["Available", "With Agent"]} required={Boolean(form.passportNumber.trim())} />
+            {form.passportStatus === "Available" && <>
+              <Field label="Storage Branch" value={form.passportBranch} onChange={(v) => set("passportBranch", v)} placeholder="e.g. Kampala" required={Boolean(form.passportNumber.trim())} />
+              <Field label="Storage Location" value={form.passportStorageLocation} onChange={(v) => set("passportStorageLocation", v)} placeholder="e.g. Locker A-3" required={Boolean(form.passportNumber.trim())} />
+            </>}
 
             <SectionHeader title="Physical Attributes" />
             <Field label="Height (cm)" value={form.height} onChange={(v) => set("height", v)} placeholder="0" />

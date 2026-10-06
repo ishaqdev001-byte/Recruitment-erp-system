@@ -12,7 +12,7 @@ const candidateFields = [
 
 const candidateDetailFields = new Set([
   "otherNames", "secondaryPhone", "otherPhone", "age", "gender", "maritalStatus", "abroadStatus", "abroadExperience", "source", "mediaChannel",
-  "nin", "passportNumber", "passportIssue", "passportExpiry", "passportStatus", "height", "weight", "shirtSize", "shoeSize", "waistSize", "preferredCities",
+  "nin", "passportNumber", "passportIssue", "passportExpiry", "passportStatus", "passportBranch", "passportStorageLocation", "height", "weight", "shirtSize", "shoeSize", "waistSize", "preferredCities",
   "physicalAddress", "district", "county", "subCounty", "parish", "fatherPhone", "fatherStatus", "motherPhone", "motherStatus",
   "kinFirstName", "kinLastName", "kinPhone", "kinRelationship", "emergencyFirstName", "emergencyLastName", "emergencyPhone", "emergencyRelationship",
   "jobOfInterest", "preferredCountries", "assignedContracts", "stage", "travelStatus", "visaStatus", "acceptance", "contracts", "contractManager", "branch", "verification", "photo",
@@ -24,12 +24,26 @@ function readCandidateDetails(value: unknown) {
   const details: Record<string, string | number | string[]> = {};
   for (const [key, fieldValue] of Object.entries(value)) {
     if (!candidateDetailFields.has(key)) continue;
+    if ((key === "passportIssue" || key === "passportExpiry") && typeof fieldValue === "string" && fieldValue
+      && (!/^\d{4}-\d{2}-\d{2}$/.test(fieldValue) || Number.isNaN(Date.parse(`${fieldValue}T00:00:00Z`)))) return null;
     if (typeof fieldValue === "string" && fieldValue.length <= 4000) details[key] = fieldValue;
     else if (typeof fieldValue === "number" && key === "age" && Number.isFinite(fieldValue) && fieldValue >= 0 && fieldValue <= 120) details[key] = fieldValue;
     else if (Array.isArray(fieldValue) && fieldValue.length <= 50 && fieldValue.every((item) => typeof item === "string" && item.length <= 200)) details[key] = fieldValue;
     else return null;
   }
   return details;
+}
+
+function passportSetupError(details: Record<string, string | number | string[]>, agentName: string) {
+  const passportNumber = typeof details.passportNumber === "string" ? details.passportNumber.trim() : "";
+  if (!passportNumber) return "";
+  if (details.passportStatus !== "Available" && details.passportStatus !== "With Agent") return "Choose whether the passport is available or with the assigned agent.";
+  if (details.passportStatus === "Available" && (
+    typeof details.passportBranch !== "string" || !details.passportBranch.trim()
+    || typeof details.passportStorageLocation !== "string" || !details.passportStorageLocation.trim()
+  )) return "Select a storage branch and location for an available passport.";
+  if (details.passportStatus === "With Agent" && !agentName.trim()) return "Assign an agent when the passport is with an agent.";
+  return "";
 }
 
 export async function PATCH(request: Request, context: RouteContext<"/api/candidates/[candidateId]">) {
@@ -65,6 +79,9 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
     if ("details" in body) {
       const details = readCandidateDetails(body.details);
       if (!details) return NextResponse.json({ error: "One or more extended candidate details are invalid." }, { status: 400, headers });
+      const assignedAgent = typeof updates.agent_name === "string" ? updates.agent_name : "";
+      const passportError = passportSetupError(details, assignedAgent);
+      if (passportError) return NextResponse.json({ error: passportError }, { status: 400, headers });
       updates.details = details;
     }
     if (!Object.keys(updates).length) return NextResponse.json({ error: "Provide at least one candidate field to update." }, { status: 400, headers });

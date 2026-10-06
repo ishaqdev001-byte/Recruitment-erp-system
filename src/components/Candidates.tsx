@@ -28,6 +28,8 @@ export interface Candidate {
   passportIssue: string;
   passportExpiry: string;
   passportStatus: string;
+  passportBranch: string;
+  passportStorageLocation: string;
   // Physical
   height: string;
   weight: string;
@@ -129,7 +131,7 @@ export default function Candidates() {
           otherNames: "", phone: "", secondaryPhone: "", otherPhone: "", dob: "", age: 0,
           gender: "", maritalStatus: "", religion: "", abroadStatus: "", abroadExperience: "",
           source: "", agent: "", mediaChannel: [], nin: "", passportNumber: "", passportIssue: "",
-          passportExpiry: "", passportStatus: "", height: "", weight: "", shirtSize: "", shoeSize: "",
+          passportExpiry: "", passportStatus: "Available", passportBranch: "", passportStorageLocation: "", height: "", weight: "", shirtSize: "", shoeSize: "",
           waistSize: "", preferredCities: "", placeOfBirth: "", physicalAddress: "", district: "",
           county: "", subCounty: "", parish: "", fatherName: "", fatherPhone: "", fatherStatus: "",
           motherName: "", motherPhone: "", motherStatus: "", kinFirstName: "", kinLastName: "",
@@ -162,7 +164,7 @@ export default function Candidates() {
     firstName: "", lastName: "", otherNames: "", phone: "", secondaryPhone: "", otherPhone: "",
     dob: "", age: 0, gender: "", maritalStatus: "", religion: "", abroadStatus: "", abroadExperience: "",
     source: "", agent: "", mediaChannel: [],
-    nin: "", passportNumber: "", passportIssue: "", passportExpiry: "", passportStatus: "Pending",
+    nin: "", passportNumber: "", passportIssue: "", passportExpiry: "", passportStatus: "Available", passportBranch: "", passportStorageLocation: "",
     height: "", weight: "", shirtSize: "", shoeSize: "", waistSize: "", preferredCities: "",
     placeOfBirth: "", physicalAddress: "", district: "", county: "", subCounty: "", parish: "",
     fatherName: "", fatherPhone: "", fatherStatus: "", motherName: "", motherPhone: "", motherStatus: "",

@@ -58,6 +58,10 @@ const financialReceiptsMigration = await readFile(
   new URL("../supabase/migrations/202610040013_financial_receipts.sql", import.meta.url),
   "utf8",
 );
+const passportTrackingMigration = await readFile(
+  new URL("../supabase/migrations/202610040014_passport_tracking.sql", import.meta.url),
+  "utf8",
+);
 const database = new PGlite();
 
 const companyA = "10000000-0000-4000-8000-000000000001";
@@ -105,6 +109,8 @@ try {
   await database.exec(invoicesMigration);
   await database.exec(financialReceiptsMigration);
   await database.exec(financialReceiptsMigration);
+  await database.exec(passportTrackingMigration);
+  await database.exec(passportTrackingMigration);
 
   const seededCompany = await database.query(
     "select id, name, status from public.companies where id = $1",
@@ -227,6 +233,9 @@ try {
       ('${roleA}', '${companyA}', 'suppliers.create'),
       ('${roleA}', '${companyA}', 'finance.view'),
       ('${roleA}', '${companyA}', 'finance.create'),
+      ('${roleA}', '${companyA}', 'candidates.edit'),
+      ('${roleA}', '${companyA}', 'passport.view'),
+      ('${roleA}', '${companyA}', 'passport.edit'),
       ('${statusRole}', '${companyA}', 'projects.view'),
       ('${statusRole}', '${companyA}', 'projects.status');
     insert into public.candidates (id, company_id, file_number, first_name, last_name) values
@@ -252,6 +261,26 @@ try {
 
   const visibleCandidates = await database.query("select id from public.candidates order by id");
   assert.deepEqual(visibleCandidates.rows.map((row) => row.id), [candidateA]);
+  await database.query(
+    `update public.candidates set details = $2::jsonb where id = $1`,
+    [candidateA, JSON.stringify({ passportNumber: "P-0001", passportIssue: "2026-01-01", passportExpiry: "2031-01-01", passportStatus: "Available", passportBranch: "Kampala", passportStorageLocation: "Locker A" })],
+  );
+  const syncedPassport = await database.query("select tracking_number, passport_number, passport_status, storage_branch, storage_location from public.candidate_passports where candidate_id = $1", [candidateA]);
+  assert.deepEqual(syncedPassport.rows, [{ tracking_number: 1, passport_number: "P-0001", passport_status: "available", storage_branch: "Kampala", storage_location: "Locker A" }]);
+  const listedPassport = await database.query("select tracking_number, candidate_name, file_number, agent_name, company_name from public.list_passport_tracking($1)", [companyA]);
+  assert.deepEqual(listedPassport.rows, [{ tracking_number: 1, candidate_name: "Candidate A", file_number: "A-001", agent_name: "", company_name: "Company A" }]);
+  await assert.rejects(
+    database.query("update public.candidate_passports set passport_status = 'withdrawn' where candidate_id = $1", [candidateA]),
+    /candidate_passports_withdrawn_details/,
+  );
+  await database.query(
+    "update public.candidate_passports set passport_status = 'withdrawn', withdrawn_at = '2026-10-05', withdrawal_requested_by = 'Candidate A' where candidate_id = $1",
+    [candidateA],
+  );
+  await assert.rejects(
+    database.query("update public.candidate_passports set passport_status = 'transferred', withdrawn_at = null, withdrawal_requested_by = '' where candidate_id = $1", [candidateA]),
+    /candidate_passports_transfer_details/,
+  );
 
   await database.query(
     `insert into public.employers (company_id, created_by, company_name, contact_persons, phone_numbers, email_addresses, countries)

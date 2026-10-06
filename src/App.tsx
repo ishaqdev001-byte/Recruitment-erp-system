@@ -14,6 +14,7 @@ import Payments from "./components/Payments";
 import Suppliers from "./components/Suppliers";
 import Contractors from "./components/Employers";
 import Projects from "./components/Projects";
+import PassportCustody from "./components/PassportCustodyWorkspace";
 import { createSupabaseBrowserClient } from "./lib/supabase/browser";
 
 export type View =
@@ -357,6 +358,8 @@ export default function App() {
         return <Contractors />;
       case "projects":
         return <Projects />;
+      case "passport":
+        return <PassportCustody companyName={session?.companyName ?? ""} onRegisterCandidate={() => setView("candidates")} />;
       default:
         return <DatabaseModulePending view={view} />;
     }

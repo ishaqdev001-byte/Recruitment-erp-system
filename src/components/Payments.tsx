@@ -1,175 +1,187 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { ArrowUpRight, CircleDollarSign, Plus, Search, X } from "lucide-react";
 
-const payments = [
-  { id: 1, candidate: "Godfrey Kamuhangire", fileNo: "CRSL-957214073", required: 5000000, deposited: 1500000, paid: 1500000, outstanding: 3500000, status: "Partially Paid", lastDate: "Aug 20, 2026" },
-  { id: 2, candidate: "Alice Namukasa", fileNo: "CRSL-283710044", required: 4800000, deposited: 4800000, paid: 4800000, outstanding: 0, status: "Fully Paid", lastDate: "Aug 19, 2026" },
-  { id: 3, candidate: "Suzan Mirembe", fileNo: "CRSL-143345563", required: 4200000, deposited: 800000, paid: 800000, outstanding: 3400000, status: "Deposit Received", lastDate: "Aug 18, 2026" },
-  { id: 4, candidate: "James Okello", fileNo: "CRSL-394821155", required: 4500000, deposited: 0, paid: 0, outstanding: 4500000, status: "Payment Pending", lastDate: "—" },
-];
-
-const history = [
-  { date: "Aug 20, 2026", candidate: "Godfrey Kamuhangire", type: "Deposit", method: "Mobile Money", amount: 1500000, ref: "DEP-001", recordedBy: "Aisha Khan", receipt: "RCT-001", status: "Deposit Received" },
-  { date: "Aug 19, 2026", candidate: "Alice Namukasa", type: "Final Payment", method: "Bank Transfer", amount: 3200000, ref: "PAY-003", recordedBy: "Aisha Khan", receipt: "RCT-003", status: "Fully Paid" },
-  { date: "Aug 18, 2026", candidate: "Suzan Mirembe", type: "Deposit", method: "Cash", amount: 800000, ref: "DEP-002", recordedBy: "Director Vicent", receipt: "RCT-002", status: "Deposit Received" },
-  { date: "Aug 17, 2026", candidate: "Alice Namukasa", type: "Installment", method: "Mobile Money", amount: 1600000, ref: "PAY-002", recordedBy: "Asiimwe david", receipt: "RCT-004", status: "Partially Paid" },
-];
-
-const UGX = (n: number) => `UGX ${n.toLocaleString()}`;
-
-const statusColor: Record<string, string> = {
-  "Fully Paid": "#10b981",
-  "Partially Paid": "#3b82f6",
-  "Deposit Received": "#8b5cf6",
-  "Payment Pending": "#f59e0b",
-  Overdue: "#ef4444",
+type ReceiptType = "candidate_deposit" | "other_income" | "invoice_payment";
+type CandidateOption = { candidate_id: string; file_number: string; candidate_name: string };
+type PaymentTransaction = {
+  id: string;
+  recordType: "receipt" | "invoice_payment";
+  reference: string;
+  entryType: ReceiptType;
+  category: string;
+  receivedFrom: string;
+  candidateId: string | null;
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  amount: number;
+  paymentMethod: string;
+  externalReference: string;
+  notes: string;
+  receivedAt: string;
+};
+type LedgerPayload = {
+  transactions?: PaymentTransaction[];
+  candidates?: CandidateOption[];
+  permissions?: { canRecord?: boolean };
+  totals?: { totalReceived: number; candidateDeposits: number; invoicePayments: number; otherIncome: number };
+  error?: string;
 };
 
-export default function Payments() {
-  const [selected, setSelected] = useState<typeof payments[0] | null>(null);
-  const [showAdd, setShowAdd] = useState(false);
+const methods = ["Cash", "Bank transfer", "Mobile money", "Cheque", "Other"];
+const typeLabel: Record<ReceiptType, string> = { candidate_deposit: "Candidate deposit", other_income: "Other income", invoice_payment: "Invoice payment" };
+const typeColor: Record<ReceiptType, string> = { candidate_deposit: "#2878a8", other_income: "#b7791f", invoice_payment: "#17845b" };
+const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
+const money = (amount: number) => `UGX ${amount.toLocaleString("en-UG", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+const localDate = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
 
-  const totalRequired = payments.reduce((s, p) => s + p.required, 0);
-  const totalPaid = payments.reduce((s, p) => s + p.paid, 0);
-  const totalOutstanding = payments.reduce((s, p) => s + p.outstanding, 0);
+export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => void }) {
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
+  const [candidates, setCandidates] = useState<CandidateOption[]>([]);
+  const [canRecord, setCanRecord] = useState(false);
+  const [totals, setTotals] = useState({ totalReceived: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [entryType, setEntryType] = useState<"candidate_deposit" | "other_income">("candidate_deposit");
+  const [candidateId, setCandidateId] = useState("");
+  const [otherSource, setOtherSource] = useState("");
+  const [category, setCategory] = useState("Candidate deposit");
+  const [amount, setAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("Cash");
+  const [externalReference, setExternalReference] = useState("");
+  const [notes, setNotes] = useState("");
+  const [receivedAt, setReceivedAt] = useState(localDate);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const response = await fetch("/api/payments", { cache: "no-store" });
+        const payload = await response.json() as LedgerPayload;
+        if (!response.ok) throw new Error(payload.error ?? "Unable to load receipts.");
+        if (cancelled) return;
+        setTransactions(payload.transactions ?? []);
+        setCandidates(payload.candidates ?? []);
+        setCanRecord(Boolean(payload.permissions?.canRecord));
+        setTotals(payload.totals ?? { totalReceived: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load receipts.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [reloadKey]);
+
+  const filteredTransactions = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    if (!query) return transactions;
+    return transactions.filter((transaction) => `${transaction.reference} ${transaction.receivedFrom} ${transaction.category} ${transaction.externalReference} ${transaction.invoiceNumber ?? ""} ${transaction.notes}`.toLocaleLowerCase().includes(query));
+  }, [search, transactions]);
+
+  const resetForm = () => {
+    setEntryType("candidate_deposit");
+    setCandidateId("");
+    setOtherSource("");
+    setCategory("Candidate deposit");
+    setAmount("");
+    setPaymentMethod("Cash");
+    setExternalReference("");
+    setNotes("");
+    setReceivedAt(localDate());
+  };
+
+  const recordReceipt = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entryType, candidateId, otherSource, category, amount, paymentMethod, externalReference, notes, receivedAt }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to record this receipt.");
+      setShowAdd(false);
+      resetForm();
+      setReloadKey((key) => key + 1);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to record this receipt.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <div className="px-6 py-4 border-b flex items-center justify-between shrink-0" style={{ borderColor: "var(--border)" }}>
-        <div>
-          <h1 className="text-xl font-700" style={{ color: "var(--foreground)" }}>Payments & Deposits</h1>
-          <p className="text-sm mono mt-0.5" style={{ color: "var(--muted-foreground)" }}>Candidate payment tracking</p>
-        </div>
-        <button onClick={() => setShowAdd(true)} className="px-4 py-1.5 text-sm font-600 rounded" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-          + Record Payment
-        </button>
+    <section className="flex h-full min-h-0 flex-col" aria-labelledby="payments-title">
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4" style={{ borderColor: "var(--border)" }}>
+        <div><h1 id="payments-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Payments &amp; Deposits</h1><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Candidate deposits, other income, and invoice receipts</p></div>
+        <button type="button" onClick={() => { resetForm(); setError(""); setShowAdd(true); }} disabled={!canRecord || loading} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />Record receipt</button>
+      </header>
+
+      <div className="grid grid-cols-2 border-b sm:grid-cols-4" style={{ borderColor: "var(--border)" }}>
+        {[
+          { label: "Total received", value: totals.totalReceived, color: "var(--foreground)" },
+          { label: "Candidate deposits", value: totals.candidateDeposits, color: "#2878a8" },
+          { label: "Invoice receipts", value: totals.invoicePayments, color: "#17845b" },
+          { label: "Other income", value: totals.otherIncome, color: "#b7791f" },
+        ].map((metric) => <div key={metric.label} className="border-b px-5 py-4 last:border-0 sm:border-b-0 sm:border-r" style={{ borderColor: "var(--border)" }}><div className="mono text-lg font-700" style={{ color: metric.color }}>{loading ? "—" : money(metric.value)}</div><div className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{metric.label}</div></div>)}
       </div>
 
-      <div className="flex-1 overflow-auto p-6">
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          {[
-            { label: "Total Required", value: UGX(totalRequired), color: "var(--foreground)" },
-            { label: "Total Paid", value: UGX(totalPaid), color: "#10b981" },
-            { label: "Outstanding Balance", value: UGX(totalOutstanding), color: "#ef4444" },
-          ].map((k) => (
-            <div key={k.label} className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-              <div className="text-xs font-700 uppercase tracking-widest mb-2" style={{ color: "var(--muted-foreground)" }}>{k.label}</div>
-              <div className="mono text-xl font-700" style={{ color: k.color }}>{k.value}</div>
-            </div>
-          ))}
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+        <label className="flex w-full max-w-md items-center gap-2 border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search receipts" placeholder="Search receipt, candidate, source, or invoice" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
+        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{filteredTransactions.length} receipts</span>
+      </div>
 
-        <div className="rounded border mb-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-          <div className="px-5 py-3 border-b" style={{ borderColor: "var(--border)" }}>
-            <h3 className="text-xs font-700 uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Candidate Payment Status</h3>
-          </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                {["Candidate", "File No", "Required", "Deposited", "Paid", "Outstanding", "Status", "Last Payment"].map((h) => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
+      {error && <div role="alert" className="mx-6 mt-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
+      <div className="min-h-0 flex-1 overflow-auto p-6">
+        <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+          <table className="w-full min-w-240 text-sm">
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Received", "Receipt", "Received from", "Type", "Category", "Method", "Amount", "Reference", "Invoice", "Notes"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {payments.map((p) => (
-                <tr key={p.id} className="border-b cursor-pointer"
-                  style={{ borderColor: "var(--border)", background: selected?.id === p.id ? "var(--secondary)" : "transparent" }}
-                  onClick={() => setSelected(selected?.id === p.id ? null : p)}>
-                  <td className="px-4 py-3 font-600" style={{ color: "var(--foreground)" }}>{p.candidate}</td>
-                  <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{p.fileNo}</td>
-                  <td className="px-4 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{UGX(p.required)}</td>
-                  <td className="px-4 py-3 mono text-xs" style={{ color: "#8b5cf6" }}>{UGX(p.deposited)}</td>
-                  <td className="px-4 py-3 mono text-xs" style={{ color: "#10b981" }}>{UGX(p.paid)}</td>
-                  <td className="px-4 py-3 mono text-xs font-700" style={{ color: p.outstanding > 0 ? "#ef4444" : "#10b981" }}>{UGX(p.outstanding)}</td>
-                  <td className="px-4 py-3">
-                    <span className="mono text-xs font-600 px-1.5 py-0.5 rounded"
-                      style={{ color: statusColor[p.status], background: statusColor[p.status] + "20" }}>
-                      {p.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{p.lastDate}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-          <div className="px-5 py-3 border-b" style={{ borderColor: "var(--border)" }}>
-            <h3 className="text-xs font-700 uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Payment History</h3>
-          </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                {["Date", "Candidate", "Type", "Method", "Amount", "Ref", "Recorded By", "Receipt", "Status"].map((h) => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((r, i) => (
-                <tr key={i} className="border-b" style={{ borderColor: "var(--border)" }}>
-                  <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{r.date}</td>
-                  <td className="px-4 py-3 text-xs font-600" style={{ color: "var(--foreground)" }}>{r.candidate}</td>
-                  <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{r.type}</td>
-                  <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{r.method}</td>
-                  <td className="px-4 py-3 mono font-700" style={{ color: "#10b981" }}>+{UGX(r.amount)}</td>
-                  <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{r.ref}</td>
-                  <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{r.recordedBy}</td>
-                  <td className="px-4 py-3">
-                    <button className="text-xs px-2 py-0.5 rounded border" style={{ borderColor: "var(--border)", color: "#3b82f6" }}>
-                      {r.receipt}
-                    </button>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="mono text-xs font-600 px-1.5 py-0.5 rounded"
-                      style={{ color: statusColor[r.status], background: statusColor[r.status] + "20" }}>
-                      {r.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {loading && <tr><td colSpan={10} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading receipt history…</td></tr>}
+              {!loading && !error && filteredTransactions.length === 0 && <tr><td colSpan={10} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{transactions.length ? "No receipts match this search." : "No receipts recorded yet."}</td></tr>}
+              {!loading && filteredTransactions.map((transaction) => <tr key={transaction.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{new Date(transaction.receivedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</td>
+                <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "var(--primary)" }}>{transaction.reference}</td>
+                <td className="whitespace-nowrap px-3 py-3 text-xs font-600" style={{ color: "var(--foreground)" }}>{transaction.receivedFrom}</td>
+                <td className="whitespace-nowrap px-3 py-3"><span className="px-2 py-1 text-xs font-600" style={{ color: typeColor[transaction.entryType], background: `${typeColor[transaction.entryType]}1a` }}>{typeLabel[transaction.entryType]}</span></td>
+                <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{transaction.category}</td>
+                <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{transaction.paymentMethod}</td>
+                <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "#17845b" }}>{money(transaction.amount)}</td>
+                <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{transaction.externalReference || "—"}</td>
+                <td className="whitespace-nowrap px-3 py-3">{transaction.invoiceNumber ? <button type="button" onClick={onOpenInvoices} className="inline-flex items-center gap-1 text-xs font-600 underline underline-offset-2" style={{ color: "var(--primary)" }}>{transaction.invoiceNumber}<ArrowUpRight size={12} aria-hidden="true" /></button> : <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>—</span>}</td>
+                <td className="max-w-56 truncate px-3 py-3 text-xs" title={transaction.notes} style={{ color: "var(--muted-foreground)" }}>{transaction.notes || "—"}</td>
+              </tr>)}
             </tbody>
           </table>
         </div>
       </div>
 
-      {showAdd && (
-        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: "#0009" }}>
-          <div className="rounded border p-6 w-full max-w-md" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <h2 className="text-lg font-700 mb-5" style={{ color: "var(--foreground)" }}>Record Payment</h2>
-            <div className="space-y-3">
-              {[
-                { label: "Candidate", placeholder: "Select candidate..." },
-                { label: "Amount (UGX)", placeholder: "0" },
-                { label: "Reference", placeholder: "e.g. DEP-2026-001" },
-              ].map(({ label, placeholder }) => (
-                <div key={label}>
-                  <label className="text-xs font-700 uppercase tracking-wider mb-1.5 block" style={{ color: "var(--muted-foreground)" }}>{label}</label>
-                  <input type="text" placeholder={placeholder} className="w-full px-3 py-2 text-sm rounded border outline-none"
-                    style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-                </div>
-              ))}
-              <div>
-                <label className="text-xs font-700 uppercase tracking-wider mb-1.5 block" style={{ color: "var(--muted-foreground)" }}>Payment Type</label>
-                <select className="w-full px-3 py-2 text-sm rounded border outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}>
-                  <option>Deposit</option><option>Installment</option><option>Final Payment</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-700 uppercase tracking-wider mb-1.5 block" style={{ color: "var(--muted-foreground)" }}>Payment Method</label>
-                <select className="w-full px-3 py-2 text-sm rounded border outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}>
-                  <option>Mobile Money</option><option>Bank Transfer</option><option>Cash</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button className="flex-1 py-2 text-sm font-600 rounded" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>Save Payment</button>
-              <button onClick={() => setShowAdd(false)} className="flex-1 py-2 text-sm rounded border" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button>
-            </div>
+      {showAdd && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShowAdd(false); resetForm(); } }}>
+        <form onSubmit={recordReceipt} className="max-h-[90dvh] w-full max-w-lg overflow-y-auto border p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="mb-5 flex items-center justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Record receipt</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Invoice payments are recorded from Invoices.</p></div><button type="button" onClick={() => { setShowAdd(false); resetForm(); }} aria-label="Close receipt form" className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
+          <div className="space-y-4">
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Receipt type<select value={entryType} onChange={(event) => { const nextType = event.target.value as "candidate_deposit" | "other_income"; setEntryType(nextType); setCategory(nextType === "candidate_deposit" ? "Candidate deposit" : "Other income"); }} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}><option value="candidate_deposit">Candidate deposit</option><option value="other_income">Other income</option></select></label>
+            {entryType === "candidate_deposit" ? <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Candidate<select required value={candidateId} onChange={(event) => setCandidateId(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}><option value="">Select registered candidate</option>{candidates.map((candidate) => <option key={candidate.candidate_id} value={candidate.candidate_id}>{candidate.candidate_name} · {candidate.file_number}</option>)}</select></label> : <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Income source<input required maxLength={200} value={otherSource} onChange={(event) => setOtherSource(event.target.value)} placeholder="e.g. Training service" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>}
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Category<input required maxLength={100} value={category} onChange={(event) => setCategory(event.target.value)} placeholder="e.g. Registration fee" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Amount (UGX)<input required min="0.01" step="0.01" type="number" value={amount} onChange={(event) => setAmount(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Received date<input required type="date" max={localDate()} value={receivedAt} onChange={(event) => setReceivedAt(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label></div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>{methods.map((method) => <option key={method}>{method}</option>)}</select></label><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>External reference<input maxLength={200} value={externalReference} onChange={(event) => setExternalReference(event.target.value)} placeholder="Optional bank or receipt reference" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label></div>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Notes<textarea rows={2} maxLength={2000} value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1 w-full resize-y border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
           </div>
-        </div>
-      )}
-    </div>
+          <div className="mt-6 flex gap-3"><button type="submit" disabled={saving || (entryType === "candidate_deposit" && !candidateId)} className="flex-1 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save receipt"}</button><button type="button" onClick={() => { setShowAdd(false); resetForm(); }} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
+        </form>
+      </div>}
+    </section>
   );
 }

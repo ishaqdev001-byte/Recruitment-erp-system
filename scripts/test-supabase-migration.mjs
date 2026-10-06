@@ -54,6 +54,10 @@ const invoicesMigration = await readFile(
   new URL("../supabase/migrations/202610040012_invoices.sql", import.meta.url),
   "utf8",
 );
+const financialReceiptsMigration = await readFile(
+  new URL("../supabase/migrations/202610040013_financial_receipts.sql", import.meta.url),
+  "utf8",
+);
 const database = new PGlite();
 
 const companyA = "10000000-0000-4000-8000-000000000001";
@@ -99,6 +103,8 @@ try {
   await database.exec(suppliersMigration);
   await database.exec(invoicesMigration);
   await database.exec(invoicesMigration);
+  await database.exec(financialReceiptsMigration);
+  await database.exec(financialReceiptsMigration);
 
   const seededCompany = await database.query(
     "select id, name, status from public.companies where id = $1",
@@ -291,6 +297,32 @@ try {
   const paidInvoice = await database.query("select status from public.invoices where id = $1", [invoiceId]);
   assert.equal(paidInvoice.rows[0].status, "paid");
   await assert.rejects(database.query("select public.record_invoice_payment($1, $2)", [invoiceId, 1]), /exceeds the outstanding/);
+  const receiptCandidates = await database.query("select candidate_name from public.list_finance_candidates($1)", [companyA]);
+  assert.deepEqual(receiptCandidates.rows.map((candidate) => candidate.candidate_name), ["Candidate A"]);
+  const candidateDeposit = await database.query(
+    `insert into public.financial_receipts (company_id, entry_type, candidate_id, received_from, category, amount, payment_method, created_by)
+      values ($1, 'candidate_deposit', $2, 'Spoofed Name', 'Candidate deposit', 25, 'Cash', $3)
+      returning receipt_number, received_from`,
+    [companyA, candidateA, userA],
+  );
+  assert.match(candidateDeposit.rows[0].receipt_number, /^RCT-\d{4}-\d{5}$/);
+  assert.equal(candidateDeposit.rows[0].received_from, "Candidate A");
+  await database.query(
+    `insert into public.financial_receipts (company_id, entry_type, received_from, category, amount, payment_method, created_by)
+      values ($1, 'other_income', 'Training service', 'Other income', 15, 'Bank transfer', $2)`,
+    [companyA, userA],
+  );
+  const invoiceInstallmentCount = await database.query("select count(*)::integer as count from public.invoice_payments where company_id = $1", [companyA]);
+  const standaloneReceiptCount = await database.query("select count(*)::integer as count from public.financial_receipts where company_id = $1", [companyA]);
+  assert.equal(invoiceInstallmentCount.rows[0].count, 2);
+  assert.equal(standaloneReceiptCount.rows[0].count, 2);
+  await assert.rejects(
+    database.query(
+      `insert into public.financial_receipts (company_id, entry_type, candidate_id, received_from, category, amount, payment_method, created_by)
+        values ($1, 'candidate_deposit', $2, 'Candidate B', 'Deposit', 25, 'Cash', $3)`,
+      [companyA, candidateB, userA],
+    ),
+  );
   await assert.rejects(
     database.query(
       `insert into public.invoices (company_id, recipient_type, recipient_id, recipient_name, description, amount, due_date, created_by)

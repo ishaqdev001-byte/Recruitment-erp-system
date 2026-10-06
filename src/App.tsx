@@ -10,6 +10,7 @@ import UsersRoles from "./components/UsersRoles";
 import Agents from "./components/Agents";
 import Finance from "./components/Finance";
 import Invoices from "./components/InvoiceWorkspace";
+import Payments from "./components/Payments";
 import Suppliers from "./components/Suppliers";
 import Contractors from "./components/Employers";
 import Projects from "./components/Projects";
@@ -348,6 +349,8 @@ export default function App() {
         return <Finance />;
       case "invoices":
         return <Invoices />;
+      case "payments":
+        return <Payments onOpenInvoices={() => setView("invoices")} />;
       case "suppliers":
         return <Suppliers />;
       case "contractors":

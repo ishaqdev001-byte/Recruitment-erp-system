@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   Building2,
   BriefcaseBusiness,
+  CalendarClock,
+  CalendarDays,
   ChartNoAxesCombined,
   ChevronDown,
   CircleDollarSign,
@@ -25,11 +27,18 @@ import type { View, WorkspaceRole } from "../App";
 
 type NavItem =
   | { type: "item"; id: View; label: string; icon: LucideIcon }
-  | { type: "group"; id: "agents" | "finance" | "employers"; label: string; icon: LucideIcon; children: { id: View; label: string; icon: LucideIcon }[] };
+  | { type: "group"; id: "agents" | "finance" | "employers" | "workforce"; label: string; icon: LucideIcon; children: { id: View; label: string; icon: LucideIcon }[] };
 
 const nav: NavItem[] = [
   { type: "item",  id: "dashboard",      label: "Dashboard",         icon: LayoutDashboard },
   { type: "item",  id: "candidates",     label: "Candidates",        icon: UsersRound },
+  {
+    type: "group", id: "workforce", label: "People", icon: CalendarDays,
+    children: [
+      { id: "attendance", label: "Attendance", icon: CalendarClock },
+      { id: "leave", label: "Leave Management", icon: CalendarDays },
+    ],
+  },
   {
     type: "group", id: "agents", label: "Agents & Suppliers", icon: UserRoundCog,
     children: [
@@ -67,14 +76,16 @@ const nav: NavItem[] = [
 const financeViews = new Set<View>(["finance", "invoices", "payments", "paychecks"]);
 const employerViews = new Set<View>(["contractors", "projects"]);
 const agentSupplierViews = new Set<View>(["agents", "suppliers"]);
+const workforceViews = new Set<View>(["attendance", "leave"]);
 
 export default function Sidebar({ active, onNavigate, role, userName, companyName, companyLogo, mobileOpen, onLogout }: { active: View; onNavigate: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void }) {
-  const [openGroups, setOpenGroups] = useState({ agents: agentSupplierViews.has(active), finance: financeViews.has(active), employers: employerViews.has(active) });
+  const [openGroups, setOpenGroups] = useState({ agents: agentSupplierViews.has(active), finance: financeViews.has(active), employers: employerViews.has(active), workforce: workforceViews.has(active) });
 
   useEffect(() => {
     if (financeViews.has(active)) setOpenGroups((current) => current.finance ? current : { ...current, finance: true });
     if (employerViews.has(active)) setOpenGroups((current) => current.employers ? current : { ...current, employers: true });
     if (agentSupplierViews.has(active)) setOpenGroups((current) => current.agents ? current : { ...current, agents: true });
+    if (workforceViews.has(active)) setOpenGroups((current) => current.workforce ? current : { ...current, workforce: true });
   }, [active]);
 
   return (
@@ -117,7 +128,7 @@ export default function Sidebar({ active, onNavigate, role, userName, companyNam
 
           // Group
           const Icon = item.icon;
-          const groupViews = item.id === "finance" ? financeViews : item.id === "employers" ? employerViews : agentSupplierViews;
+          const groupViews = item.id === "finance" ? financeViews : item.id === "employers" ? employerViews : item.id === "workforce" ? workforceViews : agentSupplierViews;
           const isGroupActive = groupViews.has(active);
           const groupOpen = openGroups[item.id];
           return (

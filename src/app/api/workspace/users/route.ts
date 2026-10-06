@@ -227,13 +227,30 @@ export async function POST(request: Request) {
       if (role.name === "Company Owner / Primary Administrator" || role.name === "Primary Administrator") {
         return NextResponse.json({ error: "The primary administrator role is reserved for the protected company user." }, { status: 400, headers: responseHeaders });
       }
+      const { data: company, error: companyError } = await admin.from("companies").select("name").eq("id", access.companyId).maybeSingle();
+      if (companyError || !company) return NextResponse.json({ error: "Unable to load the inviting company." }, { status: 500, headers: responseHeaders });
 
-      const { data: inviteData, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, { data: { full_name: name } });
+      const invitationId = crypto.randomUUID();
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim() || new URL(request.url).origin;
+      const redirectUrl = new URL("/", siteUrl);
+      redirectUrl.searchParams.set("invite", "1");
+      redirectUrl.searchParams.set("invitation_id", invitationId);
+      const { data: inviteData, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
+        data: { full_name: name, company_name: company.name, role_name: role.name },
+        redirectTo: redirectUrl.toString(),
+      });
       if (inviteError || !inviteData.user) {
         return NextResponse.json({ error: inviteError?.message ?? "Unable to send invitation." }, { status: 400, headers: responseHeaders });
       }
 
       const userId = inviteData.user.id;
+      const { error: invitationMetadataError } = await admin.auth.admin.updateUserById(userId, {
+        app_metadata: { ...inviteData.user.app_metadata, invitation_company_id: access.companyId },
+      });
+      if (invitationMetadataError) {
+        await admin.auth.admin.deleteUser(userId);
+        return NextResponse.json({ error: "Invitation was sent but its company assignment could not be saved. Send a new invitation." }, { status: 500, headers: responseHeaders });
+      }
       const { error: profileError } = await admin.from("profiles").upsert({ id: userId, display_name: name, phone, branch });
       const { error: membershipError } = profileError ? { error: profileError } : await admin.from("company_memberships").insert({
         company_id: access.companyId,
@@ -244,6 +261,16 @@ export async function POST(request: Request) {
       if (membershipError) {
         await admin.auth.admin.deleteUser(userId);
         return NextResponse.json({ error: "Invitation was created but could not be assigned to the company role." }, { status: 500, headers: responseHeaders });
+      }
+      const { error: invitationError } = await admin.from("workspace_invitations").insert({
+        id: invitationId,
+        company_id: access.companyId,
+        user_id: userId,
+        role_id: roleId,
+      });
+      if (invitationError) {
+        await admin.auth.admin.deleteUser(userId);
+        return NextResponse.json({ error: "Invitation was sent but its five-minute acceptance record could not be saved. Send a new invitation." }, { status: 500, headers: responseHeaders });
       }
 
       return NextResponse.json({ user: { id: userId, name, email, phone, branch, roleId, status: "invited" } }, { status: 201, headers: responseHeaders });

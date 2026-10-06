@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Sparkles, X } from "lucide-react";
 import type { Candidate } from "./Candidates";
 
@@ -120,9 +120,25 @@ const activityLog = [
 
 export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Props) {
   const [form, setForm] = useState<Candidate>({ ...candidate });
+  const [activeProjectNames, setActiveProjectNames] = useState<string[]>([]);
+  const [projectLoadError, setProjectLoadError] = useState("");
   const [activeTab, setActiveTab] = useState<Tab>("Personal");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/projects", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json() as { projects?: { project_name: string; status: string }[]; error?: string };
+        if (!response.ok) throw new Error(payload.error ?? "Unable to load assigned projects.");
+        if (!cancelled) setActiveProjectNames((payload.projects ?? []).filter((project) => project.status === "active").map((project) => project.project_name));
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setProjectLoadError(error instanceof Error ? error.message : "Unable to load assigned projects.");
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const set = (key: keyof Candidate, val: string | string[] | number) =>
     setForm((f) => ({ ...f, [key]: val }));
@@ -414,7 +430,8 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
             </div>
             <div className="col-span-2">
               <SelectField label="Assigned Contracts" value={form.assignedContracts} onChange={(v) => set("assignedContracts", v)}
-                options={["KW-2026-003", "SA-2026-011", "UAE-2026-007", "QT-2026-015"]} />
+                options={[...new Set([...activeProjectNames, ...(form.assignedContracts ? [form.assignedContracts] : [])])]} />
+              {projectLoadError && <p role="alert" className="mt-1 text-xs text-red-400">Unable to load active projects. Visa invoicing requires an assigned active project.</p>}
             </div>
             <div />
             <div />

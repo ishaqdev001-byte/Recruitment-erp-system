@@ -12,6 +12,7 @@ type InvoiceRecord = {
   recipient_name: string;
   description: string;
   amount: number;
+  deposit_amount: number;
   paid_amount: number;
   balance_due: number;
   due_date: string;
@@ -247,11 +248,12 @@ export default function InvoiceWorkspace() {
             ["Description", selectedInvoice.description],
             ["Invoice amount", money(selectedInvoice.amount)],
             ["Paid so far", money(selectedInvoice.paid_amount)],
+            ...(selectedInvoice.deposit_amount > 0 ? [["Candidate deposits applied", money(selectedInvoice.deposit_amount)]] : []),
             ["Balance due", money(selectedInvoice.balance_due)],
             ["Issue date", dateLabel(selectedInvoice.issued_at)],
             ["Due date", dateLabel(selectedInvoice.due_date)],
           ].map(([label, value]) => <div key={label}><dt className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>{label}</dt><dd className="mt-1 whitespace-pre-wrap wrap-break-word text-sm" style={{ color: "var(--foreground)" }}>{value}</dd></div>)}</dl>
-          <section className="border-t pt-4" style={{ borderColor: "var(--border)" }}><h3 className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment instalments</h3>{selectedInvoice.payments.length ? <div className="mt-2 divide-y" style={{ borderColor: "var(--border)" }}>{selectedInvoice.payments.map((payment) => <div key={payment.id} className="flex justify-between gap-4 py-2 text-sm"><span style={{ color: "var(--muted-foreground)" }}>{new Date(payment.paid_at).toLocaleString()}</span><span className="mono font-600" style={{ color: "#17845b" }}>{money(payment.amount)}</span></div>)}</div> : <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>No payments recorded yet.</p>}</section>
+          <section className="border-t pt-4" style={{ borderColor: "var(--border)" }}><h3 className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment instalments</h3>{selectedInvoice.deposit_amount > 0 && <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>Candidate deposits applied: {money(selectedInvoice.deposit_amount)}</p>}{selectedInvoice.payments.length ? <div className="mt-2 divide-y" style={{ borderColor: "var(--border)" }}>{selectedInvoice.payments.map((payment) => <div key={payment.id} className="flex justify-between gap-4 py-2 text-sm"><span style={{ color: "var(--muted-foreground)" }}>{new Date(payment.paid_at).toLocaleString()}</span><span className="mono font-600" style={{ color: "#17845b" }}>{money(payment.amount)}</span></div>)}</div> : selectedInvoice.deposit_amount === 0 && <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>No payments recorded yet.</p>}</section>
           <div className="flex flex-wrap gap-2 border-t pt-4" style={{ borderColor: "var(--border)" }}><button type="button" onClick={() => void downloadInvoice(selectedInvoice)} className="inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-sm font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><ArrowDownToLine size={15} aria-hidden="true" />Download PDF</button>{canCreate && selectedInvoice.balance_due > 0 && selectedInvoice.display_status !== "draft" && <button type="button" onClick={() => openPayment(selectedInvoice, true)} className="flex-1 px-3 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>Mark as paid</button>}</div>
         </div>
       </aside>}

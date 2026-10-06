@@ -94,6 +94,9 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       .maybeSingle();
     if (error || !data) {
       console.error("Candidate update failed", error);
+      if (error?.message.includes("Visa invoice could not be created:")) {
+        return NextResponse.json({ error: error.message }, { status: 400, headers });
+      }
       return NextResponse.json({ error: "Unable to update this candidate. Check your edit permission." }, { status: 403, headers });
     }
 

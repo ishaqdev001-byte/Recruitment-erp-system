@@ -15,6 +15,8 @@ import Suppliers from "./components/Suppliers";
 import Contractors from "./components/Employers";
 import Projects from "./components/Projects";
 import PassportCustody from "./components/PassportCustodyWorkspace";
+import Attendance from "./components/Attendance";
+import LeaveManagement from "./components/LeaveManagement";
 import { createSupabaseBrowserClient } from "./lib/supabase/browser";
 
 export type View =
@@ -40,7 +42,9 @@ export type View =
   | "invoices"
   | "tasks"
   | "communications"
-  | "auditlog";
+  | "auditlog"
+  | "attendance"
+  | "leave";
 
 export type WorkspaceRole =
   | "Company Owner / Primary Administrator"
@@ -140,15 +144,15 @@ const formatInitials = (value: string) =>
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("") || "R";
 
-async function resolveUserWorkspace(user: User) {
+async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   const supabase = createSupabaseBrowserClient();
-  const { data: membership, error } = await supabase
+  let membershipQuery = supabase
     .from("company_memberships")
     .select("company_id, company:companies!inner(id, name, status, logo_url, registration_number, country, city, office_address, phone, email, website), role:company_roles!inner(name)")
     .eq("user_id", user.id)
-    .eq("status", "active")
-    .limit(1)
-    .maybeSingle();
+    .eq("status", "active");
+  if (targetCompanyId) membershipQuery = membershipQuery.eq("company_id", targetCompanyId);
+  const { data: membership, error } = await membershipQuery.limit(1).maybeSingle();
 
   if (error) throw new Error("Unable to load your company membership. Check the Supabase migration and RLS policies.");
   if (!membership) throw new Error("Your Supabase account has no active company membership yet.");
@@ -220,12 +224,21 @@ export default function App() {
   const [companies, setCompanies] = useState<CompanyProfile[]>([]);
   const [users, setUsers] = useState<CompanyUser[]>([]);
   const [session, setSession] = useState<Session | null>(null);
-  const [authView, setAuthView] = useState<"landing" | "login" | "register" | "verify">("login");
+  const [authView, setAuthView] = useState<"landing" | "login" | "register" | "verify" | "invite">("login");
   const [authLoading, setAuthLoading] = useState(true);
   const [companyForm, setCompanyForm] = useState<CompanyForm>(emptyCompanyForm);
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
   const [registerError, setRegisterError] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteId, setInviteId] = useState("");
+  const [inviteCompanyId, setInviteCompanyId] = useState("");
+  const [inviteCompanyName, setInviteCompanyName] = useState("");
+  const [inviteRoleName, setInviteRoleName] = useState("");
+  const [invitePassword, setInvitePassword] = useState("");
+  const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("");
+  const [inviteError, setInviteError] = useState("");
+  const [inviteSaving, setInviteSaving] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
 
   useEffect(() => {
@@ -246,11 +259,55 @@ export default function App() {
 
     let cancelled = false;
     const restoreSession = async () => {
+      const currentUrl = new URL(window.location.href);
+      const hashParams = new URLSearchParams(currentUrl.hash.slice(1));
+      const inviteLink = hashParams.get("type") === "invite" || currentUrl.searchParams.get("invite") === "1";
+      const currentInviteId = currentUrl.searchParams.get("invitation_id") ?? "";
+      if (inviteLink) setAuthView("invite");
       try {
         const supabase = createSupabaseBrowserClient();
+        const accessToken = hashParams.get("access_token");
+        const refreshToken = hashParams.get("refresh_token");
+        if (inviteLink && accessToken && refreshToken) {
+          const { error: sessionError } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+          if (sessionError) throw new Error("This invitation link is invalid or expired. Ask the company administrator to send a new invitation.");
+          window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
+        }
         const { data: { user }, error } = await supabase.auth.getUser();
         if (error) throw error;
         if (user) {
+          const showInvitation = async (invitationId: string) => {
+            setInviteEmail(user.email ?? "");
+            setAuthView("invite");
+            const invitationResponse = await fetch(`/api/workspace/invitations/${encodeURIComponent(invitationId)}`, { cache: "no-store" });
+            const invitation = await invitationResponse.json() as { invitationId?: string; companyId?: string; companyName?: string; roleName?: string; error?: string };
+            if (!invitationResponse.ok || !invitation.companyId) {
+              setInviteError(invitation.error ?? "This invitation is invalid or has expired. Ask for a new invitation.");
+              return;
+            }
+            setInviteId(invitation.invitationId ?? currentInviteId);
+            setInviteCompanyId(invitation.companyId);
+            setInviteCompanyName(invitation.companyName ?? "");
+            setInviteRoleName(invitation.roleName ?? "");
+            setInviteError("");
+          };
+
+          if (inviteLink) {
+            await showInvitation(currentInviteId || "legacy");
+            window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
+            return;
+          }
+          const hasInviteMetadata = Boolean(user.app_metadata?.invitation_company_id
+            || (user.user_metadata?.company_name && user.user_metadata?.role_name));
+          if (hasInviteMetadata) {
+            const currentInvitationResponse = await fetch("/api/workspace/invitations/current", { cache: "no-store" });
+            const currentInvitation = await currentInvitationResponse.json() as { invitationId?: string | null; requiresAcceptance?: boolean; legacyInvitation?: boolean; error?: string };
+            if (!currentInvitationResponse.ok) throw new Error(currentInvitation.error ?? "Unable to verify your invitation.");
+            if (currentInvitation.requiresAcceptance || currentInvitation.legacyInvitation) {
+              await showInvitation(currentInvitation.invitationId ?? "legacy");
+              return;
+            }
+          }
           const workspace = await resolveUserWorkspace(user);
           if (!cancelled) {
             setCompanies([workspace.company]);
@@ -260,8 +317,9 @@ export default function App() {
           }
         }
       } catch (error) {
-        if (!cancelled && error instanceof Error && error.message !== "Auth session missing!") {
-          setLoginError(error.message);
+        if (!cancelled && error instanceof Error) {
+          if (inviteLink) setInviteError(error.message);
+          else if (error.message !== "Auth session missing!") setLoginError(error.message);
         }
       } finally {
         if (!cancelled) setAuthLoading(false);
@@ -322,6 +380,54 @@ export default function App() {
     }
   };
 
+  const handleAcceptInvitation = async (event: FormEvent) => {
+    event.preventDefault();
+    setInviteError("");
+    if (invitePassword.length < 8) {
+      setInviteError("Choose a password with at least 8 characters.");
+      return;
+    }
+    if (invitePassword !== invitePasswordConfirm) {
+      setInviteError("The passwords do not match.");
+      return;
+    }
+    if (!inviteCompanyId) {
+      setInviteError("This invitation has no valid company assignment. Ask the company administrator to resend it.");
+      return;
+    }
+
+    setInviteSaving(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) throw new Error("Your invitation session has expired. Open the latest invitation email to continue.");
+      const validationResponse = await fetch(`/api/workspace/invitations/${encodeURIComponent(inviteId)}`, { cache: "no-store" });
+      const validation = await validationResponse.json() as { error?: string };
+      if (!validationResponse.ok) throw new Error(validation.error ?? "This invitation is invalid or has expired. Ask for a new invitation.");
+      const { data, error } = await supabase.auth.updateUser({ password: invitePassword });
+      if (error || !data.user) throw new Error(error?.message ?? "Unable to set your password.");
+
+      const acceptanceResponse = await fetch(`/api/workspace/invitations/${encodeURIComponent(inviteId)}`, { method: "POST" });
+      const acceptance = await acceptanceResponse.json() as { error?: string };
+      if (!acceptanceResponse.ok) throw new Error(acceptance.error ?? "This invitation expired before it could be completed. Ask for a new invitation.");
+      const workspace = await resolveUserWorkspace(data.user, inviteCompanyId);
+      setCompanies([workspace.company]);
+      setUsers([workspace.user]);
+      setRole(workspace.user.role);
+      setSession(workspace.session);
+      setInvitePassword("");
+      setInvitePasswordConfirm("");
+      const completedUrl = new URL(window.location.href);
+      completedUrl.searchParams.delete("invite");
+      completedUrl.searchParams.delete("invitation_id");
+      window.history.replaceState(null, "", `${completedUrl.pathname}${completedUrl.search}`);
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "Unable to finish your invitation.");
+    } finally {
+      setInviteSaving(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await createSupabaseBrowserClient().auth.signOut();
@@ -358,6 +464,10 @@ export default function App() {
         return <Contractors />;
       case "projects":
         return <Projects />;
+      case "attendance":
+        return <Attendance />;
+      case "leave":
+        return <LeaveManagement />;
       case "passport":
         return <PassportCustody companyName={session?.companyName ?? ""} onRegisterCandidate={() => setView("candidates")} />;
       default:
@@ -382,6 +492,16 @@ export default function App() {
         onLoginFormChange={setLoginForm}
         onLogin={handleLoginSubmit}
         loginError={loginError}
+        inviteEmail={inviteEmail}
+        inviteCompanyName={inviteCompanyName}
+        inviteRoleName={inviteRoleName}
+        invitePassword={invitePassword}
+        invitePasswordConfirm={invitePasswordConfirm}
+        inviteError={inviteError}
+        inviteSaving={inviteSaving}
+        onInvitePasswordChange={setInvitePassword}
+        onInvitePasswordConfirmChange={setInvitePasswordConfirm}
+        onAcceptInvitation={handleAcceptInvitation}
         onContinueDemo={() => setAuthView("login")}
       />
     );
@@ -457,10 +577,20 @@ function AuthenticationExperience({
   onLoginFormChange,
   onLogin,
   loginError,
+  inviteEmail,
+  inviteCompanyName,
+  inviteRoleName,
+  invitePassword,
+  invitePasswordConfirm,
+  inviteError,
+  inviteSaving,
+  onInvitePasswordChange,
+  onInvitePasswordConfirmChange,
+  onAcceptInvitation,
   onContinueDemo,
 }: {
-  authView: "landing" | "login" | "register" | "verify";
-  onSwitchView: (view: "landing" | "login" | "register" | "verify") => void;
+  authView: "landing" | "login" | "register" | "verify" | "invite";
+  onSwitchView: (view: "landing" | "login" | "register" | "verify" | "invite") => void;
   companyForm: CompanyForm;
   onCompanyFormChange: (next: CompanyForm) => void;
   onRegister: (event: FormEvent) => void;
@@ -469,6 +599,16 @@ function AuthenticationExperience({
   onLoginFormChange: (next: { email: string; password: string }) => void;
   onLogin: (event: FormEvent) => void;
   loginError: string;
+  inviteEmail: string;
+  inviteCompanyName: string;
+  inviteRoleName: string;
+  invitePassword: string;
+  invitePasswordConfirm: string;
+  inviteError: string;
+  inviteSaving: boolean;
+  onInvitePasswordChange: (password: string) => void;
+  onInvitePasswordConfirmChange: (password: string) => void;
+  onAcceptInvitation: (event: FormEvent) => void;
   onContinueDemo: () => void;
 }) {
   const formInputStyle = {
@@ -476,6 +616,29 @@ function AuthenticationExperience({
     borderColor: "var(--border)",
     color: "var(--foreground)",
   } as const;
+
+  if (authView === "invite") {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
+        <div className="w-full max-w-md border p-8" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company invitation</div>
+          <h1 className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>Set up your password</h1>
+          <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>Your invitation is for this company and position.</p>
+          <dl className="mt-4 divide-y border-y" style={{ borderColor: "var(--border)" }}>
+            <div className="flex justify-between gap-4 py-3"><dt className="text-xs" style={{ color: "var(--muted-foreground)" }}>Company</dt><dd className="text-right text-sm font-600" style={{ color: "var(--foreground)" }}>{inviteCompanyName || "Verifying invitation…"}</dd></div>
+            <div className="flex justify-between gap-4 py-3"><dt className="text-xs" style={{ color: "var(--muted-foreground)" }}>Assigned role</dt><dd className="text-right text-sm font-600" style={{ color: "var(--foreground)" }}>{inviteRoleName || "Verifying invitation…"}</dd></div>
+          </dl>
+          {inviteEmail && <p className="mt-4 border px-3 py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>{inviteEmail}</p>}
+          <form onSubmit={onAcceptInvitation} className="mt-5 space-y-4">
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>New password<input required minLength={8} type="password" autoComplete="new-password" value={invitePassword} onChange={(event) => onInvitePasswordChange(event.target.value)} className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Confirm password<input required minLength={8} type="password" autoComplete="new-password" value={invitePasswordConfirm} onChange={(event) => onInvitePasswordConfirmChange(event.target.value)} className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} /></label>
+            {inviteError && <div role="alert" className="border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">{inviteError}</div>}
+            <button type="submit" disabled={inviteSaving} className="w-full px-4 py-3 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{inviteSaving ? "Setting password…" : "Set password and continue"}</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   if (authView === "landing") {
     return (

@@ -23,7 +23,13 @@ Run `pnpm dev` to start the development server, `pnpm build` to create a product
 
 ## Supabase user management
 
-Apply all pending migrations through `supabase/migrations/202610040014_passport_tracking.sql` before starting the updated app. The company user invitation and role-management API also requires `SUPABASE_SERVICE_ROLE_KEY` in the server environment; keep this key private and never expose it through a `NEXT_PUBLIC_` variable.
+Apply all pending migrations through `supabase/migrations/202610040018_workspace_invitation_expiry.sql` before starting the updated app. The company user invitation and role-management API also requires `SUPABASE_SERVICE_ROLE_KEY` in the server environment; keep this key private and never expose it through a `NEXT_PUBLIC_` variable.
+
+Set `NEXT_PUBLIC_SITE_URL` to the canonical app origin used in invitation emails, and add that origin to the Supabase Auth redirect URL allow list. It defaults to the current request origin when unset.
+
+Set Supabase Auth's email OTP expiry to 300 seconds. The app also enforces a five-minute invitation acceptance record, but the raw Supabase confirmation token lifetime is controlled by this project-level setting.
+
+Configure Supabase Auth's **Invite user** email template from `supabase/templates/invite.md` so invitation messages include the inviting company and assigned role.
 
 ## Styling
 

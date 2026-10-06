@@ -30,6 +30,7 @@ export type InvoicePayment = {
 };
 
 export type InvoiceWithBalance = InvoiceRecord & {
+  deposit_amount: number;
   paid_amount: number;
   balance_due: number;
   display_status: InvoiceStatus;
@@ -68,11 +69,12 @@ export function getInvoiceStatus(invoice: InvoiceRecord, paidAmount: number, tod
   return "sent";
 }
 
-export function toInvoiceWithBalance(invoice: InvoiceRecord, payments: InvoicePayment[], today?: string): InvoiceWithBalance {
-  const paidAmount = payments.reduce((total, payment) => total + Number(payment.amount), 0);
+export function toInvoiceWithBalance(invoice: InvoiceRecord, payments: InvoicePayment[], depositAmount = 0, today?: string): InvoiceWithBalance {
+  const paidAmount = payments.reduce((total, payment) => total + Number(payment.amount), 0) + depositAmount;
   return {
     ...invoice,
     amount: Number(invoice.amount),
+    deposit_amount: depositAmount,
     paid_amount: paidAmount,
     balance_due: Math.max(0, Number(invoice.amount) - paidAmount),
     display_status: getInvoiceStatus(invoice, paidAmount, today),
@@ -89,15 +91,21 @@ export async function loadInvoiceWithBalance(access: Extract<InvoiceAccess, { su
     .maybeSingle();
   if (invoiceError || !invoice) return null;
 
-  const { data: paymentRows, error: paymentError } = await access.supabase
-    .from("invoice_payments")
-    .select("id, amount, paid_at")
-    .eq("invoice_id", invoiceId)
-    .eq("company_id", access.companyId)
-    .order("paid_at", { ascending: true });
-  if (paymentError) return null;
+  const [{ data: paymentRows, error: paymentError }, { data: depositRows, error: depositError }] = await Promise.all([
+    access.supabase.from("invoice_payments")
+      .select("id, amount, paid_at")
+      .eq("invoice_id", invoiceId)
+      .eq("company_id", access.companyId)
+      .order("paid_at", { ascending: true }),
+    access.supabase.from("invoice_deposit_allocations")
+      .select("amount")
+      .eq("invoice_id", invoiceId)
+      .eq("company_id", access.companyId),
+  ]);
+  if (paymentError || depositError) return null;
 
-  return toInvoiceWithBalance(invoice as InvoiceRecord, (paymentRows ?? []) as InvoicePayment[]);
+  const depositAmount = (depositRows ?? []).reduce((total, allocation) => total + Number(allocation.amount), 0);
+  return toInvoiceWithBalance(invoice as InvoiceRecord, (paymentRows ?? []) as InvoicePayment[], depositAmount);
 }
 
 export async function loadAllInvoices(access: Extract<InvoiceAccess, { supabase: unknown }>) {
@@ -110,13 +118,21 @@ export async function loadAllInvoices(access: Extract<InvoiceAccess, { supabase:
   const invoices = (rows ?? []) as InvoiceRecord[];
   if (!invoices.length) return [];
 
-  const { data: paymentRows, error: paymentError } = await access.supabase
-    .from("invoice_payments")
-    .select("id, invoice_id, amount, paid_at")
-    .eq("company_id", access.companyId)
-    .in("invoice_id", invoices.map((invoice) => invoice.id))
-    .order("paid_at", { ascending: true });
-  if (paymentError) throw paymentError;
+  const [
+    { data: paymentRows, error: paymentError },
+    { data: depositRows, error: depositError },
+  ] = await Promise.all([
+    access.supabase.from("invoice_payments")
+      .select("id, invoice_id, amount, paid_at")
+      .eq("company_id", access.companyId)
+      .in("invoice_id", invoices.map((invoice) => invoice.id))
+      .order("paid_at", { ascending: true }),
+    access.supabase.from("invoice_deposit_allocations")
+      .select("invoice_id, amount")
+      .eq("company_id", access.companyId)
+      .in("invoice_id", invoices.map((invoice) => invoice.id)),
+  ]);
+  if (paymentError || depositError) throw paymentError ?? depositError;
 
   const paymentMap = new Map<string, InvoicePayment[]>();
   for (const payment of paymentRows ?? []) {
@@ -124,5 +140,9 @@ export async function loadAllInvoices(access: Extract<InvoiceAccess, { supabase:
     current.push({ id: payment.id, amount: Number(payment.amount), paid_at: payment.paid_at });
     paymentMap.set(payment.invoice_id, current);
   }
-  return invoices.map((invoice) => toInvoiceWithBalance(invoice, paymentMap.get(invoice.id) ?? []));
+  const depositMap = new Map<string, number>();
+  for (const allocation of depositRows ?? []) {
+    depositMap.set(allocation.invoice_id, (depositMap.get(allocation.invoice_id) ?? 0) + Number(allocation.amount));
+  }
+  return invoices.map((invoice) => toInvoiceWithBalance(invoice, paymentMap.get(invoice.id) ?? [], depositMap.get(invoice.id) ?? 0));
 }

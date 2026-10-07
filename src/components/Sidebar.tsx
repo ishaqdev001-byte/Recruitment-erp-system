@@ -63,7 +63,7 @@ const nav: NavItem[] = [
     ],
   },
   { type: "item",  id: "passport",       label: "Passport Custody",  icon: IdCard },
-  { type: "item",  id: "documents",      label: "Documents",         icon: FileText },
+  { type: "item",  id: "documents",      label: "Document Mgt",      icon: FileText },
   { type: "item",  id: "tasks",          label: "Tasks",             icon: ClipboardCheck },
   { type: "item",  id: "communications", label: "Communications",    icon: MessageSquareText },
   { type: "item",  id: "ai",             label: "AI Assistant",      icon: Sparkles },

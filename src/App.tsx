@@ -17,6 +17,7 @@ import Projects from "./components/Projects";
 import PassportCustody from "./components/PassportCustodyWorkspace";
 import Attendance from "./components/Attendance";
 import LeaveManagement from "./components/LeaveManagement";
+import CompanyDrive from "./components/CompanyDrive";
 import { createSupabaseBrowserClient } from "./lib/supabase/browser";
 
 export type View =
@@ -448,6 +449,8 @@ export default function App() {
         return <Dashboard role={activeUser?.role ?? role} onNavigate={setView} />;
       case "candidates":
         return <Candidates />;
+      case "documents":
+        return <CompanyDrive companyName={session?.companyName ?? ""} />;
       case "users":
         return <UsersRoles companyId={session?.companyId ?? ""} currentUserId={session?.userId ?? ""} />;
       case "agents":

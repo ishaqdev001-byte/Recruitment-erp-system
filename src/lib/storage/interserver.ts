@@ -32,6 +32,18 @@ function getRemotePath(storagePath: string) {
   return remotePath;
 }
 
+function getCompanyDriveRemotePath(storagePath: string) {
+  if (!/^company\/[0-9a-f-]{36}\/drive\/[0-9a-f-]{36}\.(pdf|jpg|jpeg|png|webp)$/i.test(storagePath)) {
+    throw new Error("Company drive storage reference is invalid.");
+  }
+
+  const { basePath } = getStorageConfig();
+  const root = path.posix.resolve(basePath);
+  const remotePath = path.posix.resolve(root, storagePath);
+  if (!remotePath.startsWith(`${root}/`)) throw new Error("Company drive storage reference is outside the configured root.");
+  return remotePath;
+}
+
 async function withSftp<T>(operation: (client: SftpClient) => Promise<T>): Promise<T> {
   const config = getStorageConfig();
   const client = new SftpClient();
@@ -77,6 +89,31 @@ export function downloadInterServerFile(storagePath: string) {
 
 export function deleteInterServerFile(storagePath: string) {
   const remotePath = getRemotePath(storagePath);
+  return withSftp(async (client) => {
+    const exists = await client.exists(remotePath);
+    if (exists) await client.delete(remotePath);
+  });
+}
+
+export function uploadCompanyDriveFile(storagePath: string, content: Buffer) {
+  const remotePath = getCompanyDriveRemotePath(storagePath);
+  return withSftp(async (client) => {
+    await client.mkdir(path.posix.dirname(remotePath), true);
+    await client.put(content, remotePath);
+  });
+}
+
+export function downloadCompanyDriveFile(storagePath: string) {
+  const remotePath = getCompanyDriveRemotePath(storagePath);
+  return withSftp(async (client) => {
+    const result = await client.get(remotePath);
+    if (!Buffer.isBuffer(result)) throw new Error("Stored drive file could not be read as bytes.");
+    return result;
+  });
+}
+
+export function deleteCompanyDriveFile(storagePath: string) {
+  const remotePath = getCompanyDriveRemotePath(storagePath);
   return withSftp(async (client) => {
     const exists = await client.exists(remotePath);
     if (exists) await client.delete(remotePath);

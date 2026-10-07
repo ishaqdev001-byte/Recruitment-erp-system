@@ -78,6 +78,10 @@ const workspaceInvitationExpiryMigration = await readFile(
   new URL("../supabase/migrations/202610040018_workspace_invitation_expiry.sql", import.meta.url),
   "utf8",
 );
+const companyDriveMigration = await readFile(
+  new URL("../supabase/migrations/202610040019_company_drive.sql", import.meta.url),
+  "utf8",
+);
 const database = new PGlite();
 
 const companyA = "10000000-0000-4000-8000-000000000001";
@@ -87,6 +91,7 @@ const userA = "20000000-0000-4000-8000-000000000001";
 const userB = "20000000-0000-4000-8000-000000000002";
 const userC = "20000000-0000-4000-8000-000000000003";
 const userD = "20000000-0000-4000-8000-000000000004";
+const userE = "20000000-0000-4000-8000-000000000005";
 const roleA = "30000000-0000-4000-8000-000000000001";
 const statusRole = "30000000-0000-4000-8000-000000000002";
 const candidateA = "40000000-0000-4000-8000-000000000001";
@@ -137,6 +142,8 @@ try {
   await database.exec(attendanceHistoryMigration);
   await database.exec(workspaceInvitationExpiryMigration);
   await database.exec(workspaceInvitationExpiryMigration);
+  await database.exec(companyDriveMigration);
+  await database.exec(companyDriveMigration);
 
   const seededCompany = await database.query(
     "select id, name, status from public.companies where id = $1",
@@ -165,7 +172,7 @@ try {
       where role.company_id = $1 and role.name = 'Finance User' order by permission.code`,
     ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
   );
-  assert.deepEqual(financeUserPermissions.rows.map((permission) => permission.code), ["attendance.clock", "finance.create", "finance.view", "leave.create"]);
+  assert.deepEqual(financeUserPermissions.rows.map((permission) => permission.code), ["attendance.clock", "drive.delete.own", "drive.edit", "drive.move", "drive.upload", "drive.view", "finance.create", "finance.view", "leave.create"]);
 
   await database.exec(`insert into public.companies (id, name) values ('${companyC}', 'New Company')`);
   const futureCompanyRoles = await database.query(
@@ -233,7 +240,7 @@ try {
   assert.equal(seededPassports.rows[0].count, 17);
 
   await database.exec(`
-    insert into auth.users (id) values ('${userA}'), ('${userB}'), ('${userD}');
+    insert into auth.users (id) values ('${userA}'), ('${userB}'), ('${userD}'), ('${userE}');
     insert into public.companies (id, name) values
       ('${companyA}', 'Company A'), ('${companyB}', 'Company B');
     insert into public.company_roles (id, company_id, name) values
@@ -244,6 +251,8 @@ try {
       ('${companyA}', '${userB}', '${statusRole}');
     insert into public.company_memberships (company_id, user_id, role_id)
       select '${companyA}', '${userD}', id from public.company_roles where company_id = '${companyA}' and name = 'General Manager';
+    insert into public.company_memberships (company_id, user_id, role_id)
+      select '${companyA}', '${userE}', id from public.company_roles where company_id = '${companyA}' and name = 'Finance Manager';
     update public.company_memberships set created_at = now() - interval '30 days' where company_id = '${companyA}';
     insert into public.role_permissions (role_id, company_id, permission_code) values
       ('${roleA}', '${companyA}', 'candidates.view'),
@@ -399,6 +408,7 @@ try {
     { employee_id: userA, status: "leave" },
     { employee_id: userB, status: "absent" },
     { employee_id: userD, status: "absent" },
+    { employee_id: userE, status: "absent" },
   ]);
   await database.exec("reset role");
   const dailyStateAudit = await database.query(
@@ -417,6 +427,49 @@ try {
   await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
   const reviewedLeave = await database.query("select status, review_note, reviewed_by from public.leave_requests where id = $1", [createdLeave.rows[0].id]);
   assert.deepEqual(reviewedLeave.rows, [{ status: "approved", review_note: "Approved", reviewed_by: userD }]);
+
+  const sharedFolderId = "90000000-0000-4000-8000-000000000001";
+  const ownerManagedFolderId = "90000000-0000-4000-8000-000000000002";
+  const financeDriveFileId = "90000000-0000-4000-8000-000000000003";
+  await database.query(
+    `insert into public.company_drive_items (id, company_id, item_type, category, name, created_by, modified_by)
+      values ($1, $2, 'folder', 'shared', 'Aisha Documents', $3, $3)`,
+    [sharedFolderId, companyA, userA],
+  );
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userB]);
+  const colleagueDriveFolder = await database.query("select id, name from public.company_drive_items where id = $1", [sharedFolderId]);
+  assert.deepEqual(colleagueDriveFolder.rows, [{ id: sharedFolderId, name: "Aisha Documents" }]);
+  await database.query("update public.company_drive_items set name = 'Aisha Workspace', modified_by = $2 where id = $1", [sharedFolderId, userB]);
+  const colleagueDelete = await database.query("delete from public.company_drive_items where id = $1 returning id", [sharedFolderId]);
+  assert.deepEqual(colleagueDelete.rows, []);
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+  await database.query("delete from public.company_drive_items where id = $1", [sharedFolderId]);
+  await database.query(
+    `insert into public.company_drive_items (id, company_id, item_type, category, name, created_by, modified_by)
+      values ($1, $2, 'folder', 'shared', 'Owner managed folder', $3, $3)`,
+    [ownerManagedFolderId, companyA, userA],
+  );
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userD]);
+  await database.query("delete from public.company_drive_items where id = $1", [ownerManagedFolderId]);
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userE]);
+  await database.query(
+    `insert into public.company_drive_items (
+      id, company_id, item_type, category, name, file_type, mime_type, file_size,
+      storage_path, source_type, source_id, created_by, modified_by
+    ) values (
+      $1, $2, 'file', 'finance', 'RCT-2026-00001.pdf', 'pdf', 'application/pdf', 100,
+      $3, 'receipt', '90000000-0000-4000-8000-000000000004', $4, $4
+    )`,
+    [financeDriveFileId, companyA, `company/${companyA}/drive/${financeDriveFileId}.pdf`, userE],
+  );
+  const financeManagerDriveAccess = await database.query("select id from public.company_drive_items where id = $1", [financeDriveFileId]);
+  assert.deepEqual(financeManagerDriveAccess.rows.map((item) => item.id), [financeDriveFileId]);
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userD]);
+  const generalManagerFinanceDriveAccess = await database.query("select id from public.company_drive_items where id = $1", [financeDriveFileId]);
+  assert.deepEqual(generalManagerFinanceDriveAccess.rows, []);
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+  const recruiterFinanceDriveAccess = await database.query("select id from public.company_drive_items where id = $1", [financeDriveFileId]);
+  assert.deepEqual(recruiterFinanceDriveAccess.rows, []);
 
   const visibleCandidates = await database.query("select id from public.candidates order by id");
   assert.deepEqual(visibleCandidates.rows.map((row) => row.id), [candidateA]);

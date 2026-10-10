@@ -6,7 +6,7 @@ export type DriveCategory = "shared" | "finance";
 export type DriveAction = "view" | "create" | "edit" | "move" | "delete";
 export type DriveSupabase = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 export type DriveAccess =
-  | { supabase: DriveSupabase; companyId: string; companyName: string; userId: string; userName: string; userEmail: string }
+  | { supabase: DriveSupabase; companyId: string; companyName: string; userId: string; userName: string; userEmail: string; isPrimaryCompanyUser: boolean }
   | { error: string; status: 401 | 403 };
 
 export async function getDriveAccess(): Promise<DriveAccess> {
@@ -24,9 +24,17 @@ export async function getDriveAccess(): Promise<DriveAccess> {
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 };
 
   const { data: profile } = await supabase.from("profiles").select("display_name").eq("id", user.id).maybeSingle();
-  const { data: company } = await supabase.from("companies").select("name").eq("id", membership.company_id).maybeSingle();
+  const { data: company } = await supabase.from("companies").select("name, primary_admin_user_id").eq("id", membership.company_id).maybeSingle();
   const userName = String(profile?.display_name || user.user_metadata?.full_name || user.email?.split("@")[0] || "User").trim();
-  return { supabase, companyId: membership.company_id, companyName: company?.name ?? "Company", userId: user.id, userName, userEmail: user.email ?? "" };
+  return {
+    supabase,
+    companyId: membership.company_id,
+    companyName: company?.name ?? "Company",
+    userId: user.id,
+    userName,
+    userEmail: user.email ?? "",
+    isPrimaryCompanyUser: company?.primary_admin_user_id === user.id,
+  };
 }
 
 export async function canAccessDriveCategory(access: DriveAccess, category: DriveCategory, action: DriveAction, creatorId?: string | null) {
@@ -41,15 +49,16 @@ export async function canAccessDriveCategory(access: DriveAccess, category: Driv
 }
 
 export async function drivePermissions(access: DriveAccess, category: DriveCategory) {
-  if ("error" in access) return { canUpload: false, canEdit: false, canMove: false, canDeleteAny: false, canManage: false };
-  const [canUpload, canEdit, canMove, canDeleteAny, canManage] = await Promise.all([
+  if ("error" in access) return { canUpload: false, canEdit: false, canMove: false, canDeleteAny: false, canManage: false, canViewFinance: false };
+  const [canUpload, canEdit, canMove, canDeleteAny, canManage, canViewFinance] = await Promise.all([
     canAccessDriveCategory(access, category, "create"),
     canAccessDriveCategory(access, category, "edit"),
     canAccessDriveCategory(access, category, "move"),
     access.supabase.rpc("is_company_drive_admin", { requested_company_id: access.companyId }).then(({ data, error }) => !error && Boolean(data)),
-    access.supabase.rpc("is_company_drive_finance_user", { requested_company_id: access.companyId }).then(({ data, error }) => !error && Boolean(data)),
+    access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "drive.finance.manage" }).then(({ data, error }) => !error && Boolean(data)),
+    canAccessDriveCategory(access, "finance", "view"),
   ]);
-  return { canUpload, canEdit, canMove, canDeleteAny, canManage };
+  return { canUpload, canEdit, canMove, canDeleteAny, canManage: canManage || canDeleteAny, canViewFinance };
 }
 
 export async function getDriveActorNames(access: DriveAccess, actorIds: string[]) {

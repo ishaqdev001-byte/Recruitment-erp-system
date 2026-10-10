@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, CircleAlert, CircleCheck, Info, Menu, Search, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
 import type { View, WorkspaceRole } from "../App";
 
@@ -33,13 +33,14 @@ const categoryActionItems: CommandItem[] = [
 type NotificationPriority = "Critical" | "Important" | "Informational";
 
 type NotificationItem = {
-  id: number;
+  id: string | number;
   priority: NotificationPriority;
   type: "warning" | "error" | "info" | "success";
   title: string;
   body: string;
   time: string;
   read: boolean;
+  taskNotificationId?: string;
 };
 
 const notifications: NotificationItem[] = [
@@ -88,6 +89,7 @@ export default function TopBar({
   const [showProfile, setShowProfile] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [notifs, setNotifs] = useState(notifications);
+  const shownReminderIds = useRef(new Set<string>());
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -106,6 +108,56 @@ export default function TopBar({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadTaskReminders = async () => {
+      try {
+        const response = await fetch("/api/tasks/reminders", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = await response.json() as { reminders?: { id: string; title: string; body: string; sent_at: string; read_at: string | null }[] };
+        if (cancelled) return;
+        const reminders = payload.reminders ?? [];
+        setNotifs((current) => [
+          ...reminders.map((reminder) => ({
+            id: `task-${reminder.id}`,
+            taskNotificationId: reminder.id,
+            priority: "Important" as const,
+            type: "warning" as const,
+            title: reminder.title,
+            body: reminder.body,
+            time: new Date(reminder.sent_at).toLocaleString(),
+            read: Boolean(reminder.read_at),
+          })),
+          ...current.filter((item) => !item.taskNotificationId),
+        ]);
+        const canNotify = "Notification" in window && window.Notification.permission === "granted";
+        if (!canNotify) return;
+        const cutoff = Date.now() - 5 * 60 * 1000;
+        for (const reminder of reminders) {
+          if (reminder.read_at || shownReminderIds.current.has(reminder.id) || Date.parse(reminder.sent_at) < cutoff) continue;
+          shownReminderIds.current.add(reminder.id);
+          const notification = new window.Notification(reminder.title, { body: reminder.body, tag: reminder.id });
+          notification.onclick = () => {
+            window.focus();
+            onNavigate("communications");
+            notification.close();
+          };
+        }
+      } catch {
+        return;
+      }
+    };
+    const refreshTaskReminders = () => { void loadTaskReminders(); };
+    void loadTaskReminders();
+    const interval = window.setInterval(() => { void loadTaskReminders(); }, 60000);
+    window.addEventListener("task-reminders-changed", refreshTaskReminders);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("task-reminders-changed", refreshTaskReminders);
+    };
+  }, [onNavigate]);
 
   const results = useMemo(() => {
     const normalized = query.toLowerCase();
@@ -126,9 +178,16 @@ export default function TopBar({
     { priority: "Informational" as const, items: notifs.filter((item) => item.priority === "Informational") },
   ];
 
-  const markAllRead = () => setNotifs((prev) => prev.map((n) => ({ ...n, read: true })));
+  const markAllRead = async () => {
+    await fetch("/api/tasks/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }).catch(() => undefined);
+    setNotifs((prev) => prev.map((n) => ({ ...n, read: true })));
+  };
 
-  const snoozeNotification = (id: number) => {
+  const snoozeNotification = async (id: string | number) => {
+    const notification = notifs.find((item) => item.id === id);
+    if (notification?.taskNotificationId) {
+      await fetch("/api/tasks/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.taskNotificationId }) }).catch(() => undefined);
+    }
     setNotifs((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
   };
 
@@ -283,6 +342,7 @@ export default function TopBar({
                               <div className="mono text-[11px] mt-1" style={{ color: "var(--muted-foreground)" }}>{n.time}</div>
                             </div>
                             <div className="flex flex-col items-end gap-2">
+                              {n.taskNotificationId && <button onClick={() => { onNavigate("communications"); setShowNotifs(false); }} className="text-[10px] font-600" style={{ color: "var(--primary)" }}>Open</button>}
                               {!n.read && <div className="w-2 h-2 rounded-full" style={{ background: "var(--primary)" }} />}
                               <button onClick={() => snoozeNotification(n.id)} className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>
                                 Snooze

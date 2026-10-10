@@ -43,15 +43,14 @@ const localDate = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 };
-const groupInitials = (companyName: string) => {
+const companyInitials = (companyName: string) => {
   const words = companyName.toLocaleUpperCase().replace(/[^A-Z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
   return (words.length > 1 ? words.slice(0, 3).map((word) => word[0]).join("") : (words[0] ?? "ORG").slice(0, 3)) || "ORG";
 };
-const groupNumber = (companyName: string, trackingNumber: number) => {
-  const first = Math.floor((trackingNumber - 1) / 10) * 10 + 1;
-  return `${groupInitials(companyName)} ${String(first).padStart(3, "0")} - ${String(first + 9).padStart(3, "0")}`;
+const passportId = (companyName: string, trackingNumber: number) => {
+  const groupNumber = 1 + Math.floor((trackingNumber - 1) / 10);
+  return `${companyInitials(companyName)} ${String(groupNumber).padStart(3, "0")}-${String(trackingNumber).padStart(3, "0")}`;
 };
-const trackNumber = (number: number) => String(number).padStart(4, "0");
 
 export default function PassportCustodyWorkspace({ companyName, onRegisterCandidate }: { companyName: string; onRegisterCandidate: () => void }) {
   const [records, setRecords] = useState<PassportRecord[]>([]);
@@ -88,8 +87,8 @@ export default function PassportCustodyWorkspace({ companyName, onRegisterCandid
 
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const filtered = useMemo(() => records.filter((record) => {
-    const group = groupNumber(companyName, record.tracking_number);
-    return `${group} ${trackNumber(record.tracking_number)} ${record.candidate_name} ${record.file_number} ${record.passport_number} ${record.agent_name} ${record.storage_branch} ${record.storage_location} ${record.passport_status}`
+    const id = passportId(companyName, record.tracking_number);
+    return `${id} ${record.candidate_name} ${record.file_number} ${record.passport_number} ${record.agent_name} ${record.storage_branch} ${record.storage_location} ${record.passport_status}`
       .toLocaleLowerCase().includes(normalizedSearch);
   }), [companyName, normalizedSearch, records]);
   const counts = {
@@ -152,7 +151,7 @@ export default function PassportCustodyWorkspace({ companyName, onRegisterCandid
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-        <label className="flex w-full max-w-lg items-center gap-2 border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search passports" placeholder="Search group, tracking number, holder, passport, or agent" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
+        <label className="flex w-full max-w-lg items-center gap-2 border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search passports" placeholder="Search passport ID, holder, passport, or agent" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
         <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{filtered.length} passports</span>
       </div>
 
@@ -160,14 +159,13 @@ export default function PassportCustodyWorkspace({ companyName, onRegisterCandid
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-220 text-sm">
-            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Group No", "Track No", "Holder's name", "Passport number", "Agent", "Storage location", "Status"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Passport ID", "Holder's name", "Passport number", "Agent", "Storage location", "Status"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading passport records…</td></tr>}
-              {!loading && !error && filtered.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{records.length ? "No passports match this search." : "No passports registered yet. Add passport details when registering a candidate."}</td></tr>}
+              {loading && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading passport records…</td></tr>}
+              {!loading && !error && filtered.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{records.length ? "No passports match this search." : "No passports registered yet. Add passport details when registering a candidate."}</td></tr>}
               {!loading && filtered.map((record) => <tr key={record.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
-                <td className="whitespace-nowrap px-3 py-3 mono text-xs font-600" style={{ color: "var(--foreground)" }}>{groupNumber(companyName, record.tracking_number)}</td>
-                <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "var(--primary)" }}>{trackNumber(record.tracking_number)}</td>
-                <td className="whitespace-nowrap px-3 py-3"><div className="text-xs font-600" style={{ color: "var(--foreground)" }}>{record.candidate_name}</div><div className="mono mt-0.5 text-[10px]" style={{ color: "var(--muted-foreground)" }}>{record.file_number}</div></td>
+                <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "var(--primary)" }}>{passportId(companyName, record.tracking_number)}</td>
+                <td className="whitespace-nowrap px-3 py-3"><div className="text-xs font-600" style={{ color: "var(--foreground)" }}>{record.candidate_name}</div></td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{record.passport_number}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{record.agent_name || "—"}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{record.passport_status === "available" ? `Locker - ${record.storage_branch}${record.storage_location ? ` · ${record.storage_location}` : ""}` : record.passport_status === "with_agent" ? `With ${record.agent_name || "agent"}` : record.passport_status === "withdrawn" ? `Withdrawn ${record.withdrawn_at ?? ""}` : `Transferred to ${record.transfer_destination}`}</td>

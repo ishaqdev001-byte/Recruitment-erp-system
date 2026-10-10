@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { ensureInterServerCandidateFolders } from "@/lib/storage/interserver";
 
 export const runtime = "nodejs";
 
@@ -51,7 +53,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from("candidates")
-      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details")
+      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details, created_at")
       .order("created_at", { ascending: false });
     if (error) {
       console.error("Candidate list query failed", error);
@@ -99,7 +101,15 @@ export async function POST(request: Request) {
     if (dateOfBirth && (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth) || Number.isNaN(Date.parse(dateOfBirth)))) {
       return NextResponse.json({ error: "Date of birth is invalid." }, { status: 400, headers });
     }
+    const candidateId = randomUUID();
+    try {
+      await ensureInterServerCandidateFolders(membership.company_id, candidateId, `${firstName} ${lastName}`);
+    } catch (error) {
+      console.error("Candidate InterServer folder could not be created", error);
+      return NextResponse.json({ error: "Unable to create the candidate folder in InterServer. Check the FTP connection and remote base path." }, { status: 503, headers });
+    }
     const { data, error } = await supabase.from("candidates").insert({
+      id: candidateId,
       company_id: membership.company_id,
       created_by: user.id,
       file_number: fileNumber,

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DocumentInputError, isDocumentType, isUuid, safeDownloadName, validateDocumentUpload } from "@/lib/server/documents";
+import { createDocumentStoragePath, DocumentInputError, isDocumentType, isUuid, MAX_DOCUMENT_SIZE, safeDownloadName, validateDocumentUpload } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { deleteInterServerFile, downloadInterServerFile, uploadInterServerFile } from "@/lib/storage/interserver";
 
@@ -10,7 +10,7 @@ const privateJson = (body: unknown, status = 200) =>
 
 function requestExceedsUploadLimit(request: Request) {
   const contentLength = Number(request.headers.get("content-length"));
-  return Number.isFinite(contentLength) && contentLength > 4 * 1024 * 1024 + 64 * 1024;
+  return Number.isFinite(contentLength) && contentLength > MAX_DOCUMENT_SIZE + 64 * 1024;
 }
 
 async function getAuthorizedDocument(documentId: string, action: string) {
@@ -122,14 +122,21 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
 export async function PUT(request: Request, context: RouteContext<"/api/candidate-documents/[documentId]">) {
   let replacementPath: string | undefined;
   try {
-    if (requestExceedsUploadLimit(request)) return privateJson({ error: "Files must be 4 MB or smaller." }, 413);
+    if (requestExceedsUploadLimit(request)) return privateJson({ error: `Files must be ${Math.floor(MAX_DOCUMENT_SIZE / (1024 * 1024))} MB or smaller.` }, 413);
     const { documentId } = await context.params;
     const result = await getAuthorizedDocument(documentId, "edit");
     if ("response" in result) return result.response;
 
     const formData = await request.formData();
     const file = await validateDocumentUpload(formData);
-    replacementPath = `company/${result.document.company_id}/candidates/${result.document.candidate_id}/${result.document.document_type}/${crypto.randomUUID()}.${file.extension}`;
+    const { data: candidate, error: candidateError } = await result.supabase
+      .from("candidates")
+      .select("first_name, last_name")
+      .eq("id", result.document.candidate_id)
+      .eq("company_id", result.document.company_id)
+      .maybeSingle();
+    if (candidateError || !candidate) return privateJson({ error: "Candidate not found." }, 404);
+    replacementPath = createDocumentStoragePath(result.document.company_id, result.document.candidate_id, `${candidate.first_name} ${candidate.last_name}`, result.document.document_type, file.extension);
     await uploadInterServerFile(replacementPath, file.buffer);
 
     const { data, error } = await result.supabase

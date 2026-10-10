@@ -34,6 +34,17 @@ function formatDocumentType(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  if (!text.trim()) return {} as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    const trimmed = text.replace(/\s+/g, " ").slice(0, 220);
+    throw new Error(trimmed.startsWith("<") ? "The server returned an HTML error page instead of a JSON response. Check the backend logs and storage configuration." : `The server returned invalid JSON: ${trimmed}`);
+  }
+}
+
 export default function AttachmentDrawer({ candidate, onClose }: { candidate: CandidateIdentity; onClose: () => void }) {
   const [documents, setDocuments] = useState<CandidateDocument[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +67,7 @@ export default function AttachmentDrawer({ candidate, onClose }: { candidate: Ca
     setError("");
     fetch(`/api/candidates/${encodeURIComponent(candidate.id)}/documents`, { cache: "no-store" })
       .then(async (response) => {
-        const payload = await response.json() as { documents?: CandidateDocument[]; error?: string };
+        const payload = await readJsonResponse<{ documents?: CandidateDocument[]; error?: string }>(response);
         if (!response.ok) throw new Error(payload.error || "Unable to load candidate documents.");
         if (!cancelled) setDocuments(payload.documents ?? []);
       })
@@ -84,7 +95,7 @@ export default function AttachmentDrawer({ candidate, onClose }: { candidate: Ca
       formData.set("notes", notes);
       if (expiresAt) formData.set("expiresAt", expiresAt);
       const response = await fetch(`/api/candidates/${encodeURIComponent(candidate.id)}/documents`, { method: "POST", body: formData });
-      const payload = await response.json() as { error?: string };
+      const payload = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(payload.error || "Unable to upload the attachment.");
       setFile(null);
       setNotes("");
@@ -107,7 +118,7 @@ export default function AttachmentDrawer({ candidate, onClose }: { candidate: Ca
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileName: editingName }),
       });
-      const payload = await response.json() as { error?: string };
+      const payload = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(payload.error || "Unable to rename this attachment.");
       setEditingId(null);
       setRefreshKey((key) => key + 1);
@@ -126,7 +137,7 @@ export default function AttachmentDrawer({ candidate, onClose }: { candidate: Ca
       for (const id of ids) {
         const response = await fetch(`/api/candidate-documents/${encodeURIComponent(id)}`, { method: "DELETE" });
         if (!response.ok) {
-          const payload = await response.json() as { error?: string };
+          const payload = await readJsonResponse<{ error?: string }>(response);
           throw new Error(payload.error || "Unable to delete the selected attachment(s).");
         }
       }
@@ -172,6 +183,7 @@ export default function AttachmentDrawer({ candidate, onClose }: { candidate: Ca
               <label className="block text-xs font-700" style={{ color: "var(--foreground)" }}>Type
                 <select value={documentType} onChange={(event) => setDocumentType(event.target.value)} className="mt-1 w-full rounded border px-2 py-2 text-xs" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }}>
                   {[["cv", "CV"], ["passport", "Passport"], ["medical", "Medical"], ["id", "ID"], ["certificate", "Certificate"], ["contract", "Contract"], ["visa", "Visa"], ["payment_receipt", "Payment receipt"], ["photo", "Photo"], ["other", "Other"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    {[["cv", "CV"], ["passport", "Passport"], ["medical", "Medical"], ["id", "ID"], ["certificate", "Certificate"], ["contract", "Contract"], ["visa", "Visa"], ["payment_receipt", "Payment receipt"], ["photo", "Photo"], ["other", "Other"], ["invoice", "Invoice"], ["ticket", "Ticket"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
               </label>
               <label className="block text-xs font-700" style={{ color: "var(--foreground)" }}>Expiry date
@@ -181,7 +193,7 @@ export default function AttachmentDrawer({ candidate, onClose }: { candidate: Ca
             <label className="block text-xs font-700" style={{ color: "var(--foreground)" }}>Notes
               <textarea rows={2} maxLength={2000} value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1 w-full resize-y rounded border px-2 py-2 text-xs" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }} />
             </label>
-            <p className="text-[11px]" style={{ color: "var(--muted-foreground)" }}>PDF, JPEG, PNG, or WebP up to 4 MB.</p>
+            <p className="text-[11px]" style={{ color: "var(--muted-foreground)" }}>PDF, JPEG, PNG, or WebP up to 25 MB.</p>
             <div className="flex gap-2">
               <button type="submit" disabled={uploading} className="rounded px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{uploading ? "Uploading…" : "Upload file"}</button>
               <button type="button" onClick={() => setShowUpload(false)} className="rounded border px-3 py-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>Cancel</button>

@@ -4,30 +4,35 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0",
+    "dev": "npx --yes --package=node@22.23.3 --call \"node node_modules/next/dist/bin/next dev --hostname 0.0.0.0\"",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "format": "oxfmt",
-    "test:supabase-migration": "node scripts/test-supabase-migration.mjs"
+    "test:supabase-migration": "node scripts/test-supabase-migration.mjs",
+    "webdav:company-drive": "node scripts/company-drive-webdav.mjs",
+    "storage:organize-company-folders": "node scripts/organize-company-drive-storage.mjs",
+    "storage:provision-candidate-folders": "node scripts/provision-candidate-folders.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.2",
+    "archiver": "^8.0.0",
+    "basic-ftp": "^6.2.2",
     "file-type": "^22.1.1",
     "lucide-react": "^1.51.0",
     "next": "^16.0.0",
     "pdf-lib": "^1.17.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "ssh2-sftp-client": "^12.1.1"
+    "webdav-server": "2.6.3"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@tailwindcss/postcss": "^4.0.0",
+    "@types/archiver": "^8.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@types/ssh2-sftp-client": "^9.0.6",
     "oxfmt": "^0.2.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0"

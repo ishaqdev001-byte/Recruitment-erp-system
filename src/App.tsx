@@ -18,6 +18,8 @@ import PassportCustody from "./components/PassportCustodyWorkspace";
 import Attendance from "./components/Attendance";
 import LeaveManagement from "./components/LeaveManagement";
 import CompanyDrive from "./components/CompanyDrive";
+import Tasks from "./components/TaskWorkspace";
+import Communications from "./components/Communications";
 import { createSupabaseBrowserClient } from "./lib/supabase/browser";
 
 export type View =
@@ -471,6 +473,10 @@ export default function App() {
         return <Attendance />;
       case "leave":
         return <LeaveManagement />;
+      case "tasks":
+        return <Tasks />;
+      case "communications":
+        return <Communications onOpenTasks={() => setView("tasks")} />;
       case "passport":
         return <PassportCustody companyName={session?.companyName ?? ""} onRegisterCandidate={() => setView("candidates")} />;
       default:

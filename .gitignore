@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next-runtime/
 out/
 coverage/
 .cache/

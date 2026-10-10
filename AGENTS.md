@@ -23,7 +23,11 @@ Run `pnpm dev` to start the development server, `pnpm build` to create a product
 
 ## Supabase user management
 
-Apply all pending migrations through `supabase/migrations/202610040019_company_drive.sql` before starting the updated app. The company user invitation and role-management API also requires `SUPABASE_SERVICE_ROLE_KEY` in the server environment; keep this key private and never expose it through a `NEXT_PUBLIC_` variable.
+Apply all pending migrations through `supabase/migrations/202610040026_smsug_communications.sql` before starting the updated app. Task reminders are delivered in-app and through optional browser notifications while a signed-in workspace is open; assignees with a profile phone can also receive SMSUG reminders when an authorized task creator opts in. In SMSUG Settings > API Settings, turn API access on and set `SMSUG_API_KEY` only in the server environment; never expose it through a `NEXT_PUBLIC_` variable. SMSUG sends immediately and charges the account balance; check Sent Messages before retrying an ambiguous send. Email, WhatsApp, and other external delivery providers are not configured. The company user invitation and role-management API requires `SUPABASE_SERVICE_ROLE_KEY`; optional task SMS delivery also uses it to securely deliver to the assigned staff member. Keep this key private and never expose it through a `NEXT_PUBLIC_` variable.
+
+After applying the candidate document storage migrations, run `npm run storage:provision-candidate-folders` once to create both InterServer folders for existing candidates and move their attachments into the named candidate folders. New candidate folders are created during registration.
+
+After applying the company root folder access migration, run `npm run storage:organize-company-folders` once to ensure each company root has `users`, `finance`, `candidates`, and `drive` directories, move primary-user vault files into `drive`, and move existing Finance Drive files into `finance`.
 
 Set `NEXT_PUBLIC_SITE_URL` to the canonical app origin used in invitation emails, and add that origin to the Supabase Auth redirect URL allow list. It defaults to the current request origin when unset.
 

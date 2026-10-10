@@ -3,11 +3,14 @@ import "server-only";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { randomUUID } from "node:crypto";
 import type { DriveAccess } from "@/lib/server/company-drive";
-import { uploadCompanyDriveFile } from "@/lib/storage/interserver";
+import { candidateStorageFolderName } from "@/lib/server/documents";
+import { deleteCompanyDriveFile, hasInterServerStorageConfig, uploadCompanyDriveFile } from "@/lib/storage/interserver";
 
 type FinanceAccess = Exclude<DriveAccess, { error: string }>;
 type InvoiceSource = {
   id: string;
+  recipient_type: string;
+  recipient_id: string | null;
   invoice_number: string;
   recipient_name: string;
   description: string;
@@ -20,6 +23,7 @@ type InvoiceSource = {
 };
 type ReceiptSource = {
   id: string;
+  candidate_id: string | null;
   receipt_number: string;
   received_from: string;
   category: string;
@@ -53,6 +57,8 @@ async function storeFinancePdf(access: FinanceAccess, source: {
   id: string;
   name: string;
   sourceType: "invoice" | "receipt";
+  candidateId?: string | null;
+  candidateName?: string;
   createdBy: string | null;
   updatedAt: string;
   fields: [string, string][];
@@ -65,10 +71,16 @@ async function storeFinancePdf(access: FinanceAccess, source: {
     .eq("source_id", source.id)
     .maybeSingle();
   if (existingError) throw existingError;
-  if (existing && new Date(existing.updated_at).valueOf() >= new Date(source.updatedAt).valueOf()) return;
-
   const itemId = existing?.id ?? randomUUID();
-  const storagePath = existing?.storage_path ?? `company/${access.companyId}/drive/${itemId}.pdf`;
+  const candidateFolder = source.candidateId
+    ? candidateStorageFolderName(source.candidateId, source.candidateName || source.name)
+    : null;
+  const candidateDocumentType = source.sourceType === "invoice" ? "invoice" : "payment_receipt";
+  const storagePath = candidateFolder
+    ? `company/${access.companyId}/finance/candidates/${candidateFolder}/${candidateDocumentType}/${itemId}.pdf`
+    : `company/${access.companyId}/finance/${itemId}.pdf`;
+  if (existing && existing.storage_path === storagePath && new Date(existing.updated_at).valueOf() >= new Date(source.updatedAt).valueOf()) return;
+
   const content = await renderFinancePdf(source.name, source.fields);
   await uploadCompanyDriveFile(storagePath, content);
 
@@ -90,16 +102,27 @@ async function storeFinancePdf(access: FinanceAccess, source: {
     ? await access.supabase.from("company_drive_items").update(item).eq("id", itemId).select("id").single()
     : await access.supabase.from("company_drive_items").insert({ ...item, id: itemId }).select("id").single();
   if (result.error || !result.data) throw result.error ?? new Error("Finance file metadata could not be saved.");
+  if (existing?.storage_path && existing.storage_path !== storagePath) {
+    try {
+      await deleteCompanyDriveFile(existing.storage_path);
+    } catch (error) {
+      console.error("Previous finance PDF storage cleanup failed", error);
+    }
+  }
 }
 
 export async function syncFinanceDrive(access: FinanceAccess) {
+  if (!hasInterServerStorageConfig()) {
+    return;
+  }
+
   const [{ data: invoices, error: invoiceError }, { data: receipts, error: receiptError }] = await Promise.all([
     access.supabase.from("invoices")
-      .select("id, invoice_number, recipient_name, description, amount, due_date, issued_at, status, created_by, updated_at")
+      .select("id, recipient_type, recipient_id, invoice_number, recipient_name, description, amount, due_date, issued_at, status, created_by, updated_at")
       .eq("company_id", access.companyId)
       .order("issued_at", { ascending: false }),
     access.supabase.from("financial_receipts")
-      .select("id, receipt_number, received_from, category, amount, payment_method, external_reference, notes, received_at, created_by, created_at")
+      .select("id, candidate_id, receipt_number, received_from, category, amount, payment_method, external_reference, notes, received_at, created_by, created_at")
       .eq("company_id", access.companyId)
       .order("received_at", { ascending: false }),
   ]);
@@ -110,6 +133,8 @@ export async function syncFinanceDrive(access: FinanceAccess) {
       id: value.id,
       name: `${value.invoice_number}.pdf`,
       sourceType: "invoice",
+      candidateId: value.recipient_type === "candidate" ? value.recipient_id : null,
+      candidateName: value.recipient_name,
       createdBy: value.created_by,
       updatedAt: value.updated_at,
       fields: [
@@ -129,6 +154,8 @@ export async function syncFinanceDrive(access: FinanceAccess) {
       id: value.id,
       name: `${value.receipt_number}.pdf`,
       sourceType: "receipt",
+      candidateId: value.candidate_id,
+      candidateName: value.received_from,
       createdBy: value.created_by,
       updatedAt: value.created_at,
       fields: [

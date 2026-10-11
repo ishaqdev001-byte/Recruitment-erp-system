@@ -34,7 +34,7 @@ export async function GET(request: Request) {
       ? "openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send"
       : "openid profile email offline_access User.Read Mail.Read Mail.Send",
     state,
-    ...(providerValue === "gmail" ? { access_type: "offline", prompt: "consent" } : { prompt: "select_account" }),
+    ...(providerValue === "gmail" ? { access_type: "offline", prompt: "select_account consent" } : { prompt: "select_account" }),
   }).toString();
 
   const response = NextResponse.json({ url: authorizeUrl.toString() }, { headers });

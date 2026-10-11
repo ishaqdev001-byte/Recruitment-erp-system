@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type MailProvider = "gmail" | "outlook";
 export type MailAccess =
-  | { supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>; companyId: string; userId: string }
+  | { supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>; companyId: string; userId: string; userEmail: string }
   | { error: string; status: 401 | 403 };
 export type MailConnection = {
   id: string;
@@ -17,6 +17,8 @@ export type MailConnection = {
   refresh_token_ciphertext: string;
   expires_at: string;
   scopes: string;
+  auth_type: "oauth" | "imap_smtp";
+  credentials_ciphertext: string | null;
 };
 
 export function isMailProvider(value: string | null): value is MailProvider {
@@ -44,7 +46,26 @@ export function decryptMailToken(value: string) {
   return Buffer.concat([decipher.update(Buffer.from(ciphertext, "base64url")), decipher.final()]).toString("utf8");
 }
 
-export async function getMailAccess(permission: "communications.email.read" | "communications.email.send"): Promise<MailAccess> {
+export function getImapSmtpSettings(connection: MailConnection) {
+  if (!connection.credentials_ciphertext) throw new Error("IMAP/SMTP settings are missing.");
+  const settings = JSON.parse(decryptMailToken(connection.credentials_ciphertext)) as {
+    emailAddress: string;
+    imapHost: string;
+    imapPort: number;
+    imapSecure: boolean;
+    smtpHost: string;
+    smtpPort: number;
+    smtpSecure: boolean;
+    username: string;
+    password: string;
+  };
+  if (!settings.emailAddress || !settings.imapHost || !settings.smtpHost || !settings.username || !settings.password) {
+    throw new Error("Stored IMAP/SMTP settings are incomplete.");
+  }
+  return settings;
+}
+
+export async function getMailAccess(permission: "communications.email.read" | "communications.email.send" | "communications.whatsapp.read" | "communications.whatsapp.send" | "communications.whatsapp.manage"): Promise<MailAccess> {
   const supabase = await createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return { error: "Authentication required.", status: 401 };
@@ -55,8 +76,12 @@ export async function getMailAccess(permission: "communications.email.read" | "c
     requested_company_id: membership.company_id,
     requested_permission: permission,
   });
-  if (permissionError || !allowed) return { error: `You do not have permission to ${permission.endsWith("send") ? "send" : "read"} linked email.`, status: 403 };
-  return { supabase, companyId: membership.company_id, userId: user.id };
+  if (permissionError || !allowed) {
+    const action = permission.endsWith("send") ? "send" : permission.endsWith("manage") ? "manage" : "read";
+    const resource = permission.includes("whatsapp") ? "the company WhatsApp inbox" : "linked email";
+    return { error: `You do not have permission to ${action} ${resource}. Ask an administrator to grant ${permission}.`, status: 403 };
+  }
+  return { supabase, companyId: membership.company_id, userId: user.id, userEmail: user.email ?? "" };
 }
 
 export function mailClientId(provider: MailProvider) {

@@ -4,7 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const supabase = await createSupabaseServerClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -24,12 +24,26 @@ export async function GET() {
     ]);
     const contacts: { id: string; type: string; name: string; phone: string }[] = [];
     if (!permissionChecks[0].error && permissionChecks[0].data) {
-      const { data, error } = await supabase.from("candidates")
-        .select("id, first_name, last_name, phone").eq("company_id", membership.company_id)
-        .not("phone", "is", null).order("first_name").limit(3000);
-      if (error) throw error;
-      for (const candidate of data ?? []) {
-        if (candidate.phone?.trim()) contacts.push({ id: candidate.id, type: "Candidate", name: `${candidate.first_name} ${candidate.last_name}`.trim(), phone: candidate.phone });
+      const includeAllCandidates = new URL(request.url).searchParams.get("includeAll") === "true";
+      const candidates = [];
+      if (!includeAllCandidates) {
+        const { data, error } = await supabase.from("candidates")
+          .select("id, first_name, last_name, phone").eq("company_id", membership.company_id)
+          .not("phone", "is", null).order("first_name").limit(3000);
+        if (error) throw error;
+        candidates.push(...(data ?? []));
+      } else {
+        for (let start = 0; start < 10000; start += 1000) {
+          const { data, error } = await supabase.from("candidates")
+            .select("id, first_name, last_name, phone").eq("company_id", membership.company_id)
+            .order("first_name").range(start, start + 999);
+          if (error) throw error;
+          candidates.push(...(data ?? []));
+          if (!data || data.length < 1000) break;
+        }
+      }
+      for (const candidate of candidates) {
+        if (includeAllCandidates || candidate.phone?.trim()) contacts.push({ id: candidate.id, type: "Candidate", name: `${candidate.first_name} ${candidate.last_name}`.trim(), phone: candidate.phone ?? "" });
       }
     }
     if (!permissionChecks[1].error && permissionChecks[1].data) {

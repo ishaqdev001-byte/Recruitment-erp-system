@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, CircleCheck, Mail, MessageSquare, MessagesSquare, Phone, StickyNote, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Mail, MessageSquare, MessagesSquare, Phone, StickyNote, X, type LucideIcon } from "lucide-react";
+import SmsWorkspace from "@/components/SmsWorkspace";
+import WhatsAppWorkspace from "@/components/WhatsAppWorkspace";
 
 type Channel = "Email" | "SMS" | "Phone" | "WhatsApp" | "Note";
 type ContactType = "Candidate" | "Employer" | "Agent" | "Staff" | "Other";
@@ -14,19 +16,21 @@ interface Message {
   body: string;
   date: string;
   by: string;
-  status: "Sent" | "Received" | "Failed" | "Logged" | "Sending" | "Unknown";
+  status: "Sent" | "Received" | "Draft" | "Failed" | "Logged" | "Sending" | "Unknown";
   smsLog?: boolean;
+  mailLog?: boolean;
 }
 
-type TaskReminder = { id: string; title: string; body: string; sent_at: string; read_at: string | null; sms_status?: string; sms_error?: string };
 type SmsContact = { id: string; type: ContactType; name: string; phone: string };
 type SmsHistoryItem = { id: string; title: string; message: string; contacts: string[]; contact_name: string; contact_type: ContactType; provider_status: string; provider_error: string; provider_token: string | null; recipients: number | null; cost: number | null; balance: number | null; created_at: string };
+type MailProvider = "gmail" | "outlook";
+type MailFolder = "inbox" | "starred" | "sent" | "drafts";
+type Mailbox = { provider: MailProvider; email_address: string; connected_at: string; auth_type?: "oauth" | "imap_smtp" };
+type MailboxesPayload = { mailboxes?: Mailbox[]; configured?: Partial<Record<MailProvider, boolean>>; canSend?: boolean; platformEmail?: string; defaultProvider?: MailProvider; error?: string };
+type ProviderMail = { id: string; provider: MailProvider; direction: "Inbound" | "Outbound"; from: string; to: string; subject: string; body: string; date: string; status: "Received" | "Sent" | "Draft" | "Failed" | "Unknown" };
 
 const messages: Message[] = [
-  { id: 2, contact: "Gulf Manpower Ltd", contactType: "Employer", channel: "Email", direction: "Outbound", subject: "Invoice INV-2026-003", body: "Please find attached invoice INV-2026-003 for placement of Mr. Godfrey Kamuhangire.", date: "Aug 25, 2026 14:30", by: "Aisha Khan", status: "Sent" },
   { id: 3, contact: "Suzan Mirembe", contactType: "Candidate", channel: "Phone", direction: "Outbound", subject: "Medical certificate follow-up", body: "Called to follow up on medical certificate. Candidate confirmed she will collect it from the clinic on Aug 27.", date: "Aug 25, 2026 11:15", by: "Director Vicent", status: "Logged" },
-  { id: 4, contact: "Alice Namukasa", contactType: "Candidate", channel: "WhatsApp", direction: "Inbound", subject: "Passport query", body: "Alice asked about the status of her passport and visa. Replied that visa is being processed and will be ready by Sep 2.", date: "Aug 24, 2026 16:45", by: "Director Vicent", status: "Received" },
-  { id: 5, contact: "Kuwait Home Services", contactType: "Employer", channel: "Email", direction: "Inbound", subject: "RE: Candidate profiles", body: "Thank you for the candidate profiles. We are interested in CRSL-283710044. Please proceed with the visa application.", date: "Aug 24, 2026 10:20", by: "Aisha Khan", status: "Received" },
 ];
 
 const templates = [
@@ -41,10 +45,8 @@ const channelColor: Record<Channel, string> = { Email: "#3b82f6", SMS: "#10b981"
 const channelIcon: Record<Channel, LucideIcon> = { Email: Mail, SMS: MessageSquare, Phone, WhatsApp: MessagesSquare, Note: StickyNote };
 const contactColor: Record<ContactType, string> = { Candidate: "#6366f1", Employer: "#f59e0b", Agent: "#3b82f6", Staff: "#8b5cf6", Other: "#6b7280" };
 
-export default function Communications({ onOpenTasks }: { onOpenTasks?: () => void }) {
+export default function Communications({ userName = "Team", companyName = "", userEmail = "" }: { userName?: string; companyName?: string; userEmail?: string }) {
   const [msgs, setMsgs] = useState<Message[]>(messages);
-  const [reminders, setReminders] = useState<TaskReminder[]>([]);
-  const [reminderError, setReminderError] = useState("");
   const [channelFilter, setChannelFilter] = useState<Channel | "All">("All");
   const [contactFilter, setContactFilter] = useState<ContactType | "All">("All");
   const [selected, setSelected] = useState<Message | null>(null);
@@ -53,7 +55,7 @@ export default function Communications({ onOpenTasks }: { onOpenTasks?: () => vo
   const [contacts, setContacts] = useState<SmsContact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [smsConfigured, setSmsConfigured] = useState<boolean | null>(null);
-  const [smsChannel, setSmsChannel] = useState<Channel>("SMS");
+  const [composeChannel, setComposeChannel] = useState<Channel>("SMS");
   const [smsRecipientId, setSmsRecipientId] = useState("");
   const [manualContacts, setManualContacts] = useState("");
   const [smsTitle, setSmsTitle] = useState("");
@@ -61,6 +63,26 @@ export default function Communications({ onOpenTasks }: { onOpenTasks?: () => vo
   const [smsRequestId, setSmsRequestId] = useState("");
   const [sendingSms, setSendingSms] = useState(false);
   const [smsError, setSmsError] = useState("");
+  const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
+  const [platformEmail, setPlatformEmail] = useState("");
+  const [mailConfigured, setMailConfigured] = useState<Partial<Record<MailProvider, boolean>>>({});
+  const [mailCanSend, setMailCanSend] = useState(false);
+  const [activeMailProvider, setActiveMailProvider] = useState<MailProvider | "">("");
+  const [mailFolder, setMailFolder] = useState<MailFolder>("inbox");
+  const [mailMessages, setMailMessages] = useState<Message[]>([]);
+  const [mailLoading, setMailLoading] = useState(false);
+  const [mailError, setMailError] = useState("");
+  const [mailNotice, setMailNotice] = useState("");
+  const [mailTo, setMailTo] = useState("");
+  const [mailSubject, setMailSubject] = useState("");
+  const [mailBody, setMailBody] = useState("");
+  const [mailRequestId, setMailRequestId] = useState("");
+  const [sendingMail, setSendingMail] = useState(false);
+  const [showImapSetup, setShowImapSetup] = useState(false);
+  const [savingImapSetup, setSavingImapSetup] = useState(false);
+  const [imapSetupError, setImapSetupError] = useState("");
+  const [imapSetupNotice, setImapSetupNotice] = useState("");
+  const [imapSettings, setImapSettings] = useState({ emailAddress: "", imapHost: "", imapPort: "993", imapSecure: true, smtpHost: "", smtpPort: "465", smtpSecure: true, username: "", password: "" });
 
   const loadSmsHistory = async () => {
     try {
@@ -89,15 +111,154 @@ export default function Communications({ onOpenTasks }: { onOpenTasks?: () => vo
 
   useEffect(() => { void loadSmsHistory(); }, []);
 
-  const openCompose = async () => {
+  const loadMailMessages = async (provider: MailProvider) => {
+    setMailLoading(true);
+    setMailError("");
+    try {
+      const response = await fetch(`/api/communications/mail/messages?provider=${provider}&folder=${mailFolder}`, { cache: "no-store" });
+      const payload = await response.json() as { messages?: ProviderMail[]; mailbox?: string; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to load this inbox.");
+      const items = (payload.messages ?? []).map((item) => ({
+        id: item.id,
+        contact: item.direction === "Inbound" ? item.from : item.to,
+        contactType: "Other" as const,
+        channel: "Email" as const,
+        direction: item.direction,
+        subject: item.subject,
+        body: item.body,
+        date: new Date(item.date).toLocaleString(),
+        by: `${provider === "gmail" ? "Gmail" : mailboxes.find((mailbox) => mailbox.provider === provider)?.auth_type === "imap_smtp" ? "IMAP/SMTP" : "Outlook"} · ${payload.mailbox ?? "linked mailbox"}`,
+        status: item.status,
+        mailLog: true,
+      }));
+      setMailMessages(items);
+      setMsgs((current) => [...items, ...current.filter((entry) => !entry.mailLog)]);
+    } catch (error) {
+      setMailError(error instanceof Error ? error.message : "Unable to load this inbox.");
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const loadMailboxes = async () => {
+    try {
+      const response = await fetch("/api/communications/mail", { cache: "no-store" });
+      const payload = await response.json() as MailboxesPayload;
+      if (!response.ok) throw new Error(payload.error ?? "Unable to load linked mailboxes.");
+      const linked = payload.mailboxes ?? [];
+      setMailboxes(linked);
+      setPlatformEmail(payload.platformEmail ?? "");
+      setMailConfigured(payload.configured ?? {});
+      setMailCanSend(Boolean(payload.canSend));
+      const defaultProvider = payload.defaultProvider ?? (payload.platformEmail?.toLowerCase().endsWith("@gmail.com") ? "gmail" : "outlook");
+      setActiveMailProvider((current) => linked.some((mailbox) => mailbox.provider === current) ? current : linked.some((mailbox) => mailbox.provider === defaultProvider) ? defaultProvider : linked[0]?.provider ?? defaultProvider);
+    } catch (error) {
+      setMailError(error instanceof Error ? error.message : "Unable to load linked mailboxes.");
+    }
+  };
+
+  useEffect(() => {
+    void loadMailboxes();
+    const url = new URL(window.location.href);
+    const connectionStatus = url.searchParams.get("mail");
+    const provider = url.searchParams.get("provider");
+    if (connectionStatus) {
+      setChannelFilter("Email");
+      setMailNotice(connectionStatus === "connected"
+        ? `${provider === "gmail" ? "Gmail" : "Outlook"} mailbox linked.`
+        : connectionStatus === "denied" ? "Mailbox access was cancelled. No account was linked." : "Unable to link the mailbox. Check the provider app and callback configuration.");
+      url.searchParams.delete("mail");
+      url.searchParams.delete("provider");
+      url.searchParams.delete("view");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeMailProvider && mailboxes.some((mailbox) => mailbox.provider === activeMailProvider)) {
+      void loadMailMessages(activeMailProvider);
+    }
+  }, [activeMailProvider, mailboxes, mailFolder]);
+
+  useEffect(() => {
+    if (channelFilter !== "Email" || !activeMailProvider || !mailboxes.some((mailbox) => mailbox.provider === activeMailProvider)) return;
+    const interval = window.setInterval(() => { void loadMailMessages(activeMailProvider); }, 120000);
+    return () => window.clearInterval(interval);
+  }, [activeMailProvider, channelFilter, mailboxes, mailFolder]);
+
+  const connectMailbox = async (provider: MailProvider) => {
+    setMailError("");
+    try {
+      const response = await fetch(`/api/communications/mail/connect?provider=${provider}`, { cache: "no-store" });
+      const payload = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !payload.url) throw new Error(payload.error ?? "Unable to start mailbox linking.");
+      window.location.assign(payload.url);
+    } catch (error) {
+      setMailError(error instanceof Error ? error.message : "Unable to start mailbox linking.");
+    }
+  };
+
+  const unlinkMailbox = async (provider: MailProvider) => {
+    const mailbox = mailboxes.find((item) => item.provider === provider);
+    const label = provider === "gmail" ? "Gmail" : mailbox?.auth_type === "imap_smtp" ? "IMAP/SMTP" : "Outlook";
+    if (!window.confirm(`Unlink ${label}?`)) return;
+    const response = await fetch(`/api/communications/mail?provider=${provider}`, { method: "DELETE" });
+    const payload = await response.json() as { error?: string };
+    if (!response.ok) { setMailError(payload.error ?? "Unable to unlink this mailbox."); return; }
+    setMailMessages((current) => current.filter((message) => typeof message.id !== "string" || (!message.id.startsWith(`${provider}-`) && !message.id.startsWith(`sent-${provider}-`))));
+    setMsgs((current) => current.filter((message) => typeof message.id !== "string" || (!message.id.startsWith(`${provider}-`) && !message.id.startsWith(`sent-${provider}-`))));
+    if (activeMailProvider === provider) setMailFolder("inbox");
+    await loadMailboxes();
+  };
+
+  const selectMailProfile = (provider: MailProvider) => {
+    setActiveMailProvider(provider);
+    setMailFolder("inbox");
+    setMailError("");
+    setChannelFilter("Email");
+  };
+
+  const saveImapMailbox = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSavingImapSetup(true);
+    setImapSetupError("");
+    setImapSetupNotice("");
+    try {
+      const response = await fetch("/api/communications/mail/imap-smtp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...imapSettings, imapPort: Number(imapSettings.imapPort), smtpPort: Number(imapSettings.smtpPort) }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to verify this mailbox.");
+      setShowImapSetup(false);
+      setImapSettings({ emailAddress: "", imapHost: "", imapPort: "993", imapSecure: true, smtpHost: "", smtpPort: "465", smtpSecure: true, username: "", password: "" });
+      setImapSetupNotice("IMAP/SMTP mailbox connected.");
+      await loadMailboxes();
+    } catch (error) {
+      setImapSetupError(error instanceof Error ? error.message : "Unable to verify this mailbox.");
+    } finally {
+      setSavingImapSetup(false);
+    }
+  };
+
+  const openCompose = async (channel: Channel = "SMS") => {
     setShowCompose(true);
-    setSmsChannel("SMS");
+    setComposeChannel(channel);
     setSmsRecipientId("");
     setManualContacts("");
     setSmsTitle("");
     setSmsBody("");
     setSmsRequestId(crypto.randomUUID());
     setSmsError("");
+    setMailTo("");
+    setMailSubject("");
+    setMailBody("");
+    setMailRequestId(crypto.randomUUID());
+    if (channel === "Email") {
+      setContactsLoading(false);
+      return;
+    }
     setContactsLoading(true);
     try {
       const [contactsResponse, historyResponse] = await Promise.all([
@@ -120,7 +281,7 @@ export default function Communications({ onOpenTasks }: { onOpenTasks?: () => vo
 
   const sendSms = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (smsChannel !== "SMS" || sendingSms) return;
+    if (composeChannel !== "SMS" || sendingSms) return;
     setSendingSms(true);
     setSmsError("");
     try {
@@ -168,45 +329,29 @@ export default function Communications({ onOpenTasks }: { onOpenTasks?: () => vo
     }
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadReminders = async () => {
-      try {
-        const response = await fetch("/api/tasks/reminders", { cache: "no-store" });
-        const payload = await response.json() as { reminders?: TaskReminder[]; error?: string };
-        if (!response.ok) throw new Error(payload.error ?? "Unable to load task reminders.");
-        if (!cancelled) {
-          setReminders(payload.reminders ?? []);
-          setReminderError("");
-        }
-      } catch (error) {
-        if (!cancelled) setReminderError(error instanceof Error ? error.message : "Unable to load task reminders.");
+  const sendEmail = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (composeChannel !== "Email" || !activeMailProvider || sendingMail || !mailCanSend) return;
+    setSendingMail(true);
+    setMailError("");
+    try {
+      const response = await fetch("/api/communications/mail/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: activeMailProvider, requestId: mailRequestId, to: mailTo, subject: mailSubject, body: mailBody }),
+      });
+      const payload = await response.json() as { message?: ProviderMail; error?: string; status?: string };
+      if (!response.ok) {
+        if (payload.status !== "unknown") setMailRequestId(crypto.randomUUID());
+        throw new Error(payload.error ?? "Unable to send this email.");
       }
-    };
-    const refreshReminders = () => { void loadReminders(); };
-    void loadReminders();
-    const interval = window.setInterval(() => { void loadReminders(); }, 60000);
-    window.addEventListener("task-reminders-changed", refreshReminders);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-      window.removeEventListener("task-reminders-changed", refreshReminders);
-    };
-  }, []);
-
-  const markReminderRead = async (id?: string) => {
-    const response = await fetch("/api/tasks/reminders", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(id ? { id } : { all: true }),
-    });
-    const payload = await response.json() as { error?: string };
-    if (!response.ok) {
-      setReminderError(payload.error ?? "Unable to update reminders.");
-      return;
+      setShowCompose(false);
+      await loadMailMessages(activeMailProvider);
+    } catch (error) {
+      setMailError(error instanceof Error ? error.message : "Unable to send this email.");
+    } finally {
+      setSendingMail(false);
     }
-    const readAt = new Date().toISOString();
-    setReminders((current) => current.map((reminder) => !id || reminder.id === id ? { ...reminder, read_at: readAt } : reminder));
   };
 
   const filtered = msgs.filter((m) => {
@@ -214,6 +359,9 @@ export default function Communications({ onOpenTasks }: { onOpenTasks?: () => vo
     const mct = contactFilter === "All" || m.contactType === contactFilter;
     return mc && mct;
   });
+
+  if (channelFilter === "SMS") return <SmsWorkspace userName={userName} companyName={companyName} userEmail={userEmail} onExit={() => setChannelFilter("All")} />;
+  if (channelFilter === "WhatsApp") return <WhatsAppWorkspace onExit={() => setChannelFilter("All")} />;
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -258,21 +406,35 @@ export default function Communications({ onOpenTasks }: { onOpenTasks?: () => vo
           </div>
         </div>
 
-        <section className="shrink-0 border-b" style={{ borderColor: "var(--border)", background: "var(--card)" }} aria-labelledby="task-reminders-title">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3">
-            <div><h2 id="task-reminders-title" className="text-sm font-700" style={{ color: "var(--foreground)" }}>Task reminders</h2><p className="mt-0.5 text-xs" style={{ color: "var(--muted-foreground)" }}>Scheduled reminders delivered to your workspace</p></div>
-            <div className="flex items-center gap-3"><button type="button" onClick={onOpenTasks} className="text-xs font-600" style={{ color: "var(--primary)" }}>Open Tasks</button>{reminders.some((reminder) => !reminder.read_at) && <button type="button" onClick={() => void markReminderRead()} className="text-xs" style={{ color: "var(--muted-foreground)" }}>Mark all read</button>}</div>
+        <section hidden={channelFilter !== "Email"} className="shrink-0 border-b px-4 py-3 sm:px-6" style={{ borderColor: "var(--border)", background: "var(--card)" }} aria-label="Linked mailboxes">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <span className="text-[10px] font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Email profiles</span>
+              {mailboxes.length > 0 && <nav role="tablist" aria-label="Attached email profiles" className="flex min-w-0 flex-wrap gap-1">
+                {mailboxes.map((mailbox) => {
+                  const label = mailbox.provider === "gmail" ? "Gmail" : mailbox.auth_type === "imap_smtp" ? "IMAP/SMTP" : "Outlook";
+                  return <button key={mailbox.provider} type="button" role="tab" aria-selected={activeMailProvider === mailbox.provider} onClick={() => selectMailProfile(mailbox.provider)} className="max-w-64 truncate border-b-2 px-3 py-2 text-xs font-600" style={{ borderColor: activeMailProvider === mailbox.provider ? "var(--primary)" : "transparent", color: activeMailProvider === mailbox.provider ? "var(--primary)" : "var(--muted-foreground)" }}>{label} · {mailbox.email_address}</button>;
+                })}
+              </nav>}
+              <button type="button" disabled={!mailConfigured.outlook} onClick={() => { setImapSetupError(""); setImapSettings((current) => ({ ...current, emailAddress: platformEmail, username: platformEmail })); setShowImapSetup(true); }} className="border px-2.5 py-1.5 text-xs font-600 disabled:cursor-not-allowed disabled:opacity-40" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>{mailboxes.some((mailbox) => mailbox.provider === "outlook") ? "Replace with IMAP/SMTP" : "Add IMAP/SMTP"}</button>
+              {!mailboxes.some((mailbox) => mailbox.provider === "gmail") && <button type="button" disabled={!mailConfigured.gmail} onClick={() => void connectMailbox("gmail")} className="border px-2.5 py-1.5 text-xs font-600 disabled:cursor-not-allowed disabled:opacity-40" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>Connect Gmail</button>}
+              {activeMailProvider && mailboxes.some((mailbox) => mailbox.provider === activeMailProvider) && <button type="button" onClick={() => void unlinkMailbox(activeMailProvider)} className="inline-flex items-center gap-1 border px-2.5 py-1.5 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}><X size={13} aria-hidden="true" />Disconnect</button>}
+            </div>
+            <div className="flex items-center gap-2">
+              {activeMailProvider && mailboxes.some((mailbox) => mailbox.provider === activeMailProvider) && <><span className="hidden max-w-44 truncate text-xs sm:inline" style={{ color: "var(--muted-foreground)" }}>Inbox · {mailboxes.find((mailbox) => mailbox.provider === activeMailProvider)?.email_address}</span><button type="button" onClick={() => void loadMailMessages(activeMailProvider)} disabled={mailLoading} className="border px-2.5 py-1.5 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>{mailLoading ? "Refreshing..." : "Refresh folder"}</button>{mailCanSend && <button type="button" onClick={() => void openCompose("Email")} className="px-2.5 py-1.5 text-xs font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>New email</button>}</>}
+            </div>
           </div>
-          {reminderError && <p role="alert" className="px-6 pb-2 text-xs text-red-400">{reminderError}</p>}
-          {reminders.length === 0 ? <p className="px-6 pb-4 text-xs" style={{ color: "var(--muted-foreground)" }}>No task reminders delivered yet.</p> : <div className="flex max-h-40 flex-col divide-y overflow-auto" style={{ borderColor: "var(--border)" }}>
-            {reminders.slice(0, 20).map((reminder) => <div key={reminder.id} className="flex items-start justify-between gap-3 px-6 py-2.5" style={{ background: reminder.read_at ? "transparent" : "color-mix(in srgb, var(--primary) 6%, transparent)" }}>
-              <div className="min-w-0"><div className="text-xs font-600" style={{ color: "var(--foreground)" }}>{reminder.title}</div><div className="mt-0.5 text-xs" style={{ color: "var(--muted-foreground)" }}>{reminder.body}</div><div className="mono mt-1 text-[10px]" style={{ color: reminder.sms_status === "sent" ? "#17845b" : reminder.sms_status === "failed" || reminder.sms_status === "unknown" ? "#bd3d3d" : "var(--muted-foreground)" }}>{new Date(reminder.sent_at).toLocaleString()}{reminder.sms_status === "sent" ? " · SMS sent" : reminder.sms_status === "failed" ? ` · SMS failed${reminder.sms_error ? `: ${reminder.sms_error}` : ""}` : reminder.sms_status === "unknown" ? " · SMS status unknown; check SMSUG Sent Messages" : ""}</div></div>
-              {!reminder.read_at && <button type="button" aria-label={`Mark ${reminder.title} as read`} title="Mark as read" onClick={() => void markReminderRead(reminder.id)} className="shrink-0 p-1" style={{ color: "var(--primary)" }}><CircleCheck size={15} aria-hidden="true" /></button>}
-            </div>)}
+          {!mailConfigured.gmail && !mailConfigured.outlook && <p className="mt-2 text-xs" style={{ color: "var(--muted-foreground)" }}>Mailbox linking is not configured yet. A server administrator must set the mail token encryption key and Gmail OAuth credentials.</p>}
+          {mailError && <p role="alert" className="mt-2 text-xs text-red-400">{mailError}</p>}
+          {mailNotice && <p role="status" className="mt-2 text-xs" style={{ color: mailNotice.includes("linked") ? "#17845b" : "#bd3d3d" }}>{mailNotice}<button type="button" onClick={() => setMailNotice("")} aria-label="Dismiss mailbox status" className="ml-2"><X size={12} aria-hidden="true" /></button></p>}
+          {imapSetupNotice && <p role="status" className="mt-2 text-xs" style={{ color: "#17845b" }}>{imapSetupNotice}<button type="button" onClick={() => setImapSetupNotice("")} aria-label="Dismiss mailbox status" className="ml-2"><X size={12} aria-hidden="true" /></button></p>}
+          {activeMailProvider && mailboxes.some((mailbox) => mailbox.provider === activeMailProvider) && <div role="tablist" aria-label="Email folders" className="mt-3 flex flex-wrap gap-1 border-t pt-2" style={{ borderColor: "var(--border)" }}>
+            {([{ id: "inbox", label: "Inbox" }, { id: "starred", label: "Starred" }, { id: "sent", label: "Sent" }, { id: "drafts", label: "Drafts" }] as const).map((folder) => <button key={folder.id} type="button" role="tab" aria-selected={mailFolder === folder.id} onClick={() => setMailFolder(folder.id)} className="px-2.5 py-1 text-xs font-600" style={{ background: mailFolder === folder.id ? "var(--secondary)" : "transparent", color: mailFolder === folder.id ? "var(--primary)" : "var(--muted-foreground)" }}>{folder.label}</button>)}
           </div>}
         </section>
 
         <div className="min-h-0 flex-1 overflow-auto divide-y" style={{ borderColor: "var(--border)" }}>
+          {channelFilter === "Email" && !mailLoading && !filtered.some((message) => message.channel === "Email") && <p className="px-6 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{mailboxes.length ? "No mail to show. Refresh the inbox to check for new messages." : "Link Gmail or add an IMAP/SMTP mailbox to receive and send email here."}</p>}
           {filtered.map((m) => (
             <div key={m.id}
               className="px-6 py-4 cursor-pointer flex gap-4"
@@ -338,29 +500,52 @@ export default function Communications({ onOpenTasks }: { onOpenTasks?: () => vo
               <div className="text-xs font-700 uppercase tracking-wider mb-1" style={{ color: "var(--muted-foreground)" }}>Message</div>
               <div className="text-sm rounded p-3" style={{ background: "var(--secondary)", color: "var(--foreground)", lineHeight: "1.6" }}>{selected.body}</div>
             </div>
-            <button className="w-full py-2 text-sm font-600 rounded" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              Reply
-            </button>
+            {selected.channel === "Email" && selected.direction === "Inbound" && mailCanSend && <button type="button" onClick={() => { void openCompose("Email"); setMailTo(selected.contact.match(/<([^>]+)>/)?.[1] ?? selected.contact); setMailSubject(selected.subject.startsWith("Re:") ? selected.subject : `Re: ${selected.subject}`); }} className="w-full py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>Reply</button>}
           </div>
         </div>
       )}
 
+      {showImapSetup && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-3 sm:p-6">
+        <form onSubmit={(event) => void saveImapMailbox(event)} className="my-auto max-h-[94dvh] w-full max-w-2xl overflow-y-auto border p-5 sm:p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Add IMAP/SMTP mailbox</h2><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>Settings are tested before they are saved.</p></div><button type="button" aria-label="Close IMAP/SMTP setup" onClick={() => setShowImapSetup(false)} className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block sm:col-span-2"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Email address</span><input required type="email" maxLength={320} value={imapSettings.emailAddress} onChange={(event) => setImapSettings({ ...imapSettings, emailAddress: event.target.value })} autoComplete="email" placeholder="name@example.com" className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
+            <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>IMAP server</span><input required value={imapSettings.imapHost} onChange={(event) => setImapSettings({ ...imapSettings, imapHost: event.target.value })} placeholder="imap.example.com" className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
+            <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>IMAP port</span><input required type="number" min={1} max={65535} value={imapSettings.imapPort} onChange={(event) => setImapSettings({ ...imapSettings, imapPort: event.target.value })} className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
+            <label className="flex items-center gap-2 text-xs" style={{ color: "var(--foreground)" }}><input type="checkbox" checked={imapSettings.imapSecure} onChange={(event) => setImapSettings({ ...imapSettings, imapSecure: event.target.checked })} /> IMAP uses SSL/TLS</label>
+            <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>SMTP server</span><input required value={imapSettings.smtpHost} onChange={(event) => setImapSettings({ ...imapSettings, smtpHost: event.target.value })} placeholder="smtp.example.com" className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
+            <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>SMTP port</span><input required type="number" min={1} max={65535} value={imapSettings.smtpPort} onChange={(event) => setImapSettings({ ...imapSettings, smtpPort: event.target.value })} className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
+            <label className="flex items-center gap-2 text-xs" style={{ color: "var(--foreground)" }}><input type="checkbox" checked={imapSettings.smtpSecure} onChange={(event) => setImapSettings({ ...imapSettings, smtpSecure: event.target.checked })} /> SMTP uses SSL/TLS</label>
+            <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Username</span><input required maxLength={320} value={imapSettings.username} onChange={(event) => setImapSettings({ ...imapSettings, username: event.target.value })} autoComplete="username" className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
+            <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Password or app password</span><input required type="password" maxLength={1000} value={imapSettings.password} onChange={(event) => setImapSettings({ ...imapSettings, password: event.target.value })} autoComplete="new-password" className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
+          </div>
+          {imapSetupError && <p role="alert" className="mt-4 text-sm text-red-400">{imapSetupError}</p>}
+          <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setShowImapSetup(false)} disabled={savingImapSetup} className="border px-4 py-2 text-sm disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button><button type="submit" disabled={savingImapSetup} className="px-4 py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{savingImapSetup ? "Verifying..." : "Verify and connect"}</button></div>
+        </form>
+      </div>}
+
       {showCompose && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-3 sm:p-6">
-          <form onSubmit={(event) => void sendSms(event)} className="my-auto max-h-[94dvh] w-full max-w-lg overflow-y-auto border p-5 sm:p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>New communication</h2><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>SMS sends immediately through SMSUG.</p></div><button type="button" aria-label="Close compose" onClick={() => setShowCompose(false)} className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
+          <form onSubmit={(event) => void (composeChannel === "Email" ? sendEmail(event) : sendSms(event))} className="my-auto max-h-[94dvh] w-full max-w-lg overflow-y-auto border p-5 sm:p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+            <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>New communication</h2><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{composeChannel === "Email" ? "Send from your linked mailbox." : "SMS sends immediately through SMSUG."}</p></div><button type="button" aria-label="Close compose" onClick={() => setShowCompose(false)} className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
             <div className="space-y-4">
-              <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Channel</span><select value={smsChannel} onChange={(event) => setSmsChannel(event.target.value as Channel)} className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}><option>SMS</option><option>Email</option><option>Phone</option><option>WhatsApp</option><option>Note</option></select></label>
-              {smsChannel === "SMS" ? <>
+              <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Channel</span><select value={composeChannel} onChange={(event) => setComposeChannel(event.target.value as Channel)} className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}><option>SMS</option><option>Email</option><option>Phone</option><option>WhatsApp</option><option>Note</option></select></label>
+              {composeChannel === "SMS" ? <>
                 {smsConfigured === false && <div role="status" className="border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs" style={{ color: "var(--foreground)" }}>SMSUG is not configured. A server administrator must set SMSUG_API_KEY privately and enable API access in SMSUG Settings.</div>}
                 <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Contact</span><select value={smsRecipientId} onChange={(event) => setSmsRecipientId(event.target.value)} disabled={contactsLoading} className="w-full border px-3 py-2.5 text-sm disabled:opacity-50" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}><option value="">Enter phone number(s)</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.type} · {contact.name} · {contact.phone}</option>)}</select></label>
                 {!selectedSmsContact && <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Ugandan phone number(s)</span><textarea required rows={2} value={manualContacts} onChange={(event) => setManualContacts(event.target.value)} placeholder="256772000111, 0701234567" className="w-full resize-y border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /><span className="mt-1 block text-[11px]" style={{ color: "var(--muted-foreground)" }}>Separate multiple numbers with commas or new lines. Up to 3,000 recipients.</span></label>}
                 <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>SMS title</span><input required maxLength={100} value={smsTitle} onChange={(event) => setSmsTitle(event.target.value)} placeholder="Payment reminder" className="w-full border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /><span className="mt-1 block text-[11px]" style={{ color: "var(--muted-foreground)" }}>Letters, numbers, spaces, and basic punctuation only.</span></label>
                 <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Message</span><textarea required rows={5} maxLength={480} value={smsBody} onChange={(event) => setSmsBody(event.target.value)} className="w-full resize-y border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /><span className="mt-1 flex justify-between text-[11px]" style={{ color: "var(--muted-foreground)" }}><span>{smsBody.length <= 160 ? "1 message unit" : smsBody.length <= 320 ? "2 message units" : "3 message units"} per recipient</span><span>{smsBody.length}/480</span></span></label>
-              </> : <div className="border px-3 py-3 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Sending through {smsChannel} is not configured. SMS is the only live delivery channel.</div>}
+              </> : composeChannel === "Email" ? <>
+                <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Send from</span><select aria-label="Send from mailbox" value={activeMailProvider} onChange={(event) => setActiveMailProvider(event.target.value as MailProvider)} className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}>{mailboxes.map((mailbox) => <option key={mailbox.provider} value={mailbox.provider}>{mailbox.provider === "gmail" ? "Gmail" : mailbox.auth_type === "imap_smtp" ? "IMAP/SMTP" : "Outlook"} · {mailbox.email_address}</option>)}</select></label>
+                <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>To</span><input required type="email" maxLength={320} value={mailTo} onChange={(event) => setMailTo(event.target.value)} placeholder="name@example.com" className="w-full border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
+                <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Subject</span><input required maxLength={998} value={mailSubject} onChange={(event) => setMailSubject(event.target.value)} className="w-full border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
+                <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Message</span><textarea required rows={7} maxLength={100000} value={mailBody} onChange={(event) => setMailBody(event.target.value)} className="w-full resize-y border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
+                {!mailboxes.length && <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>Link a Gmail or Outlook mailbox above before sending.</p>}
+              </> : <div className="border px-3 py-3 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Sending through {composeChannel} is not configured. Email and SMS are available when linked or enabled.</div>}
             </div>
-            {smsError && <p role="alert" className="mt-4 text-sm text-red-400">{smsError}</p>}
-            <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setShowCompose(false)} disabled={sendingSms} className="border px-4 py-2 text-sm disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button><button type="submit" disabled={smsChannel !== "SMS" || sendingSms || contactsLoading || smsBody.length === 0 || smsBody.length > 480 || smsTitle.length === 0} className="px-4 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{sendingSms ? "Sending..." : "Send SMS"}</button></div>
+            {composeChannel === "Email" ? mailError && <p role="alert" className="mt-4 text-sm text-red-400">{mailError}</p> : smsError && <p role="alert" className="mt-4 text-sm text-red-400">{smsError}</p>}
+            <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setShowCompose(false)} disabled={sendingSms || sendingMail} className="border px-4 py-2 text-sm disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button><button type="submit" disabled={composeChannel === "Email" ? (!mailboxes.length || !mailCanSend || sendingMail || !mailTo || !mailSubject || !mailBody) : (composeChannel !== "SMS" || sendingSms || contactsLoading || smsBody.length === 0 || smsBody.length > 480 || smsTitle.length === 0)} className="px-4 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{composeChannel === "Email" ? sendingMail ? "Sending..." : "Send email" : sendingSms ? "Sending..." : "Send SMS"}</button></div>
           </form>
         </div>
       )}

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getMailAccess, isMailProvider, type MailProvider } from "@/lib/server/mail";
+import { getMailAccess, isMailProvider, tokenEncryptionKey } from "@/lib/server/mail";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
@@ -10,7 +9,7 @@ export async function GET() {
     const access = await getMailAccess("communications.email.read");
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
     const { data, error } = await access.supabase.from("mail_connections")
-      .select("id, provider, email_address, connected_at")
+      .select("id, provider, email_address, connected_at, auth_type")
       .eq("company_id", access.companyId).eq("user_id", access.userId)
       .order("connected_at", { ascending: true });
     if (error) throw error;
@@ -20,9 +19,12 @@ export async function GET() {
     });
     const configured = {
       gmail: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
-      outlook: Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET),
+      outlook: Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET) || (() => {
+        try { tokenEncryptionKey(); return true; } catch { return false; }
+      })(),
     };
-    return NextResponse.json({ mailboxes: data ?? [], configured, canSend: !sendPermission.error && Boolean(sendPermission.data) }, { headers });
+    const defaultProvider = access.userEmail.toLowerCase().endsWith("@gmail.com") ? "gmail" : "outlook";
+    return NextResponse.json({ mailboxes: data ?? [], configured, canSend: !sendPermission.error && Boolean(sendPermission.data), platformEmail: access.userEmail, defaultProvider }, { headers });
   } catch (error) {
     console.error("Mailboxes request failed", error);
     return NextResponse.json({ error: "Linked mailboxes are unavailable." }, { status: 503, headers });

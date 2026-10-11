@@ -5,24 +5,42 @@ import { isValidSmsTitle, normalizeUgandanPhone, sendSmsUg } from "@/lib/server/
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-type SmsAccess = { supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>; companyId: string; userId: string };
+type SmsAccess = { supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>; companyId: string; userId: string; roleName: string };
+
+function monthKeyInWorkspaceTimezone(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Africa/Kampala", year: "numeric", month: "2-digit" }).formatToParts(date);
+  return `${parts.find((part) => part.type === "year")?.value}-${parts.find((part) => part.type === "month")?.value}`;
+}
+
+function shiftMonth(monthKey: string, offset: number) {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1 + offset, 1)).toISOString().slice(0, 7);
+}
+
+function startOfWorkspaceMonthUtc(monthKey: string) {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, 1, -3)).toISOString();
+}
 
 async function getSmsAccess(): Promise<SmsAccess | { error: string; status: 401 | 403 }> {
   const supabase = await createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return { error: "Authentication required.", status: 401 };
   const { data: membership, error: membershipError } = await supabase.from("company_memberships")
-    .select("company_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
+    .select("company_id, role_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 };
   const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
     requested_company_id: membership.company_id,
     requested_permission: "communications.sms.send",
   });
   if (permissionError || !allowed) return { error: "You do not have permission to send SMS. Ask an administrator to grant communications.sms.send." , status: 403 };
-  return { supabase, companyId: membership.company_id, userId: user.id };
+  const { data: role, error: roleError } = await supabase.from("company_roles").select("name")
+    .eq("id", membership.role_id).eq("company_id", membership.company_id).maybeSingle();
+  if (roleError || !role) return { error: "Your company role could not be resolved.", status: 403 };
+  return { supabase, companyId: membership.company_id, userId: user.id, roleName: role.name };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const access = await getSmsAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
@@ -30,7 +48,39 @@ export async function GET() {
       .select("id, title, message, contacts, contact_name, contact_type, provider_status, provider_error, provider_token, recipients, cost, balance, created_at")
       .eq("company_id", access.companyId).order("created_at", { ascending: false }).limit(100);
     if (error) throw error;
-    return NextResponse.json({ messages: data ?? [], configured: Boolean(process.env.SMSUG_API_KEY?.trim()) }, { headers });
+    const canViewHistoricalUsage = /ceo|company owner|manager/i.test(access.roleName);
+    const currentMonth = monthKeyInWorkspaceTimezone(new Date());
+    const availableMonths = Array.from({ length: canViewHistoricalUsage ? 4 : 1 }, (_, index) => {
+      const month = shiftMonth(currentMonth, -index);
+      const [year, monthNumber] = month.split("-").map(Number);
+      return {
+        month,
+        label: new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" })
+          .format(new Date(Date.UTC(year, monthNumber - 1, 1))),
+      };
+    });
+    const requestedMonth = new URL(request.url).searchParams.get("month");
+    const selectedMonth = availableMonths.some((item) => item.month === requestedMonth) ? requestedMonth! : currentMonth;
+    const [selectedYear, selectedMonthNumber] = selectedMonth.split("-").map(Number);
+    const daysInMonth = new Date(Date.UTC(selectedYear, selectedMonthNumber, 0)).getUTCDate();
+    const nextMonth = shiftMonth(selectedMonth, 1);
+    const start = startOfWorkspaceMonthUtc(selectedMonth);
+    const end = startOfWorkspaceMonthUtc(nextMonth);
+    const dailyCounts = Array.from({ length: daysInMonth }, () => 0);
+    for (let offset = 0; offset < 10000; offset += 1000) {
+      const { data: usageRows, error: usageError } = await access.supabase.from("sms_message_logs")
+        .select("created_at")
+        .eq("company_id", access.companyId).gte("created_at", start).lt("created_at", end)
+        .order("created_at", { ascending: true }).range(offset, offset + 999);
+      if (usageError) throw usageError;
+      for (const row of usageRows ?? []) {
+        const day = Number(new Intl.DateTimeFormat("en", { timeZone: "Africa/Kampala", day: "2-digit" }).format(new Date(row.created_at)));
+        if (day >= 1 && day <= daysInMonth) dailyCounts[day - 1] += 1;
+      }
+      if (!usageRows || usageRows.length < 1000) break;
+    }
+    const usage = { month: selectedMonth, months: availableMonths, dailyCounts };
+    return NextResponse.json({ messages: data ?? [], configured: Boolean(process.env.SMSUG_API_KEY?.trim()), usage }, { headers });
   } catch (error) {
     console.error("SMS history request failed", error);
     return NextResponse.json({ error: "SMS history is unavailable." }, { status: 503, headers });

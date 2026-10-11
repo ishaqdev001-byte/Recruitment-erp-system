@@ -263,6 +263,7 @@ export default function App() {
     let cancelled = false;
     const restoreSession = async () => {
       const currentUrl = new URL(window.location.href);
+      if (currentUrl.searchParams.get("view") === "communications") setView("communications");
       const hashParams = new URLSearchParams(currentUrl.hash.slice(1));
       const inviteLink = hashParams.get("type") === "invite" || currentUrl.searchParams.get("invite") === "1";
       const currentInviteId = currentUrl.searchParams.get("invitation_id") ?? "";
@@ -476,7 +477,7 @@ export default function App() {
       case "tasks":
         return <Tasks />;
       case "communications":
-        return <Communications onOpenTasks={() => setView("tasks")} />;
+        return <Communications userName={session?.userName ?? "Team"} companyName={session?.companyName ?? ""} userEmail={activeUser?.email ?? ""} />;
       case "passport":
         return <PassportCustody companyName={session?.companyName ?? ""} onRegisterCandidate={() => setView("candidates")} />;
       default:

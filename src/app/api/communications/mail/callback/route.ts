@@ -58,4 +58,4 @@ export async function GET(request: Request) {
     response.cookies.delete(cookieName);
     return response;
   }
-+}
+}

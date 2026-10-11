@@ -110,6 +110,18 @@ const smsugCommunicationsMigration = await readFile(
   new URL("../supabase/migrations/202610040026_smsug_communications.sql", import.meta.url),
   "utf8",
 );
+const mailConnectionsMigration = await readFile(
+  new URL("../supabase/migrations/202610040027_mail_connections.sql", import.meta.url),
+  "utf8",
+);
+const smsContactGroupsMigration = await readFile(
+  new URL("../supabase/migrations/202610040029_sms_contact_groups.sql", import.meta.url),
+  "utf8",
+);
+const smsPermissionRepairMigration = await readFile(
+  new URL("../supabase/migrations/202610040030_sms_permission_repair.sql", import.meta.url),
+  "utf8",
+);
 const database = new PGlite();
 
 const companyA = "10000000-0000-4000-8000-000000000001";
@@ -210,6 +222,32 @@ try {
   await database.exec(companyRootFolderAccessMigration);
   await database.exec(googleTasksMigration);
   await database.exec(smsugCommunicationsMigration);
+  await database.exec(mailConnectionsMigration);
+  await database.exec(smsContactGroupsMigration);
+  await database.exec(smsContactGroupsMigration);
+  await database.query(
+    "delete from public.role_permissions where company_id = $1 and permission_code = 'communications.sms.send'",
+    [companyC],
+  );
+  await database.exec(smsPermissionRepairMigration);
+  await database.exec(smsPermissionRepairMigration);
+
+  const smsGroupTables = await database.query(
+    `select relname, relrowsecurity from pg_class
+      where relname in ('sms_contact_groups', 'sms_contact_group_members') order by relname`,
+  );
+  assert.deepEqual(smsGroupTables.rows, [
+    { relname: "sms_contact_group_members", relrowsecurity: true },
+    { relname: "sms_contact_groups", relrowsecurity: true },
+  ]);
+  const ownerSmsPermission = await database.query(
+    `select count(*)::integer as count from public.role_permissions role_permission
+      join public.company_roles role on role.id = role_permission.role_id
+      where role.company_id = $1 and role.name = 'Company Owner / Primary Administrator'
+        and role_permission.permission_code = 'communications.sms.send'`,
+    [companyC],
+  );
+  assert.equal(ownerSmsPermission.rows[0].count, 1);
 
   const migratedUsersFolder = await database.query(
     "select id from public.company_drive_items where company_id = $1 and parent_id = $2 and lower(name) = 'users'",
@@ -258,7 +296,7 @@ try {
       where role.company_id = $1 and role.name = 'Finance User' order by permission.code`,
     ["7b4f08da-81a8-4f4b-9f74-31c326dae701"],
   );
-  assert.deepEqual(financeUserPermissions.rows.map((permission) => permission.code), ["attendance.clock", "communications.sms.send", "drive.delete.own", "drive.edit", "drive.finance.view", "drive.move", "drive.upload", "drive.view", "finance.create", "finance.view", "leave.create", "tasks.create", "tasks.edit", "tasks.view"]);
+  assert.deepEqual(financeUserPermissions.rows.map((permission) => permission.code), ["attendance.clock", "communications.email.read", "communications.email.send", "communications.sms.send", "drive.delete.own", "drive.edit", "drive.finance.view", "drive.move", "drive.upload", "drive.view", "finance.create", "finance.view", "leave.create", "tasks.create", "tasks.edit", "tasks.view"]);
 
   const futureCompanyRoles = await database.query(
     "select count(*)::integer as count from public.company_roles where company_id = $1",

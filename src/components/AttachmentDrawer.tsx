@@ -45,7 +45,7 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   }
 }
 
-export default function AttachmentDrawer({ candidate, onClose }: { candidate: CandidateIdentity; onClose: () => void }) {
+export default function AttachmentDrawer({ candidate, onClose, generatedOnly = false }: { candidate: CandidateIdentity; onClose: () => void; generatedOnly?: boolean }) {
   const [documents, setDocuments] = useState<CandidateDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -69,7 +69,7 @@ export default function AttachmentDrawer({ candidate, onClose }: { candidate: Ca
       .then(async (response) => {
         const payload = await readJsonResponse<{ documents?: CandidateDocument[]; error?: string }>(response);
         if (!response.ok) throw new Error(payload.error || "Unable to load candidate documents.");
-        if (!cancelled) setDocuments(payload.documents ?? []);
+        if (!cancelled) setDocuments((payload.documents ?? []).filter((document) => !generatedOnly || document.notes.startsWith("AI-generated:")));
       })
       .catch((requestError: unknown) => {
         if (!cancelled) setError(requestError instanceof Error ? requestError.message : "Unable to load candidate documents.");
@@ -154,7 +154,7 @@ export default function AttachmentDrawer({ candidate, onClose }: { candidate: Ca
   return (
     <>
       <button type="button" aria-label="Close attachments" onClick={onClose} className="fixed inset-0 z-40 cursor-default" style={{ background: "#00000066" }} />
-      <aside aria-label={`${candidate.firstName} ${candidate.lastName} attachments`} className="fixed right-0 top-0 z-50 flex h-dvh w-full max-w-120 flex-col border-l shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+      <aside aria-label={`${candidate.firstName} ${candidate.lastName} ${generatedOnly ? "generated documents" : "attachments"}`} className="fixed right-0 top-0 z-50 flex h-dvh w-full max-w-120 flex-col border-l shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
         <header className="flex items-start justify-between gap-4 border-b px-5 py-4" style={{ borderColor: "var(--border)" }}>
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-700" style={{ background: "var(--secondary)", color: "var(--primary)" }}>
@@ -170,11 +170,11 @@ export default function AttachmentDrawer({ candidate, onClose }: { candidate: Ca
 
         <div className="flex items-center gap-2 border-b px-5 py-3 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
           <Paperclip size={15} aria-hidden="true" />
-          <span>{loading ? "Loading documents…" : `${documents.length} ${documents.length === 1 ? "attachment" : "attachments"}`}</span>
-          <button type="button" onClick={() => setShowUpload((current) => !current)} className="ml-auto inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Upload size={14} aria-hidden="true" /> Add attachment</button>
+          <span>{loading ? "Loading documents…" : `${documents.length} ${generatedOnly ? "generated documents" : documents.length === 1 ? "attachment" : "attachments"}`}</span>
+          {!generatedOnly && <button type="button" onClick={() => setShowUpload((current) => !current)} className="ml-auto inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Upload size={14} aria-hidden="true" /> Add attachment</button>}
         </div>
 
-        {showUpload ? (
+        {!generatedOnly && showUpload ? (
           <form onSubmit={handleUpload} className="space-y-3 border-b p-5" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
             <label className="block text-xs font-700" style={{ color: "var(--foreground)" }}>File
               <input required type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="mt-1 block w-full rounded border p-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--foreground)" }} />
@@ -207,7 +207,7 @@ export default function AttachmentDrawer({ candidate, onClose }: { candidate: Ca
           {!loading && !error && documents.length === 0 ? (
             <div className="flex h-56 flex-col items-center justify-center gap-2 px-6 text-center" style={{ color: "var(--muted-foreground)" }}>
               <Paperclip size={26} strokeWidth={1.7} aria-hidden="true" />
-              <p className="text-sm">No documents have been uploaded for this candidate.</p>
+              <p className="text-sm">{generatedOnly ? "No AI-generated documents for this candidate yet." : "No documents have been uploaded for this candidate."}</p>
             </div>
           ) : null}
           <div className="divide-y" style={{ borderColor: "var(--border)" }}>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
@@ -20,6 +21,7 @@ import LeaveManagement from "./components/LeaveManagement";
 import CompanyDrive from "./components/CompanyDrive";
 import Tasks from "./components/TaskWorkspace";
 import Communications from "./components/Communications";
+import AIAssistant from "./components/AIAssistant";
 import { createSupabaseBrowserClient } from "./lib/supabase/browser";
 
 export type View =
@@ -227,12 +229,19 @@ export default function App() {
   const [companies, setCompanies] = useState<CompanyProfile[]>([]);
   const [users, setUsers] = useState<CompanyUser[]>([]);
   const [session, setSession] = useState<Session | null>(null);
-  const [authView, setAuthView] = useState<"landing" | "login" | "register" | "verify" | "invite">("login");
+  const [authView, setAuthView] = useState<"landing" | "login" | "register" | "verify" | "invite" | "reset-password">("login");
   const [authLoading, setAuthLoading] = useState(true);
   const [companyForm, setCompanyForm] = useState<CompanyForm>(emptyCompanyForm);
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
   const [registerError, setRegisterError] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [resetEmailSending, setResetEmailSending] = useState(false);
+  const [resetEmailMessage, setResetEmailMessage] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
+  const [resetPasswordEmail, setResetPasswordEmail] = useState("");
+  const [resetPasswordError, setResetPasswordError] = useState("");
+  const [resetPasswordSaving, setResetPasswordSaving] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteId, setInviteId] = useState("");
   const [inviteCompanyId, setInviteCompanyId] = useState("");
@@ -266,15 +275,24 @@ export default function App() {
       if (currentUrl.searchParams.get("view") === "communications") setView("communications");
       const hashParams = new URLSearchParams(currentUrl.hash.slice(1));
       const inviteLink = hashParams.get("type") === "invite" || currentUrl.searchParams.get("invite") === "1";
+      const recoveryLink = currentUrl.searchParams.get("view") === "reset-password" || hashParams.get("type") === "recovery";
       const currentInviteId = currentUrl.searchParams.get("invitation_id") ?? "";
       if (inviteLink) setAuthView("invite");
+      if (recoveryLink) {
+        setAuthView("reset-password");
+        setResetPasswordError("This password reset link is invalid or expired. Request a new one from the login screen.");
+      }
       try {
         const supabase = createSupabaseBrowserClient();
         const accessToken = hashParams.get("access_token");
         const refreshToken = hashParams.get("refresh_token");
-        if (inviteLink && accessToken && refreshToken) {
+        if ((inviteLink || recoveryLink) && accessToken && refreshToken) {
           const { error: sessionError } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
-          if (sessionError) throw new Error("This invitation link is invalid or expired. Ask the company administrator to send a new invitation.");
+          if (sessionError) {
+            throw new Error(recoveryLink
+              ? "This password reset link is invalid or expired. Request a new one from the login screen."
+              : "This invitation link is invalid or expired. Ask the company administrator to send a new invitation.");
+          }
           window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
         }
         const { data: { user }, error } = await supabase.auth.getUser();
@@ -301,6 +319,11 @@ export default function App() {
             window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
             return;
           }
+          if (recoveryLink) {
+            setResetPasswordError("");
+            setResetPasswordEmail(user.email ?? "");
+            return;
+          }
           const hasInviteMetadata = Boolean(user.app_metadata?.invitation_company_id
             || (user.user_metadata?.company_name && user.user_metadata?.role_name));
           if (hasInviteMetadata) {
@@ -323,6 +346,9 @@ export default function App() {
       } catch (error) {
         if (!cancelled && error instanceof Error) {
           if (inviteLink) setInviteError(error.message);
+          else if (recoveryLink) setResetPasswordError(error.message === "Auth session missing!"
+            ? "This password reset link is invalid or expired. Request a new one from the login screen."
+            : error.message);
           else if (error.message !== "Auth session missing!") setLoginError(error.message);
         }
       } finally {
@@ -381,6 +407,73 @@ export default function App() {
       setSession(workspace.session);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "Unable to load your company workspace.");
+    }
+  };
+
+  const handlePasswordResetRequest = async () => {
+    setLoginError("");
+    setResetEmailMessage("");
+    const email = loginForm.email.trim();
+    if (!email) {
+      setLoginError("Enter your email address first, then request a password reset.");
+      return;
+    }
+
+    setResetEmailSending(true);
+    try {
+      const redirectUrl = new URL(window.location.href);
+      redirectUrl.search = "";
+      redirectUrl.hash = "";
+      redirectUrl.searchParams.set("view", "reset-password");
+      const { error } = await createSupabaseBrowserClient().auth.resetPasswordForEmail(email, {
+        redirectTo: redirectUrl.toString(),
+      });
+      if (error) throw error;
+      setResetEmailMessage("If an account exists for that email, a password reset link has been sent.");
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "Unable to send a password reset link.");
+    } finally {
+      setResetEmailSending(false);
+    }
+  };
+
+  const handlePasswordReset = async (event: FormEvent) => {
+    event.preventDefault();
+    setResetPasswordError("");
+    if (resetPassword.length < 8) {
+      setResetPasswordError("Choose a password with at least 8 characters.");
+      return;
+    }
+    if (resetPassword !== resetPasswordConfirm) {
+      setResetPasswordError("The passwords do not match.");
+      return;
+    }
+
+    setResetPasswordSaving(true);
+    try {
+      const { data, error } = await createSupabaseBrowserClient().auth.updateUser({ password: resetPassword });
+      if (error || !data.user) {
+        throw new Error(error?.message ?? "Unable to update your password. Request a new reset link and try again.");
+      }
+      const workspace = await resolveUserWorkspace(data.user);
+      setCompanies([workspace.company]);
+      setUsers([workspace.user]);
+      setRole(workspace.user.role);
+      setSession(workspace.session);
+      setResetPassword("");
+      setResetPasswordConfirm("");
+      const completedUrl = new URL(window.location.href);
+      completedUrl.searchParams.delete("view");
+      completedUrl.searchParams.delete("code");
+      completedUrl.hash = "";
+      window.history.replaceState(null, "", `${completedUrl.pathname}${completedUrl.search}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to update your password.";
+      setResetPasswordError(message === "Auth session missing!"
+        ? "Your password reset session has expired. Request a new password reset link."
+        : message);
+    } finally {
+      setResetPasswordSaving(false);
     }
   };
 
@@ -478,6 +571,8 @@ export default function App() {
         return <Tasks />;
       case "communications":
         return <Communications userName={session?.userName ?? "Team"} companyName={session?.companyName ?? ""} userEmail={activeUser?.email ?? ""} />;
+      case "ai":
+        return <AIAssistant />;
       case "passport":
         return <PassportCustody companyName={session?.companyName ?? ""} onRegisterCandidate={() => setView("candidates")} />;
       default:
@@ -502,6 +597,17 @@ export default function App() {
         onLoginFormChange={setLoginForm}
         onLogin={handleLoginSubmit}
         loginError={loginError}
+        onRequestPasswordReset={handlePasswordResetRequest}
+        resetEmailSending={resetEmailSending}
+        resetEmailMessage={resetEmailMessage}
+        resetPassword={resetPassword}
+        resetPasswordConfirm={resetPasswordConfirm}
+        resetPasswordError={resetPasswordError}
+        resetPasswordSaving={resetPasswordSaving}
+        onResetPasswordChange={setResetPassword}
+        onResetPasswordConfirmChange={setResetPasswordConfirm}
+        onResetPassword={handlePasswordReset}
+        resetPasswordEmail={resetPasswordEmail}
         inviteEmail={inviteEmail}
         inviteCompanyName={inviteCompanyName}
         inviteRoleName={inviteRoleName}
@@ -587,6 +693,17 @@ function AuthenticationExperience({
   onLoginFormChange,
   onLogin,
   loginError,
+  onRequestPasswordReset,
+  resetEmailSending,
+  resetEmailMessage,
+  resetPassword,
+  resetPasswordConfirm,
+  resetPasswordEmail,
+  resetPasswordError,
+  resetPasswordSaving,
+  onResetPasswordChange,
+  onResetPasswordConfirmChange,
+  onResetPassword,
   inviteEmail,
   inviteCompanyName,
   inviteRoleName,
@@ -599,8 +716,8 @@ function AuthenticationExperience({
   onAcceptInvitation,
   onContinueDemo,
 }: {
-  authView: "landing" | "login" | "register" | "verify" | "invite";
-  onSwitchView: (view: "landing" | "login" | "register" | "verify" | "invite") => void;
+  authView: "landing" | "login" | "register" | "verify" | "invite" | "reset-password";
+  onSwitchView: (view: "landing" | "login" | "register" | "verify" | "invite" | "reset-password") => void;
   companyForm: CompanyForm;
   onCompanyFormChange: (next: CompanyForm) => void;
   onRegister: (event: FormEvent) => void;
@@ -609,6 +726,17 @@ function AuthenticationExperience({
   onLoginFormChange: (next: { email: string; password: string }) => void;
   onLogin: (event: FormEvent) => void;
   loginError: string;
+  onRequestPasswordReset: () => void;
+  resetEmailSending: boolean;
+  resetEmailMessage: string;
+  resetPassword: string;
+  resetPasswordConfirm: string;
+  resetPasswordEmail: string;
+  resetPasswordError: string;
+  resetPasswordSaving: boolean;
+  onResetPasswordChange: (password: string) => void;
+  onResetPasswordConfirmChange: (password: string) => void;
+  onResetPassword: (event: FormEvent) => void;
   inviteEmail: string;
   inviteCompanyName: string;
   inviteRoleName: string;
@@ -621,6 +749,11 @@ function AuthenticationExperience({
   onAcceptInvitation: (event: FormEvent) => void;
   onContinueDemo: () => void;
 }) {
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
+  const [showRegisterConfirmPassword, setShowRegisterConfirmPassword] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [showResetPasswordConfirm, setShowResetPasswordConfirm] = useState(false);
   const formInputStyle = {
     background: "var(--secondary)",
     borderColor: "var(--border)",
@@ -644,6 +777,47 @@ function AuthenticationExperience({
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Confirm password<input required minLength={8} type="password" autoComplete="new-password" value={invitePasswordConfirm} onChange={(event) => onInvitePasswordConfirmChange(event.target.value)} className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} /></label>
             {inviteError && <div role="alert" className="border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">{inviteError}</div>}
             <button type="submit" disabled={inviteSaving} className="w-full px-4 py-3 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{inviteSaving ? "Setting password…" : "Set password and continue"}</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (authView === "reset-password") {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
+        <div className="w-full max-w-md rounded-2xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Account recovery</div>
+          <h1 className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>Choose a new password</h1>
+          <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>
+            {resetPasswordEmail ? `Set a new password for ${resetPasswordEmail}.` : "Enter and confirm your new password."}
+          </p>
+          <form onSubmit={onResetPassword} className="mt-6 space-y-4">
+            <label className="block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              New password
+              <div className="relative mt-1">
+                <input required minLength={8} type={showResetPassword ? "text" : "password"} autoComplete="new-password" value={resetPassword} onChange={(event) => onResetPasswordChange(event.target.value)} className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <button type="button" aria-label={showResetPassword ? "Hide password" : "Show password"} aria-pressed={showResetPassword} onClick={() => setShowResetPassword(!showResetPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
+                  {showResetPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                </button>
+              </div>
+            </label>
+            <label className="block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              Confirm new password
+              <div className="relative mt-1">
+                <input required minLength={8} type={showResetPasswordConfirm ? "text" : "password"} autoComplete="new-password" value={resetPasswordConfirm} onChange={(event) => onResetPasswordConfirmChange(event.target.value)} className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <button type="button" aria-label={showResetPasswordConfirm ? "Hide password" : "Show password"} aria-pressed={showResetPasswordConfirm} onClick={() => setShowResetPasswordConfirm(!showResetPasswordConfirm)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
+                  {showResetPasswordConfirm ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                </button>
+              </div>
+            </label>
+            {resetPasswordError && <div role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">{resetPasswordError}</div>}
+            <button type="submit" disabled={resetPasswordSaving} className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+              {resetPasswordSaving ? "Updating password…" : "Update password and sign in"}
+            </button>
+            <button type="button" onClick={() => onSwitchView("login")} className="w-full py-2 text-sm" style={{ color: "var(--muted-foreground)" }}>
+              Back to login
+            </button>
           </form>
         </div>
       </div>
@@ -740,15 +914,33 @@ function AuthenticationExperience({
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Password</label>
-              <input
-                type="password"
-                value={loginForm.password}
-                onChange={(event) => onLoginFormChange({ ...loginForm, password: event.target.value })}
-                className="w-full rounded border px-3 py-2.5 outline-none"
-                style={formInputStyle}
-                placeholder="••••••••"
-              />
+              <div className="relative">
+                <input
+                  type={showLoginPassword ? "text" : "password"}
+                  value={loginForm.password}
+                  onChange={(event) => onLoginFormChange({ ...loginForm, password: event.target.value })}
+                  className="w-full rounded border px-3 py-2.5 pr-10 outline-none"
+                  style={formInputStyle}
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  aria-label={showLoginPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showLoginPassword}
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                  className="absolute inset-y-0 right-0 flex items-center px-3"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  {showLoginPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                </button>
+              </div>
             </div>
+            <div className="flex justify-end">
+              <button type="button" onClick={onRequestPasswordReset} disabled={resetEmailSending} className="text-xs font-600 disabled:opacity-50" style={{ color: "var(--primary)" }}>
+                {resetEmailSending ? "Sending reset link…" : "Forgot password?"}
+              </button>
+            </div>
+            {resetEmailMessage && <div role="status" className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-400">{resetEmailMessage}</div>}
             {loginError ? <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm" style={{ color: "#fca5a5" }}>{loginError}</div> : null}
             <div className="flex items-center justify-between text-sm" style={{ color: "var(--muted-foreground)" }}>
               <span className="text-xs">Company access is assigned by a platform administrator.</span>
@@ -862,11 +1054,21 @@ function AuthenticationExperience({
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Password</label>
-              <input type="password" value={companyForm.password} onChange={(event) => onCompanyFormChange({ ...companyForm, password: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
+              <div className="relative">
+                <input type={showRegisterPassword ? "text" : "password"} value={companyForm.password} onChange={(event) => onCompanyFormChange({ ...companyForm, password: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 outline-none" style={formInputStyle} />
+                <button type="button" aria-label={showRegisterPassword ? "Hide password" : "Show password"} aria-pressed={showRegisterPassword} onClick={() => setShowRegisterPassword(!showRegisterPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
+                  {showRegisterPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                </button>
+              </div>
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Confirm Password</label>
-              <input type="password" value={companyForm.confirmPassword} onChange={(event) => onCompanyFormChange({ ...companyForm, confirmPassword: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
+              <div className="relative">
+                <input type={showRegisterConfirmPassword ? "text" : "password"} value={companyForm.confirmPassword} onChange={(event) => onCompanyFormChange({ ...companyForm, confirmPassword: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 outline-none" style={formInputStyle} />
+                <button type="button" aria-label={showRegisterConfirmPassword ? "Hide password" : "Show password"} aria-pressed={showRegisterConfirmPassword} onClick={() => setShowRegisterConfirmPassword(!showRegisterConfirmPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
+                  {showRegisterConfirmPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                </button>
+              </div>
             </div>
           </div>
 

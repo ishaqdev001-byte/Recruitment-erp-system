@@ -122,6 +122,10 @@ const smsPermissionRepairMigration = await readFile(
   new URL("../supabase/migrations/202610040030_sms_permission_repair.sql", import.meta.url),
   "utf8",
 );
+const aiUsageMigration = await readFile(
+  new URL("../supabase/migrations/202610120001_ai_usage.sql", import.meta.url),
+  "utf8",
+);
 const database = new PGlite();
 
 const companyA = "10000000-0000-4000-8000-000000000001";
@@ -231,6 +235,8 @@ try {
   );
   await database.exec(smsPermissionRepairMigration);
   await database.exec(smsPermissionRepairMigration);
+  await database.exec(aiUsageMigration);
+  await database.exec(aiUsageMigration);
 
   const smsGroupTables = await database.query(
     `select relname, relrowsecurity from pg_class
@@ -450,6 +456,29 @@ try {
 
   await database.exec("set role authenticated");
   await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+
+  await database.query(
+    `insert into public.ai_usage_logs (company_id, user_id, document_type, model, input_tokens, output_tokens)
+      values ($1, $2, 'cv', 'gpt-4o-mini', 120, 80)`,
+    [companyA, userA],
+  );
+  await database.query(
+    `insert into public.ai_usage_logs (company_id, user_id, document_type, model, input_tokens, output_tokens)
+      values ($1, $2, 'academic', 'gpt-4o-mini', 10, 20), ($1, $2, 'chat', 'gpt-4o-mini', 15, 5)`,
+    [companyA, userA],
+  );
+  const companyAiUsage = await database.query("select public.company_ai_usage_total($1) as tokens", [companyA]);
+  assert.deepEqual(companyAiUsage.rows, [{ tokens: 250 }]);
+  const unrelatedCompanyAiUsage = await database.query("select public.company_ai_usage_total($1) as tokens", [companyB]);
+  assert.deepEqual(unrelatedCompanyAiUsage.rows, [{ tokens: 0 }]);
+  await assert.rejects(
+    database.query(
+      `insert into public.ai_usage_logs (company_id, user_id, document_type, model, input_tokens, output_tokens)
+        values ($1, $2, 'cv', 'gpt-4o-mini', 120, 80)`,
+      [companyB, userA],
+    ),
+    /row-level security|permission denied/,
+  );
 
   await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userB]);
   const coworkerCandidateDocuments = await database.query(

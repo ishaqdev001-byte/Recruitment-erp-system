@@ -12,12 +12,15 @@ import Agents from "./components/Agents";
 import Finance from "./components/Finance";
 import Invoices from "./components/InvoiceWorkspace";
 import Payments from "./components/Payments";
+import Paychecks from "./components/Paychecks";
+import AccountsWorkspace from "./components/AccountsWorkspace";
 import Suppliers from "./components/Suppliers";
 import Contractors from "./components/Employers";
 import Projects from "./components/Projects";
 import PassportCustody from "./components/PassportCustodyWorkspace";
 import Attendance from "./components/Attendance";
 import LeaveManagement from "./components/LeaveManagement";
+import HumanResources from "./components/HumanResources";
 import CompanyDrive from "./components/CompanyDrive";
 import Tasks from "./components/TaskWorkspace";
 import Communications from "./components/Communications";
@@ -34,6 +37,7 @@ export type View =
   | "offers"
   | "analytics"
   | "finance"
+  | "accounts"
   | "payments"
   | "paychecks"
   | "passport"
@@ -49,7 +53,8 @@ export type View =
   | "communications"
   | "auditlog"
   | "attendance"
-  | "leave";
+  | "leave"
+  | "human-resources";
 
 export type WorkspaceRole =
   | "Company Owner / Primary Administrator"
@@ -286,6 +291,7 @@ export default function App() {
         const supabase = createSupabaseBrowserClient();
         const accessToken = hashParams.get("access_token");
         const refreshToken = hashParams.get("refresh_token");
+        const recoveryCode = currentUrl.searchParams.get("code") ?? hashParams.get("code") ?? currentUrl.searchParams.get("token") ?? "";
         if ((inviteLink || recoveryLink) && accessToken && refreshToken) {
           const { error: sessionError } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
           if (sessionError) {
@@ -294,10 +300,32 @@ export default function App() {
               : "This invitation link is invalid or expired. Ask the company administrator to send a new invitation.");
           }
           window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
+        } else if (recoveryLink && recoveryCode) {
+          const { data: { session }, error: sessionError } = await supabase.auth.exchangeCodeForSession(recoveryCode);
+          if (sessionError || !session) {
+            throw new Error("This password reset link is invalid or expired. Request a new one from the login screen.");
+          }
+          window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
         }
         const { data: { user }, error } = await supabase.auth.getUser();
         if (error) throw error;
         if (user) {
+          const needsGoogleMailLink = window.sessionStorage.getItem("recruitos.googleConnectGmail") === "gmail";
+          if (needsGoogleMailLink) {
+            window.sessionStorage.removeItem("recruitos.googleConnectGmail");
+            try {
+              const connectResponse = await fetch("/api/communications/mail/connect?provider=gmail", { cache: "no-store" });
+              const connectPayload = await connectResponse.json() as { url?: string; error?: string };
+              if (connectResponse.ok && connectPayload.url) {
+                window.location.assign(connectPayload.url);
+                return;
+              }
+              console.warn("Google Gmail link not started", connectPayload.error ?? "unknown error");
+            } catch (error) {
+              console.warn("Google Gmail link failed", error);
+            }
+          }
+
           const showInvitation = async (invitationId: string) => {
             setInviteEmail(user.email ?? "");
             setAuthView("invite");
@@ -407,6 +435,25 @@ export default function App() {
       setSession(workspace.session);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "Unable to load your company workspace.");
+    }
+  };
+
+  const handleContinueWithGoogle = async () => {
+    setLoginError("");
+    try {
+      const supabase = createSupabaseBrowserClient();
+      window.sessionStorage.setItem("recruitos.googleConnectGmail", "gmail");
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/`,
+          queryParams: { access_type: "offline", prompt: "consent" },
+        },
+      });
+      if (error) throw error;
+    } catch (error) {
+      window.sessionStorage.removeItem("recruitos.googleConnectGmail");
+      setLoginError(error instanceof Error ? error.message : "Unable to continue with Google.");
     }
   };
 
@@ -553,10 +600,14 @@ export default function App() {
         return <Agents />;
       case "finance":
         return <Finance />;
+      case "accounts":
+        return <AccountsWorkspace />;
       case "invoices":
         return <Invoices />;
       case "payments":
         return <Payments onOpenInvoices={() => setView("invoices")} />;
+      case "paychecks":
+        return <Paychecks />;
       case "suppliers":
         return <Suppliers />;
       case "contractors":
@@ -567,6 +618,8 @@ export default function App() {
         return <Attendance />;
       case "leave":
         return <LeaveManagement />;
+      case "human-resources":
+        return <HumanResources isOwner={activeUser?.role === "Company Owner / Primary Administrator"} />;
       case "tasks":
         return <Tasks />;
       case "communications":
@@ -596,6 +649,7 @@ export default function App() {
         loginForm={loginForm}
         onLoginFormChange={setLoginForm}
         onLogin={handleLoginSubmit}
+        onGoogleContinue={handleContinueWithGoogle}
         loginError={loginError}
         onRequestPasswordReset={handlePasswordResetRequest}
         resetEmailSending={resetEmailSending}
@@ -692,6 +746,7 @@ function AuthenticationExperience({
   loginForm,
   onLoginFormChange,
   onLogin,
+  onGoogleContinue,
   loginError,
   onRequestPasswordReset,
   resetEmailSending,
@@ -725,6 +780,7 @@ function AuthenticationExperience({
   loginForm: { email: string; password: string };
   onLoginFormChange: (next: { email: string; password: string }) => void;
   onLogin: (event: FormEvent) => void;
+  onGoogleContinue: () => void;
   loginError: string;
   onRequestPasswordReset: () => void;
   resetEmailSending: boolean;
@@ -940,6 +996,14 @@ function AuthenticationExperience({
                 {resetEmailSending ? "Sending reset link…" : "Forgot password?"}
               </button>
             </div>
+            <div className="relative my-2">
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t" style={{ borderColor: "var(--border)" }} /></div>
+              <div className="relative flex justify-center"><span className="px-2 text-[10px] font-700 uppercase tracking-[0.2em]" style={{ background: "var(--card)", color: "var(--muted-foreground)" }}>or</span></div>
+            </div>
+            <button type="button" onClick={onGoogleContinue} className="flex w-full items-center justify-center gap-2 rounded border px-4 py-3 font-600" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-800" style={{ background: "#fff", color: "#1f2937" }}>G</span>
+              Continue with Google
+            </button>
             {resetEmailMessage && <div role="status" className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-400">{resetEmailMessage}</div>}
             {loginError ? <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm" style={{ color: "#fca5a5" }}>{loginError}</div> : null}
             <div className="flex items-center justify-between text-sm" style={{ color: "var(--muted-foreground)" }}>
@@ -948,6 +1012,9 @@ function AuthenticationExperience({
             <button type="submit" className="w-full rounded px-4 py-3 font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
               Log In
             </button>
+            <div className="pt-1 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>
+              Need an account? <button type="button" onClick={() => onSwitchView("register")} className="font-600" style={{ color: "var(--primary)" }}>Create account</button>
+            </div>
           </form>
         </div>
       </div>

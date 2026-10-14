@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { LockKeyhole } from "lucide-react";
+import { SearchableSelect } from "./SearchableSelect";
 
 const logs = [
   { id: 1, user: "Aisha Khan", action: "Updated passport status", module: "Passport Custody", candidate: "Godfrey Kamuhangire", prev: "Candidate Has Passport", next: "In Company Custody", date: "Aug 26, 2026", time: "09:14 AM", sensitive: true },
@@ -57,11 +58,7 @@ export default function AuditLog() {
           style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }}>
           {modules.map((m) => <option key={m}>{m}</option>)}
         </select>
-        <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)}
-          className="px-3 py-1.5 text-sm rounded border outline-none"
-          style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }}>
-          {users.map((u) => <option key={u}>{u}</option>)}
-        </select>
+        <SearchableSelect ariaLabel="Search audit log user" value={userFilter} onChange={setUserFilter} options={users.map((user) => ({ value: user, label: user }))} placeholder="Type a user name" className="w-48" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }} />
         <label className="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" checked={sensitiveOnly} onChange={(e) => setSensitiveOnly(e.target.checked)}
             style={{ accentColor: "#ef4444" }} />

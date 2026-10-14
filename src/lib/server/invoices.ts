@@ -27,6 +27,7 @@ export type InvoicePayment = {
   id: string;
   amount: number;
   paid_at: string;
+  account_id: string | null;
 };
 
 export type InvoiceWithBalance = InvoiceRecord & {
@@ -93,7 +94,7 @@ export async function loadInvoiceWithBalance(access: Extract<InvoiceAccess, { su
 
   const [{ data: paymentRows, error: paymentError }, { data: depositRows, error: depositError }] = await Promise.all([
     access.supabase.from("invoice_payments")
-      .select("id, amount, paid_at")
+      .select("id, amount, paid_at, account_id")
       .eq("invoice_id", invoiceId)
       .eq("company_id", access.companyId)
       .order("paid_at", { ascending: true }),
@@ -123,7 +124,7 @@ export async function loadAllInvoices(access: Extract<InvoiceAccess, { supabase:
     { data: depositRows, error: depositError },
   ] = await Promise.all([
     access.supabase.from("invoice_payments")
-      .select("id, invoice_id, amount, paid_at")
+      .select("id, invoice_id, amount, paid_at, account_id")
       .eq("company_id", access.companyId)
       .in("invoice_id", invoices.map((invoice) => invoice.id))
       .order("paid_at", { ascending: true }),
@@ -137,7 +138,7 @@ export async function loadAllInvoices(access: Extract<InvoiceAccess, { supabase:
   const paymentMap = new Map<string, InvoicePayment[]>();
   for (const payment of paymentRows ?? []) {
     const current = paymentMap.get(payment.invoice_id) ?? [];
-    current.push({ id: payment.id, amount: Number(payment.amount), paid_at: payment.paid_at });
+    current.push({ id: payment.id, amount: Number(payment.amount), paid_at: payment.paid_at, account_id: payment.account_id });
     paymentMap.set(payment.invoice_id, current);
   }
   const depositMap = new Map<string, number>();

@@ -12,7 +12,7 @@ export async function GET() {
 
     const [{ data: receiptRows, error: receiptError }, invoices, { data: canRecord }] = await Promise.all([
       access.supabase.from("financial_receipts")
-        .select("id, receipt_number, entry_type, candidate_id, received_from, category, amount, payment_method, external_reference, notes, received_at")
+        .select("id, receipt_number, entry_type, candidate_id, account_id, received_from, category, amount, payment_method, external_reference, notes, received_at")
         .eq("company_id", access.companyId)
         .order("received_at", { ascending: false }),
       loadAllInvoices(access),
@@ -35,6 +35,7 @@ export async function GET() {
         category: receipt.category,
         receivedFrom: receipt.received_from,
         candidateId: receipt.candidate_id,
+        accountId: receipt.account_id,
         invoiceId: null,
         invoiceNumber: null,
         amount: Number(receipt.amount),
@@ -51,6 +52,7 @@ export async function GET() {
         category: "Invoice payment",
         receivedFrom: invoice.recipient_name,
         candidateId: invoice.recipient_type === "candidate" ? invoice.recipient_id : null,
+        accountId: payment.account_id,
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoice_number,
         amount: Number(payment.amount),
@@ -102,6 +104,7 @@ export async function POST(request: Request) {
     const notes = typeof body?.notes === "string" ? body.notes.trim() : "";
     const receivedAt = typeof body?.receivedAt === "string" ? body.receivedAt : "";
     const candidateId = typeof body?.candidateId === "string" ? body.candidateId : "";
+    const accountId = typeof body?.accountId === "string" ? body.accountId : "";
     const otherSource = typeof body?.otherSource === "string" ? body.otherSource.trim() : "";
     if (!body || (entryType !== "candidate_deposit" && entryType !== "other_income")
       || !category || category.length > 100 || !Number.isFinite(amount) || amount <= 0 || amount > 999999999999.99
@@ -112,12 +115,16 @@ export async function POST(request: Request) {
     if (entryType === "candidate_deposit" && !/^[0-9a-f-]{36}$/i.test(candidateId)) {
       return NextResponse.json({ error: "Select a registered candidate for this deposit." }, { status: 400, headers: responseHeaders });
     }
+    if (!/^[0-9a-f-]{36}$/i.test(accountId)) {
+      return NextResponse.json({ error: "Select the company account receiving this money." }, { status: 400, headers: responseHeaders });
+    }
     if (entryType === "other_income" && (!otherSource || otherSource.length > 200)) {
       return NextResponse.json({ error: "Enter the source of this income." }, { status: 400, headers: responseHeaders });
     }
 
     const { data, error } = await access.supabase.from("financial_receipts").insert({
       company_id: access.companyId,
+      account_id: accountId,
       created_by: access.userId,
       entry_type: entryType,
       candidate_id: entryType === "candidate_deposit" ? candidateId : null,

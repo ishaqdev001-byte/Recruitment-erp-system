@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowUpRight, CircleDollarSign, Plus, Search, X } from "lucide-react";
+import { SearchableSelect } from "./SearchableSelect";
 
 type ReceiptType = "candidate_deposit" | "other_income" | "invoice_payment";
 type CandidateOption = { candidate_id: string; file_number: string; candidate_name: string };
+type AccountOption = { id: string; name: string; account_type: string; account_number: string };
 type PaymentTransaction = {
   id: string;
   recordType: "receipt" | "invoice_payment";
@@ -11,6 +13,7 @@ type PaymentTransaction = {
   category: string;
   receivedFrom: string;
   candidateId: string | null;
+  accountId: string | null;
   invoiceId: string | null;
   invoiceNumber: string | null;
   amount: number;
@@ -22,6 +25,7 @@ type PaymentTransaction = {
 type LedgerPayload = {
   transactions?: PaymentTransaction[];
   candidates?: CandidateOption[];
+  accounts?: AccountOption[];
   permissions?: { canRecord?: boolean };
   totals?: { totalReceived: number; candidateDeposits: number; invoicePayments: number; otherIncome: number };
   error?: string;
@@ -40,6 +44,7 @@ const localDate = () => {
 export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => void }) {
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
   const [candidates, setCandidates] = useState<CandidateOption[]>([]);
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [canRecord, setCanRecord] = useState(false);
   const [totals, setTotals] = useState({ totalReceived: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
   const [search, setSearch] = useState("");
@@ -49,6 +54,7 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
   const [showAdd, setShowAdd] = useState(false);
   const [entryType, setEntryType] = useState<"candidate_deposit" | "other_income">("candidate_deposit");
   const [candidateId, setCandidateId] = useState("");
+  const [accountId, setAccountId] = useState("");
   const [otherSource, setOtherSource] = useState("");
   const [category, setCategory] = useState("Candidate deposit");
   const [amount, setAmount] = useState("");
@@ -64,12 +70,20 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
       setLoading(true);
       setError("");
       try {
-        const response = await fetch("/api/payments", { cache: "no-store" });
-        const payload = await response.json() as LedgerPayload;
+        const [response, accountsResponse] = await Promise.all([
+          fetch("/api/payments", { cache: "no-store" }),
+          fetch("/api/finance/accounts?options=1", { cache: "no-store" }),
+        ]);
+        const [payload, accountsPayload] = await Promise.all([
+          response.json() as Promise<LedgerPayload>,
+          accountsResponse.json() as Promise<{ accounts?: AccountOption[]; error?: string }>,
+        ]);
         if (!response.ok) throw new Error(payload.error ?? "Unable to load receipts.");
+        if (!accountsResponse.ok) throw new Error(accountsPayload.error ?? "Unable to load company accounts.");
         if (cancelled) return;
         setTransactions(payload.transactions ?? []);
         setCandidates(payload.candidates ?? []);
+        setAccounts(accountsPayload.accounts ?? []);
         setCanRecord(Boolean(payload.permissions?.canRecord));
         setTotals(payload.totals ?? { totalReceived: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
       } catch (loadError) {
@@ -91,6 +105,7 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
   const resetForm = () => {
     setEntryType("candidate_deposit");
     setCandidateId("");
+    setAccountId("");
     setOtherSource("");
     setCategory("Candidate deposit");
     setAmount("");
@@ -108,7 +123,7 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
       const response = await fetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entryType, candidateId, otherSource, category, amount, paymentMethod, externalReference, notes, receivedAt }),
+        body: JSON.stringify({ entryType, candidateId, accountId, otherSource, category, amount, paymentMethod, externalReference, notes, receivedAt }),
       });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Unable to record this receipt.");
@@ -147,16 +162,17 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-240 text-sm">
-            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Received", "Receipt", "Received from", "Type", "Category", "Method", "Amount", "Reference", "Invoice", "Notes"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Received", "Receipt", "Received from", "Type", "Category", "Account", "Method", "Amount", "Reference", "Invoice", "Notes"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={10} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading receipt history…</td></tr>}
-              {!loading && !error && filteredTransactions.length === 0 && <tr><td colSpan={10} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{transactions.length ? "No receipts match this search." : "No receipts recorded yet."}</td></tr>}
+              {loading && <tr><td colSpan={11} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading receipt history…</td></tr>}
+              {!loading && !error && filteredTransactions.length === 0 && <tr><td colSpan={11} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{transactions.length ? "No receipts match this search." : "No receipts recorded yet."}</td></tr>}
               {!loading && filteredTransactions.map((transaction) => <tr key={transaction.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{new Date(transaction.receivedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "var(--primary)" }}>{transaction.reference}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs font-600" style={{ color: "var(--foreground)" }}>{transaction.receivedFrom}</td>
                 <td className="whitespace-nowrap px-3 py-3"><span className="px-2 py-1 text-xs font-600" style={{ color: typeColor[transaction.entryType], background: `${typeColor[transaction.entryType]}1a` }}>{typeLabel[transaction.entryType]}</span></td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{transaction.category}</td>
+                <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{accounts.find((account) => account.id === transaction.accountId)?.name ?? "—"}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{transaction.paymentMethod}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "#17845b" }}>{money(transaction.amount)}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{transaction.externalReference || "—"}</td>
@@ -173,13 +189,14 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
           <div className="mb-5 flex items-center justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Record receipt</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Invoice payments are recorded from Invoices.</p></div><button type="button" onClick={() => { setShowAdd(false); resetForm(); }} aria-label="Close receipt form" className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
           <div className="space-y-4">
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Receipt type<select value={entryType} onChange={(event) => { const nextType = event.target.value as "candidate_deposit" | "other_income"; setEntryType(nextType); setCategory(nextType === "candidate_deposit" ? "Candidate deposit" : "Other income"); }} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}><option value="candidate_deposit">Candidate deposit</option><option value="other_income">Other income</option></select></label>
-            {entryType === "candidate_deposit" ? <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Candidate<select required value={candidateId} onChange={(event) => setCandidateId(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}><option value="">Select registered candidate</option>{candidates.map((candidate) => <option key={candidate.candidate_id} value={candidate.candidate_id}>{candidate.candidate_name} · {candidate.file_number}</option>)}</select></label> : <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Income source<input required maxLength={200} value={otherSource} onChange={(event) => setOtherSource(event.target.value)} placeholder="e.g. Training service" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>}
+            {entryType === "candidate_deposit" ? <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Candidate<SearchableSelect required ariaLabel="Search registered candidate" value={candidateId} onChange={setCandidateId} options={candidates.map((candidate) => ({ value: candidate.candidate_id, label: candidate.candidate_name, description: candidate.file_number, searchText: candidate.file_number }))} placeholder="Type a candidate name or file number" className="mt-1 normal-case tracking-normal" /></label> : <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Income source<input required maxLength={200} value={otherSource} onChange={(event) => setOtherSource(event.target.value)} placeholder="e.g. Training service" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>}
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Category<input required maxLength={100} value={category} onChange={(event) => setCategory(event.target.value)} placeholder="e.g. Registration fee" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Account<SearchableSelect required ariaLabel="Choose account for receipt" value={accountId} onChange={setAccountId} options={accounts.map((account) => ({ value: account.id, label: account.name, description: account.account_type.replace(/_/g, " "), searchText: account.account_number }))} placeholder="Select the account receiving this money" className="mt-1 normal-case tracking-normal" /></label>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Amount (UGX)<input required min="0.01" step="0.01" type="number" value={amount} onChange={(event) => setAmount(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Received date<input required type="date" max={localDate()} value={receivedAt} onChange={(event) => setReceivedAt(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label></div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>{methods.map((method) => <option key={method}>{method}</option>)}</select></label><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>External reference<input maxLength={200} value={externalReference} onChange={(event) => setExternalReference(event.target.value)} placeholder="Optional bank or receipt reference" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label></div>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Notes<textarea rows={2} maxLength={2000} value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1 w-full resize-y border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
           </div>
-          <div className="mt-6 flex gap-3"><button type="submit" disabled={saving || (entryType === "candidate_deposit" && !candidateId)} className="flex-1 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save receipt"}</button><button type="button" onClick={() => { setShowAdd(false); resetForm(); }} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
+          <div className="mt-6 flex gap-3"><button type="submit" disabled={saving || !accountId || (entryType === "candidate_deposit" && !candidateId)} className="flex-1 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save receipt"}</button><button type="button" onClick={() => { setShowAdd(false); resetForm(); }} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
         </form>
       </div>}
     </section>

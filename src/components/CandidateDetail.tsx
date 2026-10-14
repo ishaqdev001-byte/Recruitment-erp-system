@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Sparkles, X } from "lucide-react";
 import type { Candidate } from "./Candidates";
+import { SearchableSelect } from "./SearchableSelect";
 
 interface Props {
   candidate: Candidate;
@@ -220,8 +221,8 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
             <div />
 
             <div className="col-span-2">
-              <SelectField label="Agent" value={form.agent} onChange={(v) => set("agent", v)} required
-                options={["Director Vicent", "Asiimwe david", "Aisha Tendo", "Peter Mukasa"]} />
+              <label className="text-xs font-600 block mb-1" style={{ color: "var(--muted-foreground)" }}>Agent<span style={{ color: "#ef4444" }}> *</span></label>
+              <SearchableSelect required ariaLabel="Search agent" value={form.agent} onChange={(value) => set("agent", value)} options={["Director Vicent", "Asiimwe david", "Aisha Tendo", "Peter Mukasa"].map((name) => ({ value: name, label: name }))} placeholder="Type an agent name" />
             </div>
             <div className="col-span-2">
               <MultiField label="Media Channel" value={form.mediaChannel} onChange={(v) => set("mediaChannel", v)} required
@@ -429,8 +430,8 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
                 options={["Saudi Arabia", "UAE", "Kuwait", "Qatar", "Oman", "Bahrain", "Jordan", "Lebanon"]} />
             </div>
             <div className="col-span-2">
-              <SelectField label="Assigned Contracts" value={form.assignedContracts} onChange={(v) => set("assignedContracts", v)}
-                options={[...new Set([...activeProjectNames, ...(form.assignedContracts ? [form.assignedContracts] : [])])]} />
+              <label className="text-xs font-600 block mb-1" style={{ color: "var(--muted-foreground)" }}>Assigned Contracts</label>
+              <SearchableSelect ariaLabel="Search assigned contracts" value={form.assignedContracts} onChange={(value) => set("assignedContracts", value)} options={[...new Set([...activeProjectNames, ...(form.assignedContracts ? [form.assignedContracts] : [])])].map((name) => ({ value: name, label: name }))} placeholder="Type a contract or project name" />
               {projectLoadError && <p role="alert" className="mt-1 text-xs text-red-400">Unable to load active projects. Visa invoicing requires an assigned active project.</p>}
             </div>
             <div />

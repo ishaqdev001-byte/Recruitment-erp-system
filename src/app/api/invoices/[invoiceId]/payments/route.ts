@@ -9,15 +9,19 @@ export async function POST(request: Request, context: { params: Promise<{ invoic
     const access = await getInvoiceAccess("finance.create");
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers: responseHeaders });
     const { invoiceId } = await context.params;
-    const body = await request.json().catch(() => null) as { amount?: unknown } | null;
+    const body = await request.json().catch(() => null) as { amount?: unknown; accountId?: unknown } | null;
     const amount = Number(body?.amount);
+    const accountId = typeof body?.accountId === "string" ? body.accountId : "";
     if (!Number.isFinite(amount) || amount <= 0) return NextResponse.json({ error: "Enter a payment amount greater than zero." }, { status: 400, headers: responseHeaders });
+    if (!/^[0-9a-f-]{36}$/i.test(accountId)) return NextResponse.json({ error: "Select the account receiving this payment." }, { status: 400, headers: responseHeaders });
 
-    const { error } = await access.supabase.rpc("record_invoice_payment", { requested_invoice_id: invoiceId, payment_amount: amount });
+    const { error } = await access.supabase.rpc("record_invoice_payment", { requested_invoice_id: invoiceId, payment_amount: amount, requested_account_id: accountId });
     if (error) {
       const message = error.message.includes("exceeds the outstanding")
         ? "Payment cannot exceed the outstanding invoice balance."
-        : error.message.includes("Invoice not found") ? "Invoice not found." : "Unable to record this payment.";
+        : error.message.includes("Invoice not found") ? "Invoice not found."
+        : error.message.includes("Active account not found") ? "Select an active company account."
+        : "Unable to record this payment.";
       return NextResponse.json({ error: message }, { status: error.code === "42501" ? 403 : 400, headers: responseHeaders });
     }
     const invoice = await loadInvoiceWithBalance(access, invoiceId);

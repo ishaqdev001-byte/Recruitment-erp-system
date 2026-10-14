@@ -126,6 +126,26 @@ const aiUsageMigration = await readFile(
   new URL("../supabase/migrations/202610120001_ai_usage.sql", import.meta.url),
   "utf8",
 );
+const companyStaffMigration = await readFile(
+  new URL("../supabase/migrations/202610130001_company_staff.sql", import.meta.url),
+  "utf8",
+);
+const staffHrProfileMigration = await readFile(
+  new URL("../supabase/migrations/202610130002_staff_hr_profile.sql", import.meta.url),
+  "utf8",
+);
+const staffPayrollMigration = await readFile(
+  new URL("../supabase/migrations/202610130003_staff_auto_enrollment_payroll.sql", import.meta.url),
+  "utf8",
+);
+const payrollAdjustmentMigration = await readFile(
+  new URL("../supabase/migrations/202610130004_payroll_adjustment_batches.sql", import.meta.url),
+  "utf8",
+);
+const companyAccountsMigration = await readFile(
+  new URL("../supabase/migrations/202610130005_company_accounts_books.sql", import.meta.url),
+  "utf8",
+);
 const database = new PGlite();
 
 const companyA = "10000000-0000-4000-8000-000000000001";
@@ -148,7 +168,7 @@ try {
   await database.exec(`
     create role anon;
     create role authenticated;
-    create role service_role;
+    create role service_role bypassrls;
     create schema auth;
     create table auth.users (
       id uuid primary key,
@@ -237,6 +257,42 @@ try {
   await database.exec(smsPermissionRepairMigration);
   await database.exec(aiUsageMigration);
   await database.exec(aiUsageMigration);
+  await database.exec(companyStaffMigration);
+  await database.exec(staffHrProfileMigration);
+  await database.exec(staffPayrollMigration);
+  await database.exec(payrollAdjustmentMigration);
+  await database.exec(companyAccountsMigration);
+
+  const staffTables = await database.query(
+    `select relname, relrowsecurity from pg_class
+      where relname in ('company_accounts', 'company_account_transactions', 'company_expenses', 'company_staff_documents', 'company_staff_id_settings', 'company_staff_members', 'company_staff_paychecks', 'company_staff_payroll_adjustments', 'company_payroll_reference_settings')
+      order by relname`,
+  );
+  assert.deepEqual(staffTables.rows, [
+    { relname: "company_account_transactions", relrowsecurity: true },
+    { relname: "company_accounts", relrowsecurity: true },
+    { relname: "company_expenses", relrowsecurity: true },
+    { relname: "company_payroll_reference_settings", relrowsecurity: true },
+    { relname: "company_staff_documents", relrowsecurity: true },
+    { relname: "company_staff_id_settings", relrowsecurity: true },
+    { relname: "company_staff_members", relrowsecurity: true },
+    { relname: "company_staff_paychecks", relrowsecurity: true },
+    { relname: "company_staff_payroll_adjustments", relrowsecurity: true },
+  ]);
+  await database.query(
+    "insert into public.company_staff_id_settings (company_id, staff_id_prefix, next_sequence) values ($1, 'AB', 8)",
+    [companyC],
+  );
+  const allocatedStaffId = await database.query(
+    "select * from public.allocate_company_staff_sequence($1)",
+    [companyC],
+  );
+  assert.deepEqual(allocatedStaffId.rows, [{ staff_id_prefix: "AB", sequence_number: 8 }]);
+  const nextStaffSequence = await database.query(
+    "select next_sequence from public.company_staff_id_settings where company_id = $1",
+    [companyC],
+  );
+  assert.equal(nextStaffSequence.rows[0].next_sequence, 9);
 
   const smsGroupTables = await database.query(
     `select relname, relrowsecurity from pg_class
@@ -339,6 +395,30 @@ try {
     "insert into public.company_memberships (company_id, user_id, role_id) values ($1, $2, $3)",
     [companyC, userC, primaryRole.rows[0].id],
   );
+  const autoStaffRecord = await database.query(
+    "select id, staff_id, linked_user_id from public.company_staff_members where company_id = $1 and linked_user_id = $2",
+    [companyC, userC],
+  );
+  assert.equal(autoStaffRecord.rows.length, 1);
+  assert.equal(autoStaffRecord.rows[0].staff_id, "AB-0009");
+  assert.equal(autoStaffRecord.rows[0].linked_user_id, userC);
+  const payrollReference = await database.query(
+    "select public.allocate_company_payroll_reference($1) as reference",
+    [companyC],
+  );
+  assert.equal(payrollReference.rows[0].reference, "NC-000001");
+  await database.query(
+    `insert into public.company_staff_payroll_adjustments (
+      company_id, staff_member_id, pay_period, adjustment_type, amount,
+      payment_method, payment_reference, description, created_by
+    ) values ($1, $2, '2026-10-01', 'benefit', 25000, 'Mobile money', $3, 'Transport allowance', $4)`,
+    [companyC, autoStaffRecord.rows[0].id, payrollReference.rows[0].reference, userC],
+  );
+  const recordedAdjustment = await database.query(
+    "select adjustment_type, amount, payment_reference from public.company_staff_payroll_adjustments where company_id = $1",
+    [companyC],
+  );
+  assert.deepEqual(recordedAdjustment.rows, [{ adjustment_type: "benefit", amount: "25000.00", payment_reference: "NC-000001" }]);
   const protectedPrimary = await database.query(
     "select primary_admin_user_id from public.companies where id = $1",
     [companyC],
@@ -755,6 +835,14 @@ try {
   const visibleEmployers = await database.query("select company_name from public.employers order by company_name");
   assert.deepEqual(visibleEmployers.rows.map((row) => row.company_name), ["Company A Employer"]);
   const contractor = await database.query("select id from public.employers where company_id = $1", [companyA]);
+  const accountId = "a0000000-0000-4000-8000-000000000001";
+  await database.exec("reset role; set role service_role");
+  await database.query(
+    `insert into public.company_accounts (id, company_id, name, account_type, created_by)
+      values ($1, $2, 'Main Cash', 'cash', $3)`,
+    [accountId, companyA, userA],
+  );
+  await database.exec("reset role; set role authenticated");
   const projectId = "70000000-0000-4000-8000-000000000001";
   await database.query(
     `insert into public.projects (id, company_id, contractor_id, contractor_name, project_name, country, salary_range, age_bracket, total_demand, service_charge, interview_mode, created_by)
@@ -784,23 +872,40 @@ try {
   const invoiceId = createdInvoice.rows[0].id;
   const savedRecipientName = await database.query("select recipient_name from public.invoices where id = $1", [invoiceId]);
   assert.equal(savedRecipientName.rows[0].recipient_name, "Candidate A");
-  await database.query("select public.record_invoice_payment($1, $2)", [invoiceId, 40]);
+  await database.query("select public.record_invoice_payment($1, $2, $3)", [invoiceId, 40, accountId]);
   const partialInvoice = await database.query("select status from public.invoices where id = $1", [invoiceId]);
   assert.equal(partialInvoice.rows[0].status, "partially_paid");
-  await database.query("select public.record_invoice_payment($1, $2)", [invoiceId, 60]);
+  await database.query("select public.record_invoice_payment($1, $2, $3)", [invoiceId, 60, accountId]);
   const paidInvoice = await database.query("select status from public.invoices where id = $1", [invoiceId]);
   assert.equal(paidInvoice.rows[0].status, "paid");
-  await assert.rejects(database.query("select public.record_invoice_payment($1, $2)", [invoiceId, 1]), /exceeds the outstanding/);
+  await assert.rejects(database.query("select public.record_invoice_payment($1, $2, $3)", [invoiceId, 1, accountId]), /exceeds the outstanding/);
   const receiptCandidates = await database.query("select candidate_name from public.list_finance_candidates($1)", [companyA]);
   assert.deepEqual(receiptCandidates.rows.map((candidate) => candidate.candidate_name), ["Candidate A"]);
   const candidateDeposit = await database.query(
-    `insert into public.financial_receipts (company_id, entry_type, candidate_id, received_from, category, amount, payment_method, created_by)
-      values ($1, 'candidate_deposit', $2, 'Spoofed Name', 'Candidate deposit', 25, 'Cash', $3)
+    `insert into public.financial_receipts (company_id, entry_type, candidate_id, received_from, category, amount, payment_method, created_by, account_id)
+      values ($1, 'candidate_deposit', $2, 'Spoofed Name', 'Candidate deposit', 25, 'Cash', $3, $4)
       returning receipt_number, received_from`,
-    [companyA, candidateA, userA],
+    [companyA, candidateA, userA, accountId],
   );
   assert.match(candidateDeposit.rows[0].receipt_number, /^RCT-\d{4}-\d{5}$/);
   assert.equal(candidateDeposit.rows[0].received_from, "Candidate A");
+  await database.exec("reset role; set role service_role");
+  const accountLedgerTotals = await database.query(
+    `select transaction_type, direction, sum(amount)::numeric(14, 2)::text as amount, count(*)::integer as count
+      from public.company_account_transactions where account_id = $1
+      group by transaction_type, direction order by transaction_type`,
+    [accountId],
+  );
+  assert.deepEqual(accountLedgerTotals.rows, [
+    { transaction_type: "income", direction: "credit", amount: "25.00", count: 1 },
+    { transaction_type: "invoice_payment", direction: "credit", amount: "100.00", count: 2 },
+  ]);
+  const accountBalance = await database.query(
+    "select sum(case when direction = 'credit' then amount else -amount end)::numeric(14, 2)::text as balance from public.company_account_transactions where account_id = $1",
+    [accountId],
+  );
+  assert.equal(accountBalance.rows[0].balance, "125.00");
+  await database.exec("reset role; set role authenticated");
   await database.query(
     "update public.candidates set details = details || '{\"visaStatus\":\"Received\"}'::jsonb where id = $1",
     [candidateA],
@@ -845,12 +950,20 @@ try {
     [candidateA],
   );
   assert.equal(duplicateVisaInvoices.rows[0].count, 1);
-  await assert.rejects(database.query("select public.record_invoice_payment($1, $2)", [visaInvoices.rows[0].id, 76]), /exceeds the outstanding/);
+  await assert.rejects(database.query("select public.record_invoice_payment($1, $2, $3)", [visaInvoices.rows[0].id, 76, accountId]), /exceeds the outstanding/);
   await database.query(
-    `insert into public.financial_receipts (company_id, entry_type, received_from, category, amount, payment_method, created_by)
-      values ($1, 'other_income', 'Training service', 'Other income', 15, 'Bank transfer', $2)`,
-    [companyA, userA],
+    `insert into public.financial_receipts (company_id, entry_type, received_from, category, amount, payment_method, created_by, account_id)
+      values ($1, 'other_income', 'Training service', 'Other income', 15, 'Bank transfer', $2, $3)`,
+    [companyA, userA, accountId],
   );
+  await database.exec("reset role; set role service_role");
+  const accountLedger = await database.query(
+    `select direction, sum(amount)::numeric(14, 2) as amount
+      from public.company_account_transactions where company_id = $1 and account_id = $2 group by direction order by direction`,
+    [companyA, accountId],
+  );
+  assert.deepEqual(accountLedger.rows, [{ direction: "credit", amount: "140.00" }]);
+  await database.exec("reset role; set role authenticated");
   const invoiceInstallmentCount = await database.query("select count(*)::integer as count from public.invoice_payments where company_id = $1", [companyA]);
   const standaloneReceiptCount = await database.query("select count(*)::integer as count from public.financial_receipts where company_id = $1", [companyA]);
   assert.equal(invoiceInstallmentCount.rows[0].count, 2);

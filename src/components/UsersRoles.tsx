@@ -1,21 +1,49 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { SearchableSelect } from "./SearchableSelect";
 
 type UserRecord = { id: string; name: string; email: string; roleId: string; role: string; status: string; isPrimaryAdmin: boolean };
 type RoleRecord = { id: string; name: string; description: string; created_at: string };
 type PermissionRecord = { code: string; description: string };
 type RolePermissionRecord = { role_id: string; permission_code: string };
+type StaffRecord = {
+  id: string;
+  staffId: string;
+  name: string;
+  position: string;
+  phone: string;
+  status: "Active" | "On Leave" | "Inactive";
+  dateJoined: string;
+  linkedUserId: string;
+};
+type StaffIdSettings = { prefix: string; nextSequence: number; canChangeSequence: boolean };
 type WorkspaceData = { users: UserRecord[]; roles: RoleRecord[]; permissions: PermissionRecord[]; rolePermissions: RolePermissionRecord[] };
 
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 
+const emptyStaffForm = {
+  name: "",
+  position: "",
+  status: "Active" as StaffRecord["status"],
+  dateJoined: "",
+  linkedUserId: "",
+};
+
 export default function UsersRoles({ companyId, currentUserId }: { companyId: string; currentUserId: string }) {
-  const [tab, setTab] = useState<"users" | "roles">("users");
+  const [tab, setTab] = useState<"users" | "roles" | "staff">("users");
   const [data, setData] = useState<WorkspaceData>({ users: [], roles: [], permissions: [], rolePermissions: [] });
   const [selectedRoleId, setSelectedRoleId] = useState("");
   const [showNewUser, setShowNewUser] = useState(false);
   const [showNewRole, setShowNewRole] = useState(false);
+  const [showStaffForm, setShowStaffForm] = useState(false);
+  const [editingStaffId, setEditingStaffId] = useState("");
+  const [staffMembers, setStaffMembers] = useState<StaffRecord[]>([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffForm, setStaffForm] = useState(emptyStaffForm);
+  const [staffIdSettings, setStaffIdSettings] = useState<StaffIdSettings | null>(null);
+  const [staffIdPrefix, setStaffIdPrefix] = useState("");
+  const [staffNextSequence, setStaffNextSequence] = useState(1);
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [userRoleId, setUserRoleId] = useState("");
@@ -52,6 +80,33 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
     void load();
     return () => { cancelled = true; };
   }, [companyId, reloadKey]);
+
+  useEffect(() => {
+    if (tab !== "staff") return;
+    let cancelled = false;
+    const loadStaff = async () => {
+      setStaffLoading(true);
+      try {
+        const response = await fetch("/api/workspace/staff", { cache: "no-store" });
+        const result = await response.json() as { staff?: StaffRecord[]; settings?: StaffIdSettings; error?: string };
+        if (!response.ok) throw new Error(result.error ?? "Unable to load staff records.");
+        if (!cancelled) {
+          setStaffMembers(result.staff ?? []);
+          if (result.settings) {
+            setStaffIdSettings(result.settings);
+            setStaffIdPrefix(result.settings.prefix);
+            setStaffNextSequence(result.settings.nextSequence);
+          }
+        }
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load staff records.");
+      } finally {
+        if (!cancelled) setStaffLoading(false);
+      }
+    };
+    void loadStaff();
+    return () => { cancelled = true; };
+  }, [companyId, reloadKey, tab]);
 
   const submitUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -138,25 +193,95 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
     }
   };
 
+  const openNewStaff = () => {
+    setEditingStaffId("");
+    setStaffForm(emptyStaffForm);
+    setShowStaffForm(true);
+  };
+
+  const openEditStaff = (member: StaffRecord) => {
+    setEditingStaffId(member.id);
+    setStaffForm({
+      name: member.name,
+      position: member.position,
+      status: member.status,
+      dateJoined: member.dateJoined,
+      linkedUserId: member.linkedUserId,
+    });
+    setShowStaffForm(true);
+  };
+
+  const submitStaff = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/workspace/staff", {
+        method: editingStaffId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...staffForm, id: editingStaffId || undefined }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Unable to save staff record.");
+      setShowStaffForm(false);
+      setNotice(editingStaffId ? "Staff record updated." : "Staff member added.");
+      setReloadKey((key) => key + 1);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save staff record.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitStaffIdSettings = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/workspace/staff", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "configure-ids", prefix: staffIdPrefix, nextSequence: staffNextSequence }),
+      });
+      const result = await response.json() as { settings?: StaffIdSettings; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Unable to update staff ID settings.");
+      if (result.settings) {
+        setStaffIdSettings(result.settings);
+        setStaffIdPrefix(result.settings.prefix);
+        setStaffNextSequence(result.settings.nextSequence);
+      }
+      setNotice("Staff ID settings updated.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to update staff ID settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const selectedRole = data.roles.find((role) => role.id === selectedRoleId);
   const permissionsForRole = new Set(data.rolePermissions.filter((permission) => permission.role_id === selectedRoleId).map((permission) => permission.permission_code));
+  const canManageStaff = data.users.some((user) => user.id === currentUserId && (user.isPrimaryAdmin || user.role === "CEO" || user.role === "General Manager"));
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex shrink-0 items-center justify-between border-b px-6 py-4" style={{ borderColor: "var(--border)" }}>
         <div>
           <h1 className="text-xl font-700" style={{ color: "var(--foreground)" }}>Users &amp; Roles</h1>
-          <p className="mt-0.5 text-sm" style={{ color: "var(--muted-foreground)" }}>Manage company access and permissions</p>
+          <p className="mt-0.5 text-sm" style={{ color: "var(--muted-foreground)" }}>Manage company access, permissions, and staff records</p>
         </div>
         {tab === "users" ? (
           <button type="button" onClick={() => setShowNewUser(true)} disabled={!data.roles.length} className="rounded px-4 py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>Invite user</button>
-        ) : (
+        ) : tab === "roles" ? (
           <button type="button" onClick={() => setShowNewRole(true)} className="rounded px-4 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>New role</button>
+        ) : (
+          <button type="button" onClick={openNewStaff} className="rounded px-4 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>Add staff</button>
         )}
       </div>
 
       <div className="flex shrink-0 border-b" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-        {(["users", "roles"] as const).map((item) => (
+        {(["users", "roles", "staff"] as const).filter((item) => item !== "staff" || canManageStaff).map((item) => (
           <button key={item} type="button" onClick={() => setTab(item)} className="px-5 py-3 text-sm font-600 capitalize" style={{ color: tab === item ? "var(--primary)" : "var(--muted-foreground)", borderBottom: tab === item ? "2px solid var(--primary)" : "2px solid transparent" }}>{item}</button>
         ))}
       </div>
@@ -222,6 +347,60 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
             </div>
           </div>
         )}
+
+        {tab === "staff" && (
+          <div className="space-y-4">
+            <div className="rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+              <div className="border-b p-4" style={{ borderColor: "var(--border)" }}>
+                <div>
+                  <div className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Staff records</div>
+                  <div className="mt-1 text-xl font-700" style={{ color: "var(--foreground)" }}>{staffMembers.length}</div>
+                </div>
+              </div>
+
+              {staffIdSettings?.canChangeSequence && (
+                <form onSubmit={submitStaffIdSettings} className="flex flex-wrap items-end gap-3 border-b p-4" style={{ borderColor: "var(--border)" }}>
+                  <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Staff ID prefix<input required maxLength={10} pattern="[A-Za-z][A-Za-z0-9]{0,9}" value={staffIdPrefix} onChange={(event) => setStaffIdPrefix(event.target.value.toUpperCase())} className="mt-1 block w-36 rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+                  <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Next sequence<input required type="number" min={1} max={999999} value={staffNextSequence} onChange={(event) => setStaffNextSequence(Number(event.target.value))} className="mt-1 block w-36 rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+                  <button type="submit" disabled={saving} className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>{saving ? "Saving…" : "Save ID settings"}</button>
+                  <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Preview: {staffIdPrefix || "XX"}-{String(staffNextSequence).padStart(4, "0")}</span>
+                </form>
+              )}
+
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-225 text-sm">
+                  <thead>
+                    <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                      {["Staff ID", "Name", "Position", "Phone", "Status", "Linked account", "Actions"].map((heading) => (
+                        <th key={heading} className="px-4 py-3 text-left text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {staffMembers.map((member) => (
+                      <tr key={member.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                        <td className="px-4 py-3 font-600" style={{ color: "var(--foreground)" }}>{member.staffId}</td>
+                        <td className="px-4 py-3" style={{ color: "var(--foreground)" }}>{member.name}</td>
+                        <td className="px-4 py-3" style={{ color: "var(--muted-foreground)" }}>{member.position}</td>
+                        <td className="px-4 py-3" style={{ color: "var(--muted-foreground)" }}>{member.phone}</td>
+                        <td className="px-4 py-3">
+                          <span className="rounded px-2 py-1 text-xs font-600" style={{
+                            color: member.status === "Active" ? "#10b981" : member.status === "On Leave" ? "#f59e0b" : "#ef4444",
+                            background: member.status === "Active" ? "#10b98120" : member.status === "On Leave" ? "#f59e0b20" : "#ef444420",
+                          }}>{member.status}</span>
+                        </td>
+                        <td className="px-4 py-3" style={{ color: "var(--muted-foreground)" }}>{data.users.find((user) => user.id === member.linkedUserId)?.email ?? "Not linked"}</td>
+                        <td className="px-4 py-3"><button type="button" onClick={() => openEditStaff(member)} className="rounded border px-3 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>Edit</button></td>
+                      </tr>
+                    ))}
+                    {staffLoading && !staffMembers.length && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading staff records…</td></tr>}
+                    {!staffLoading && !staffMembers.length && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No staff members have been added yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {showNewUser && (
@@ -262,6 +441,31 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
             <div className="mt-6 flex gap-3">
               <button type="submit" disabled={saving} className="flex-1 rounded py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Creating…" : "Create role"}</button>
               <button type="button" onClick={() => setShowNewRole(false)} className="flex-1 rounded border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showStaffForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <form onSubmit={submitStaff} className="max-h-[90dvh] w-full max-w-3xl overflow-y-auto rounded border p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+            <h2 className="mb-5 text-lg font-700" style={{ color: "var(--foreground)" }}>{editingStaffId ? `Edit ${staffMembers.find((member) => member.id === editingStaffId)?.name ?? "staff member"}` : "Add staff member"}</h2>
+            {editingStaffId ? (
+              <div className="mb-4 text-sm" style={{ color: "var(--muted-foreground)" }}>Staff ID: {staffMembers.find((member) => member.id === editingStaffId)?.staffId}</div>
+            ) : (
+              <div className="mb-4 text-sm" style={{ color: "var(--muted-foreground)" }}>Assigned staff ID: {staffIdSettings?.prefix ?? "STAFF"}-{String(staffIdSettings?.nextSequence ?? 1).padStart(4, "0")}</div>
+            )}
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Full name<input required maxLength={200} value={staffForm.name} onChange={(event) => setStaffForm((current) => ({ ...current, name: event.target.value }))} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle} placeholder="Name" /></label>
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Position<input required maxLength={150} value={staffForm.position} onChange={(event) => setStaffForm((current) => ({ ...current, position: event.target.value }))} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle} placeholder="Position" /></label>
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Date joined<input required type="date" value={staffForm.dateJoined} onChange={(event) => setStaffForm((current) => ({ ...current, dateJoined: event.target.value }))} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle} /></label>
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Linked company account<SearchableSelect ariaLabel="Search active company account" value={staffForm.linkedUserId} onChange={(linkedUserId) => setStaffForm((current) => ({ ...current, linkedUserId }))} options={data.users.filter((user) => user.status === "active" && (!staffMembers.some((member) => member.linkedUserId === user.id) || user.id === staffForm.linkedUserId)).map((user) => ({ value: user.id, label: user.name, description: user.email, searchText: `${user.email} ${user.role}` }))} placeholder="Type a name or email" className="mt-1 normal-case tracking-normal" /></label>
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Status<select value={staffForm.status} onChange={(event) => setStaffForm((current) => ({ ...current, status: event.target.value as StaffRecord["status"] }))} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle}><option value="Active">Active</option><option value="On Leave">On Leave</option><option value="Inactive">Inactive</option></select></label>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button type="submit" disabled={saving} className="flex-1 rounded py-2.5 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : editingStaffId ? "Save changes" : "Save staff"}</button>
+              <button type="button" onClick={() => setShowStaffForm(false)} className="flex-1 rounded border py-2.5 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button>
             </div>
           </form>
         </div>

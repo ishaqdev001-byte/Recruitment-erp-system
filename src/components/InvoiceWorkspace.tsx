@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowDownToLine, ArrowLeft, Eye, FilePlus2, Search, X } from "lucide-react";
+import { SearchableSelect } from "./SearchableSelect";
 
 type InvoiceStatus = "draft" | "sent" | "partially_paid" | "paid" | "overdue";
 type RecipientType = "contractor" | "supplier" | "candidate";
-type InvoicePayment = { id: string; amount: number; paid_at: string };
+type InvoicePayment = { id: string; amount: number; paid_at: string; account_id: string | null };
 type InvoiceRecord = {
   id: string;
   invoice_number: string;
@@ -21,6 +22,7 @@ type InvoiceRecord = {
   payments: InvoicePayment[];
 };
 type Recipient = { recipient_type: RecipientType; recipient_id: string; recipient_name: string };
+type AccountOption = { id: string; name: string; account_type: string; account_number: string };
 type InvoiceFilter = "all" | InvoiceStatus;
 type InvoicePayload = { invoices?: InvoiceRecord[]; permissions?: { canCreate?: boolean }; error?: string };
 
@@ -42,6 +44,7 @@ const dateLabel = (value: string) => new Date(`${value.slice(0, 10)}T00:00:00`).
 export default function InvoiceWorkspace() {
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [canCreate, setCanCreate] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InvoiceFilter>("all");
@@ -53,6 +56,7 @@ export default function InvoiceWorkspace() {
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [paymentInvoiceId, setPaymentInvoiceId] = useState<string | null>(null);
   const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentAccountId, setPaymentAccountId] = useState("");
   const [recipientType, setRecipientType] = useState<RecipientType>("contractor");
   const [recipientQuery, setRecipientQuery] = useState("");
   const [recipientId, setRecipientId] = useState("");
@@ -68,20 +72,24 @@ export default function InvoiceWorkspace() {
       setLoading(true);
       setError("");
       try {
-        const [invoiceResponse, recipientResponse] = await Promise.all([
+        const [invoiceResponse, recipientResponse, accountResponse] = await Promise.all([
           fetch("/api/invoices", { cache: "no-store" }),
           fetch("/api/invoice-recipients", { cache: "no-store" }),
+          fetch("/api/finance/accounts?options=1", { cache: "no-store" }),
         ]);
-        const [invoicePayload, recipientPayload] = await Promise.all([
+        const [invoicePayload, recipientPayload, accountPayload] = await Promise.all([
           invoiceResponse.json() as Promise<InvoicePayload>,
           recipientResponse.json() as Promise<{ recipients?: Recipient[]; error?: string }>,
+          accountResponse.json() as Promise<{ accounts?: AccountOption[]; error?: string }>,
         ]);
         if (!invoiceResponse.ok) throw new Error(invoicePayload.error ?? "Unable to load invoices.");
         if (!recipientResponse.ok) throw new Error(recipientPayload.error ?? "Unable to load invoice recipients.");
+        if (!accountResponse.ok) throw new Error(accountPayload.error ?? "Unable to load company accounts.");
         if (cancelled) return;
         setInvoices(invoicePayload.invoices ?? []);
         setCanCreate(Boolean(invoicePayload.permissions?.canCreate));
         setRecipients(recipientPayload.recipients ?? []);
+        setAccounts(accountPayload.accounts ?? []);
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load invoices.");
       } finally {
@@ -143,6 +151,7 @@ export default function InvoiceWorkspace() {
   const openPayment = (invoice: InvoiceRecord, payInFull = false) => {
     setPaymentInvoiceId(invoice.id);
     setPaymentAmount(payInFull ? String(invoice.balance_due) : "");
+    setPaymentAccountId("");
     setShowPayment(true);
     setError("");
   };
@@ -156,7 +165,7 @@ export default function InvoiceWorkspace() {
       const response = await fetch(`/api/invoices/${encodeURIComponent(paymentInvoice.id)}/payments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: paymentAmount }),
+        body: JSON.stringify({ amount: paymentAmount, accountId: paymentAccountId }),
       });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Unable to record payment.");
@@ -274,8 +283,8 @@ export default function InvoiceWorkspace() {
       {showPayment && paymentInvoice && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShowPayment(false); setPaymentInvoiceId(null); } }}>
         <form onSubmit={recordPayment} className="w-full max-w-md border p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
           <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Record payment</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>{paymentInvoice.invoice_number}</p></div><button type="button" onClick={() => { setShowPayment(false); setPaymentInvoiceId(null); }} aria-label="Close payment form" className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
-          <div className="mb-4 border p-3" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}><div className="flex justify-between gap-4 text-sm"><span style={{ color: "var(--muted-foreground)" }}>Amount due</span><strong className="mono" style={{ color: "var(--foreground)" }}>{money(paymentInvoice.balance_due)}</strong></div><label className="mt-4 block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Amount received<input required min="0.01" max={paymentInvoice.balance_due} step="0.01" type="number" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={inputStyle} /></label><div className="mt-4 flex justify-between gap-4 border-t pt-3 text-sm" style={{ borderColor: "var(--border)" }}><span style={{ color: "var(--muted-foreground)" }}>{afterPaymentBalance === 0 ? "Balance after payment" : "Balance still required"}</span><strong className="mono" style={{ color: afterPaymentBalance === 0 ? "#17845b" : "#bd3d3d" }}>{money(afterPaymentBalance)}</strong></div></div>
-          <div className="flex gap-3"><button type="submit" disabled={saving || !paymentAmount || Number(paymentAmount) > paymentInvoice.balance_due} className="flex-1 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save payment"}</button><button type="button" onClick={() => { setShowPayment(false); setPaymentInvoiceId(null); }} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
+          <div className="mb-4 border p-3" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}><div className="flex justify-between gap-4 text-sm"><span style={{ color: "var(--muted-foreground)" }}>Amount due</span><strong className="mono" style={{ color: "var(--foreground)" }}>{money(paymentInvoice.balance_due)}</strong></div><label className="mt-4 block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Amount received<input required min="0.01" max={paymentInvoice.balance_due} step="0.01" type="number" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={inputStyle} /></label><label className="mt-4 block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Account<SearchableSelect required ariaLabel="Choose account receiving invoice payment" value={paymentAccountId} onChange={setPaymentAccountId} options={accounts.map((account) => ({ value: account.id, label: account.name, description: account.account_type.replace(/_/g, " "), searchText: account.account_number }))} placeholder="Select the account receiving this payment" className="mt-1 normal-case tracking-normal" /></label><div className="mt-4 flex justify-between gap-4 border-t pt-3 text-sm" style={{ borderColor: "var(--border)" }}><span style={{ color: "var(--muted-foreground)" }}>{afterPaymentBalance === 0 ? "Balance after payment" : "Balance still required"}</span><strong className="mono" style={{ color: afterPaymentBalance === 0 ? "#17845b" : "#bd3d3d" }}>{money(afterPaymentBalance)}</strong></div></div>
+          <div className="flex gap-3"><button type="submit" disabled={saving || !paymentAmount || !paymentAccountId || Number(paymentAmount) > paymentInvoice.balance_due} className="flex-1 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save payment"}</button><button type="button" onClick={() => { setShowPayment(false); setPaymentInvoiceId(null); }} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
         </form>
       </div>}
     </section>

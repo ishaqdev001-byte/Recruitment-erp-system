@@ -33,8 +33,9 @@ const nav: NavItem[] = [
   { type: "item",  id: "dashboard",      label: "Dashboard",         icon: LayoutDashboard },
   { type: "item",  id: "candidates",     label: "Candidates",        icon: UsersRound },
   {
-    type: "group", id: "workforce", label: "People", icon: CalendarDays,
+    type: "group", id: "workforce", label: "Human Resource", icon: CalendarDays,
     children: [
+      { id: "human-resources", label: "My HR Profile", icon: UsersRound },
       { id: "attendance", label: "Attendance", icon: CalendarClock },
       { id: "leave", label: "Leave Management", icon: CalendarDays },
     ],
@@ -57,6 +58,7 @@ const nav: NavItem[] = [
     type: "group", id: "finance", label: "Finance", icon: WalletCards,
     children: [
       { id: "finance",   label: "Overview",          icon: WalletCards },
+      { id: "accounts",  label: "Accounts",          icon: WalletCards },
       { id: "invoices",  label: "Invoices",          icon: ReceiptText },
       { id: "payments",  label: "Payments & Deposits", icon: CircleDollarSign },
       { id: "paychecks", label: "Paychecks",         icon: FileText },
@@ -73,10 +75,10 @@ const nav: NavItem[] = [
   { type: "item",  id: "settings",       label: "Settings",          icon: Settings },
 ];
 
-const financeViews = new Set<View>(["finance", "invoices", "payments", "paychecks"]);
+const financeViews = new Set<View>(["finance", "accounts", "invoices", "payments", "paychecks"]);
 const employerViews = new Set<View>(["contractors", "projects"]);
 const agentSupplierViews = new Set<View>(["agents", "suppliers"]);
-const workforceViews = new Set<View>(["attendance", "leave"]);
+const workforceViews = new Set<View>(["human-resources", "attendance", "leave"]);
 
 export default function Sidebar({ active, onNavigate, role, userName, companyName, companyLogo, mobileOpen, onLogout }: { active: View; onNavigate: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void }) {
   const [openGroups, setOpenGroups] = useState({ agents: agentSupplierViews.has(active), finance: financeViews.has(active), employers: employerViews.has(active), workforce: workforceViews.has(active) });

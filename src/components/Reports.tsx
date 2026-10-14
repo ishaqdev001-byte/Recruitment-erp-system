@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SearchableSelect } from "./SearchableSelect";
 
 const kpis = [
   { label: "Total Candidates", value: "2,274", color: "#6366f1", change: "+28 this month" },
@@ -48,12 +49,7 @@ export default function Reports() {
             style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }}>
             {["Today", "This Week", "This Month", "This Year", "Custom Range"].map((r) => <option key={r}>{r}</option>)}
           </select>
-          <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}
-            className="px-3 py-1.5 text-sm rounded border outline-none"
-            style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }}>
-            <option>All Agents</option>
-            {["Director Vicent", "Asiimwe David", "Fatuma Nakirya"].map((a) => <option key={a}>{a}</option>)}
-          </select>
+          <SearchableSelect ariaLabel="Search report agent" value={agentFilter} onChange={setAgentFilter} options={["All Agents", "Director Vicent", "Asiimwe David", "Fatuma Nakirya"].map((agent) => ({ value: agent, label: agent }))} placeholder="Type an agent name" className="w-48" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }} />
           <button className="px-4 py-1.5 text-sm font-600 rounded border" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--secondary)" }}>
             Export Report
           </button>

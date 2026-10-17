@@ -7,6 +7,8 @@ type UserRecord = { id: string; name: string; email: string; roleId: string; rol
 type RoleRecord = { id: string; name: string; description: string; created_at: string };
 type PermissionRecord = { code: string; description: string };
 type RolePermissionRecord = { role_id: string; permission_code: string };
+type StaffPayType = "payroll" | "project" | "no_payroll";
+type StaffAccount = { id: string; name: string; account_type: string; account_number: string };
 type StaffRecord = {
   id: string;
   staffId: string;
@@ -16,6 +18,10 @@ type StaffRecord = {
   status: "Active" | "On Leave" | "Inactive";
   dateJoined: string;
   linkedUserId: string;
+  payType: StaffPayType;
+  baseSalary: number;
+  weeklyTransportAllowance: number;
+  transportAccountId: string;
 };
 type StaffIdSettings = { prefix: string; nextSequence: number; canChangeSequence: boolean };
 type WorkspaceData = { users: UserRecord[]; roles: RoleRecord[]; permissions: PermissionRecord[]; rolePermissions: RolePermissionRecord[] };
@@ -28,6 +34,10 @@ const emptyStaffForm = {
   status: "Active" as StaffRecord["status"],
   dateJoined: "",
   linkedUserId: "",
+  payType: "payroll" as StaffPayType,
+  baseSalary: "",
+  weeklyTransportAllowance: "0",
+  transportAccountId: "",
 };
 
 export default function UsersRoles({ companyId, currentUserId }: { companyId: string; currentUserId: string }) {
@@ -39,6 +49,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
   const [showStaffForm, setShowStaffForm] = useState(false);
   const [editingStaffId, setEditingStaffId] = useState("");
   const [staffMembers, setStaffMembers] = useState<StaffRecord[]>([]);
+  const [staffAccounts, setStaffAccounts] = useState<StaffAccount[]>([]);
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffForm, setStaffForm] = useState(emptyStaffForm);
   const [staffIdSettings, setStaffIdSettings] = useState<StaffIdSettings | null>(null);
@@ -88,10 +99,11 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
       setStaffLoading(true);
       try {
         const response = await fetch("/api/workspace/staff", { cache: "no-store" });
-        const result = await response.json() as { staff?: StaffRecord[]; settings?: StaffIdSettings; error?: string };
+        const result = await response.json() as { staff?: StaffRecord[]; accounts?: StaffAccount[]; settings?: StaffIdSettings; error?: string };
         if (!response.ok) throw new Error(result.error ?? "Unable to load staff records.");
         if (!cancelled) {
           setStaffMembers(result.staff ?? []);
+          setStaffAccounts(result.accounts ?? []);
           if (result.settings) {
             setStaffIdSettings(result.settings);
             setStaffIdPrefix(result.settings.prefix);
@@ -207,6 +219,10 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
       status: member.status,
       dateJoined: member.dateJoined,
       linkedUserId: member.linkedUserId,
+      payType: member.payType,
+      baseSalary: String(member.baseSalary),
+      weeklyTransportAllowance: String(member.weeklyTransportAllowance),
+      transportAccountId: member.transportAccountId,
     });
     setShowStaffForm(true);
   };
@@ -371,7 +387,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
                 <table className="w-full min-w-225 text-sm">
                   <thead>
                     <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                      {["Staff ID", "Name", "Position", "Phone", "Status", "Linked account", "Actions"].map((heading) => (
+                      {["Staff ID", "Name", "Position", "Pay arrangement", "Base salary", "Weekly transport", "Status", "Linked user", "Actions"].map((heading) => (
                         <th key={heading} className="px-4 py-3 text-left text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>
                       ))}
                     </tr>
@@ -382,7 +398,9 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
                         <td className="px-4 py-3 font-600" style={{ color: "var(--foreground)" }}>{member.staffId}</td>
                         <td className="px-4 py-3" style={{ color: "var(--foreground)" }}>{member.name}</td>
                         <td className="px-4 py-3" style={{ color: "var(--muted-foreground)" }}>{member.position}</td>
-                        <td className="px-4 py-3" style={{ color: "var(--muted-foreground)" }}>{member.phone}</td>
+                        <td className="px-4 py-3 text-xs capitalize" style={{ color: "var(--muted-foreground)" }}>{member.payType.replace(/_/g, " ")}</td>
+                        <td className="px-4 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{member.baseSalary ? `UGX ${member.baseSalary.toLocaleString("en-UG")}` : "—"}</td>
+                        <td className="px-4 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{member.weeklyTransportAllowance ? `UGX ${member.weeklyTransportAllowance.toLocaleString("en-UG")}/wk` : "—"}</td>
                         <td className="px-4 py-3">
                           <span className="rounded px-2 py-1 text-xs font-600" style={{
                             color: member.status === "Active" ? "#10b981" : member.status === "On Leave" ? "#f59e0b" : "#ef4444",
@@ -393,8 +411,8 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
                         <td className="px-4 py-3"><button type="button" onClick={() => openEditStaff(member)} className="rounded border px-3 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>Edit</button></td>
                       </tr>
                     ))}
-                    {staffLoading && !staffMembers.length && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading staff records…</td></tr>}
-                    {!staffLoading && !staffMembers.length && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No staff members have been added yet.</td></tr>}
+                    {staffLoading && !staffMembers.length && <tr><td colSpan={9} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading staff records…</td></tr>}
+                    {!staffLoading && !staffMembers.length && <tr><td colSpan={9} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No staff members have been added yet.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -459,7 +477,16 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
               <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Full name<input required maxLength={200} value={staffForm.name} onChange={(event) => setStaffForm((current) => ({ ...current, name: event.target.value }))} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle} placeholder="Name" /></label>
               <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Position<input required maxLength={150} value={staffForm.position} onChange={(event) => setStaffForm((current) => ({ ...current, position: event.target.value }))} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle} placeholder="Position" /></label>
               <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Date joined<input required type="date" value={staffForm.dateJoined} onChange={(event) => setStaffForm((current) => ({ ...current, dateJoined: event.target.value }))} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle} /></label>
-              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Linked company account<SearchableSelect ariaLabel="Search active company account" value={staffForm.linkedUserId} onChange={(linkedUserId) => setStaffForm((current) => ({ ...current, linkedUserId }))} options={data.users.filter((user) => user.status === "active" && (!staffMembers.some((member) => member.linkedUserId === user.id) || user.id === staffForm.linkedUserId)).map((user) => ({ value: user.id, label: user.name, description: user.email, searchText: `${user.email} ${user.role}` }))} placeholder="Type a name or email" className="mt-1 normal-case tracking-normal" /></label>
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Pay arrangement<select value={staffForm.payType} onChange={(event) => { const payType = event.target.value as StaffPayType; setStaffForm((current) => ({ ...current, payType, ...(payType === "payroll" ? { baseSalary: current.baseSalary === "0" ? "" : current.baseSalary } : { baseSalary: "0", weeklyTransportAllowance: "0", transportAccountId: "" }) })); }} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle}><option value="payroll">Payroll</option><option value="project">Project based</option><option value="no_payroll">No payroll</option></select></label>
+              {staffForm.payType === "payroll" && <>
+                <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Basic salary (UGX/month)<input required min="0.01" max="999999999999.99" step="0.01" type="number" value={staffForm.baseSalary} onChange={(event) => setStaffForm((current) => ({ ...current, baseSalary: event.target.value }))} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle} /></label>
+                <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Transport allowance (UGX/week)<input min="0" max="999999999999.99" step="0.01" type="number" value={staffForm.weeklyTransportAllowance} onChange={(event) => setStaffForm((current) => ({ ...current, weeklyTransportAllowance: event.target.value, transportAccountId: Number(event.target.value) > 0 ? current.transportAccountId : "" }))} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle} /></label>
+                {Number(staffForm.weeklyTransportAllowance) > 0 && <>
+                  <p className="text-xs md:col-span-2" style={{ color: "var(--muted-foreground)" }}>Estimated monthly payroll benefit: UGX {((Number(staffForm.weeklyTransportAllowance) * 52 / 12) || 0).toLocaleString("en-UG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <label className="block text-xs font-700 uppercase tracking-wider md:col-span-2" style={{ color: "var(--muted-foreground)" }}>Transport allowance funding account<SearchableSelect required ariaLabel="Choose account funding weekly transport allowance" value={staffForm.transportAccountId} onChange={(transportAccountId) => setStaffForm((current) => ({ ...current, transportAccountId }))} options={staffAccounts.map((account) => ({ value: account.id, label: account.name, description: account.account_type.replace(/_/g, " "), searchText: account.account_number }))} placeholder="Select the account to fund this benefit" className="mt-1 normal-case tracking-normal" /></label>
+                </>}
+              </>}
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Linked user<SearchableSelect ariaLabel="Search active company user" value={staffForm.linkedUserId} onChange={(linkedUserId) => setStaffForm((current) => ({ ...current, linkedUserId }))} options={data.users.filter((user) => user.status === "active" && (!staffMembers.some((member) => member.linkedUserId === user.id) || user.id === staffForm.linkedUserId)).map((user) => ({ value: user.id, label: user.name, description: user.email, searchText: `${user.email} ${user.role}` }))} placeholder="Type a name or email" className="mt-1 normal-case tracking-normal" /></label>
               <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Status<select value={staffForm.status} onChange={(event) => setStaffForm((current) => ({ ...current, status: event.target.value as StaffRecord["status"] }))} className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none" style={fieldStyle}><option value="Active">Active</option><option value="On Leave">On Leave</option><option value="Inactive">Inactive</option></select></label>
             </div>
 

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Paperclip, Pencil, UserPlus } from "lucide-react";
+import { ArrowRight, Paperclip, Pencil, RefreshCw, UserPlus, X } from "lucide-react";
 import AttachmentDrawer from "./AttachmentDrawer";
 import CandidateDetail from "./CandidateDetail";
 import type { Candidate } from "./Candidates";
@@ -20,6 +20,14 @@ interface CandidateRecord {
   father_name: string;
   mother_name: string;
   details: Record<string, unknown> | null;
+}
+
+interface ProjectOption {
+  id: string;
+  project_name: string;
+  country: string;
+  age_bracket: string;
+  status: string;
 }
 
 function candidateFromRecord(record: CandidateRecord): Candidate {
@@ -129,6 +137,16 @@ export default function CandidateRoster() {
   const [drawerCandidate, setDrawerCandidate] = useState<CandidateRecord | null>(null);
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
   const [isNewCandidate, setIsNewCandidate] = useState(false);
+  const [transitionIds, setTransitionIds] = useState<string[]>([]);
+  const [transitionStep, setTransitionStep] = useState<"project" | "more" | "details" | "complete">("project");
+  const [transitionProjectId, setTransitionProjectId] = useState("");
+  const [projectSearch, setProjectSearch] = useState("");
+  const [stageAnswers, setStageAnswers] = useState({ offerLetter: "", wakalaReceived: "", molReceived: "" });
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [projectLoadError, setProjectLoadError] = useState("");
+  const [transitionSaving, setTransitionSaving] = useState(false);
+  const [transitionNotice, setTransitionNotice] = useState("");
+  const [transitionError, setTransitionError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +165,23 @@ export default function CandidateRoster() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/projects", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json() as { projects?: ProjectOption[]; error?: string };
+        if (!response.ok) {
+          if (!cancelled) setProjectLoadError(payload.error ?? "Unable to load projects. Check your project access.");
+          return;
+        }
+        if (!cancelled) setProjects((payload.projects ?? []).filter((project) => project.status === "active"));
+      })
+      .catch(() => {
+        if (!cancelled) setProjectLoadError("Unable to load active projects.");
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = candidates.filter((candidate) =>
     `${candidate.first_name} ${candidate.last_name} ${candidate.file_number} ${candidate.phone}`.toLowerCase().includes(normalizedSearch),
@@ -159,6 +194,69 @@ export default function CandidateRoster() {
     setSelectedIds((current) => allFilteredSelected
       ? current.filter((id) => !filtered.some((candidate) => candidate.id === id))
       : [...new Set([...current, ...filtered.map((candidate) => candidate.id)])]);
+  };
+
+  const openStageUpdate = (candidateId: string) => {
+    setTransitionIds(selectedIds.includes(candidateId) ? selectedIds : [candidateId]);
+    setTransitionStep("project");
+    setTransitionProjectId("");
+    setProjectSearch("");
+    setStageAnswers({ offerLetter: "", wakalaReceived: "", molReceived: "" });
+    setTransitionNotice("");
+    setTransitionError("");
+  };
+
+  const projectMatches = projects.filter((project) =>
+    `${project.project_name} ${project.country}`.toLocaleLowerCase().includes(projectSearch.trim().toLocaleLowerCase()),
+  ).slice(0, 3);
+
+  const advanceCandidates = async () => {
+    setTransitionSaving(true);
+    setTransitionError("");
+    setTransitionNotice("");
+    try {
+      const projectSubmission = transitionStep === "project";
+      const response = await fetch("/api/candidates/stage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(projectSubmission
+          ? { action: "submit-to-project", candidateIds: transitionIds, projectId: transitionProjectId }
+          : { action: "save-additional-stages", candidateIds: transitionIds, ...stageAnswers }),
+      });
+      const payload = await response.json() as {
+        updated?: CandidateRecord[];
+        rejected?: { candidateId: string; name: string; reasons: string[]; kind: "qualification" | "transition" }[];
+        error?: string;
+      };
+      if (!response.ok && !payload.updated?.length) throw new Error(payload.error ?? "Unable to update candidate stages.");
+      if (payload.updated?.length) {
+        const updatedById = new Map(payload.updated.map((record) => [record.id, record]));
+        setCandidates((current) => current.map((candidate) => updatedById.get(candidate.id) ?? candidate));
+        setTransitionNotice(projectSubmission
+          ? payload.updated.length === 1
+            ? `${payload.updated[0].first_name} ${payload.updated[0].last_name} has been submitted successfully.`
+            : "Selected candidates have been submitted successfully."
+          : "Additional candidate stages updated successfully.");
+      }
+      if (payload.rejected?.length) {
+        const warnings = payload.rejected.map(({ name, reasons, kind }) => kind === "qualification"
+          ? `${name} was not submitted because of the qualifications: ${reasons.join("; ")}.`
+          : `${name} could not be advanced: ${reasons.join("; ")}.`).join(" ");
+        setTransitionError(warnings);
+      }
+      if (projectSubmission && payload.updated?.length) {
+        setTransitionIds(payload.updated.map((candidate) => candidate.id));
+        setTransitionStep("more");
+      } else if (!projectSubmission && payload.updated?.length && !payload.rejected?.length) {
+        setTransitionStep("complete");
+      } else if (payload.rejected?.length) {
+        setTransitionIds(payload.rejected.map((item) => item.candidateId));
+      }
+    } catch (requestError) {
+      setTransitionError(requestError instanceof Error ? requestError.message : "Unable to update candidate stages.");
+    } finally {
+      setTransitionSaving(false);
+    }
   };
 
   const saveCandidate = async (form: Candidate) => {
@@ -240,7 +338,7 @@ export default function CandidateRoster() {
           <thead className="sticky top-0" style={{ background: "var(--card)" }}>
             <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
               <th className="px-3 py-3"><input type="checkbox" aria-label="Select all visible candidates" checked={allFilteredSelected} onChange={toggleFiltered} className="h-4 w-4 accent-amber-700" /></th>
-              {["S/N", "File No.", "Candidate Name", "Agent", "Mobile", "Passport", "Contracts", "Stage"].map((heading) => (
+              {["S/N", "File No.", "Candidate Name", "Agent", "Mobile", "Passport", "Project", "Stage"].map((heading) => (
                 <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase" style={{ color: "var(--muted-foreground)" }}>{heading}</th>
               ))}
               <th className="px-3 py-3 text-right text-xs font-700 uppercase" style={{ color: "var(--muted-foreground)" }}>Actions</th>
@@ -254,7 +352,7 @@ export default function CandidateRoster() {
             )}
             {filtered.map((candidate) => (
               <tr key={candidate.id} className="border-b" style={{ borderColor: "var(--border)", background: selectedIds.includes(candidate.id) ? "color-mix(in srgb, var(--primary) 8%, var(--card))" : "transparent", color: "var(--foreground)" }}>
-                <td className="px-3 py-2"><div className="flex items-center gap-2"><input type="checkbox" aria-label={`Select ${candidate.first_name} ${candidate.last_name}`} checked={selectedIds.includes(candidate.id)} onChange={() => toggleCandidate(candidate.id)} className="h-4 w-4 accent-amber-700" /><button type="button" onClick={() => setDrawerCandidate(candidate)} aria-label={`View attachments for ${candidate.first_name} ${candidate.last_name}`} title="View attachments" className="flex h-7 w-7 items-center justify-center rounded hover:bg-secondary" style={{ color: "var(--primary)" }}><Paperclip size={15} aria-hidden="true" /></button></div></td>
+                <td className="px-3 py-2"><div className="flex items-center gap-1"><input type="checkbox" aria-label={`Select ${candidate.first_name} ${candidate.last_name}`} checked={selectedIds.includes(candidate.id)} onChange={() => toggleCandidate(candidate.id)} className="h-4 w-4 accent-amber-700" /><button type="button" onClick={() => setDrawerCandidate(candidate)} aria-label={`View attachments for ${candidate.first_name} ${candidate.last_name}`} title="View attachments" className="flex h-7 w-7 items-center justify-center rounded hover:bg-secondary" style={{ color: "var(--primary)" }}><Paperclip size={15} aria-hidden="true" /></button><button type="button" onClick={() => openStageUpdate(candidate.id)} aria-label={`Advance stage for ${candidate.first_name} ${candidate.last_name}`} title="Advance candidate stage" className="flex h-7 w-7 items-center justify-center rounded hover:bg-secondary" style={{ color: "var(--foreground)" }}><RefreshCw size={14} aria-hidden="true" /></button></div></td>
                 <td className="px-3 py-2 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{candidate.source_row_number ?? "—"}</td>
                 <td className="px-3 py-2 mono text-xs" title={candidate.file_number}>{candidate.file_number ? `${candidate.file_number[0]}...${candidate.file_number.slice(-3)}` : "—"}</td>
                 <td className="whitespace-nowrap px-3 py-2 font-600">{candidate.first_name} {candidate.last_name}</td>
@@ -270,6 +368,57 @@ export default function CandidateRoster() {
         </table>
       </div>
       {drawerCandidate && <AttachmentDrawer candidate={{ id: drawerCandidate.id, firstName: drawerCandidate.first_name, lastName: drawerCandidate.last_name, fileNumber: drawerCandidate.file_number }} onClose={() => setDrawerCandidate(null)} />}
+      {transitionIds.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="candidate-stage-title" className="w-full max-w-lg border p-5 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+            <header className="flex items-start justify-between gap-4">
+              <div>
+                <h2 id="candidate-stage-title" className="text-base font-700" style={{ color: "var(--foreground)" }}>{transitionStep === "project" ? "Project Submission" : transitionStep === "more" ? "Update more stages?" : transitionStep === "details" ? "Candidate stage details" : "Stage update complete"}</h2>
+                <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{transitionIds.length} selected</p>
+              </div>
+              <button type="button" aria-label="Close stage update" onClick={() => setTransitionIds([])} className="flex h-8 w-8 items-center justify-center rounded" style={{ color: "var(--muted-foreground)" }}><X size={17} aria-hidden="true" /></button>
+            </header>
+            <div className="mt-4 max-h-40 space-y-2 overflow-auto">
+              {transitionIds.map((id) => {
+                const candidate = candidates.find((record) => record.id === id);
+                if (!candidate) return null;
+                return <div key={id} className="border-b pb-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>{candidate.first_name} {candidate.last_name}</div>;
+              })}
+            </div>
+            {transitionStep === "project" && <div className="mt-4">
+              <label htmlFor="candidate-project-search" className="block text-xs font-600" style={{ color: "var(--foreground)" }}>Search active projects</label>
+              <input id="candidate-project-search" type="search" value={projectSearch} onChange={(event) => { setProjectSearch(event.target.value); setTransitionProjectId(""); }} placeholder="Type a project name or country" className="mt-1 w-full border px-3 py-2 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} />
+              {transitionProjectId ? <p className="mt-2 text-xs font-600 text-emerald-600">Selected: {projects.find((project) => project.id === transitionProjectId)?.project_name}</p> : (
+                <div className="mt-1 divide-y border" style={{ borderColor: "var(--border)" }}>
+                  {projectMatches.map((project) => <button key={project.id} type="button" onClick={() => { setTransitionProjectId(project.id); setProjectSearch(`${project.project_name} · ${project.country}`); }} className="block min-h-10 w-full px-3 py-2 text-left text-xs hover:bg-secondary" style={{ color: "var(--foreground)", borderColor: "var(--border)" }}>{project.project_name} <span style={{ color: "var(--muted-foreground)" }}>· {project.country}</span></button>)}
+                  {projects.length === 0 && <p className="px-3 py-2 text-xs" style={{ color: "var(--muted-foreground)" }}>{projectLoadError || "No active projects are available."}</p>}
+                  {projects.length > 0 && projectMatches.length === 0 && <p className="px-3 py-2 text-xs" style={{ color: "var(--muted-foreground)" }}>No matching active projects.</p>}
+                </div>
+              )}
+            </div>}
+            {transitionStep === "more" && <div className="mt-4 flex gap-2">
+              <button type="button" onClick={() => setTransitionStep("details")} className="border px-4 py-2 text-sm font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>Yes</button>
+              <button type="button" onClick={() => { setTransitionIds([]); setSelectedIds([]); }} className="border px-4 py-2 text-sm font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>No</button>
+            </div>}
+            {transitionStep === "details" && <div className="mt-4 space-y-3">
+              {([["offerLetter", "Offer Letter"], ["wakalaReceived", "Wakala Received"], ["molReceived", "MOL Received"]] as const).map(([key, label]) => (
+                <fieldset key={key} className="flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+                  <legend className="text-sm font-600" style={{ color: "var(--foreground)" }}>{label}</legend>
+                  <div className="flex gap-2">
+                    {(["Yes", "No"] as const).map((answer) => <button key={answer} type="button" aria-pressed={stageAnswers[key] === answer} onClick={() => setStageAnswers((current) => ({ ...current, [key]: answer }))} className="min-w-14 border px-3 py-1.5 text-xs font-600" style={{ borderColor: stageAnswers[key] === answer ? "var(--primary)" : "var(--border)", background: stageAnswers[key] === answer ? "var(--primary)" : "var(--card)", color: stageAnswers[key] === answer ? "var(--primary-foreground)" : "var(--foreground)" }}>{answer}</button>)}
+                  </div>
+                </fieldset>
+              ))}
+            </div>}
+            {transitionNotice && <p role="status" className="mt-4 text-sm font-600 text-emerald-600">{transitionNotice}</p>}
+            {transitionError && <p role="alert" className="mt-3 whitespace-pre-wrap text-sm text-red-500">{transitionError}</p>}
+            <footer className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => { setTransitionIds([]); setSelectedIds([]); }} className="border px-3 py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>{transitionStep === "complete" ? "Close" : "Cancel"}</button>
+              {(transitionStep === "project" || transitionStep === "details") && <button type="button" disabled={transitionSaving || (transitionStep === "project" ? !transitionProjectId : !Object.values(stageAnswers).some(Boolean))} onClick={() => void advanceCandidates()} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><ArrowRight size={15} aria-hidden="true" />{transitionSaving ? "Updating…" : "Advance stage"}</button>}
+            </footer>
+          </section>
+        </div>
+      )}
     </section>
   );
 }

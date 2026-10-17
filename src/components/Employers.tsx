@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, Plus, Search, X } from "lucide-react";
+import { ArrowLeft, Eye, Plus, Search, X } from "lucide-react";
 
 type Employer = {
   id: string;
@@ -9,6 +9,7 @@ type Employer = {
   email_addresses: string[];
   countries: string[];
   created_at: string;
+  financeProjects?: { projectId: string; projectName: string; visaCount: number; contractorServiceCharge: number; amountDue: number; accountId: string }[];
 };
 
 type EmployerForm = {
@@ -28,6 +29,7 @@ export default function Employers() {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState<EmployerForm>(emptyForm);
   const [loading, setLoading] = useState(true);
+  const [canViewFinance, setCanViewFinance] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -39,9 +41,12 @@ export default function Employers() {
       setError("");
       try {
         const response = await fetch("/api/employers", { cache: "no-store" });
-        const payload = await response.json() as { employers?: Employer[]; error?: string };
+        const payload = await response.json() as { employers?: Employer[]; permissions?: { canViewFinance?: boolean }; error?: string };
         if (!response.ok) throw new Error(payload.error ?? "Unable to load company contractors.");
-        if (!cancelled) setEmployers(payload.employers ?? []);
+        if (!cancelled) {
+          setEmployers(payload.employers ?? []);
+          setCanViewFinance(Boolean(payload.permissions?.canViewFinance));
+        }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load company contractors.");
       } finally {
@@ -106,8 +111,58 @@ export default function Employers() {
     setShowNew(false);
   };
 
+  if (selected) {
+    return (
+      <section className="flex h-full min-h-0 flex-col overflow-auto" aria-labelledby="contractor-detail-title">
+        <header className="flex items-center gap-4 border-b px-6 py-4" style={{ borderColor: "var(--border)" }}>
+          <button type="button" onClick={() => setSelectedEmployerId(null)} aria-label="Back to contractors" className="flex h-9 w-9 shrink-0 items-center justify-center border" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><ArrowLeft size={17} aria-hidden="true" /></button>
+          <div className="min-w-0">
+            <h1 id="contractor-detail-title" className="truncate text-xl font-700" style={{ color: "var(--foreground)" }}>{selected.company_name}</h1>
+            <p className="mt-0.5 text-sm" style={{ color: "var(--muted-foreground)" }}>Contractor details</p>
+          </div>
+        </header>
+        <div className="flex-1 overflow-auto p-6">
+          <div className="max-w-5xl">
+            <dl className="grid grid-cols-1 gap-x-10 sm:grid-cols-2">
+              {[
+                { label: "Contact person(s)", value: selected.contact_persons.join(", ") },
+                { label: "Phone number(s)", value: selected.phone_numbers.join(", ") },
+                { label: "Email address(es)", value: selected.email_addresses.join(", ") },
+                { label: "Country(s)", value: selected.countries.join(", ") },
+              ].map(({ label, value }) => (
+                <div key={label} className="border-b py-4" style={{ borderColor: "var(--border)" }}>
+                  <dt className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>{label}</dt>
+                  <dd className="mt-1 text-sm" style={{ color: "var(--foreground)" }}>{value || "—"}</dd>
+                </div>
+              ))}
+            </dl>
+            {canViewFinance && <section className="mt-8" aria-labelledby="contractor-finance-title">
+              <div className="border-b pb-3" style={{ borderColor: "var(--border)" }}>
+                <h2 id="contractor-finance-title" className="text-base font-700" style={{ color: "var(--foreground)" }}>Contractor Finance</h2>
+              </div>
+              {selected.financeProjects?.length ? <>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-160 text-sm">
+                    <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Project", "Visas", "Fee per visa", "Amount due"].map((heading) => <th key={heading} className="px-3 py-3 text-xs font-700 uppercase" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+                    <tbody>{selected.financeProjects.map((project) => <tr key={project.projectId} className="border-b" style={{ borderColor: "var(--border)" }}>
+                      <td className="px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>{project.projectName}</td>
+                      <td className="px-3 py-3" style={{ color: "var(--foreground)" }}>{project.visaCount}</td>
+                      <td className="px-3 py-3" style={{ color: "var(--foreground)" }}>UGX {project.contractorServiceCharge.toLocaleString("en-UG")}</td>
+                      <td className="px-3 py-3 font-700" style={{ color: "#b7791f" }}>UGX {project.amountDue.toLocaleString("en-UG")}</td>
+                    </tr>)}</tbody>
+                  </table>
+                </div>
+                <div className="flex justify-end gap-3 border-b px-3 py-4 text-sm font-700" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><span>Total demanded</span><span className="mono">UGX {selected.financeProjects.reduce((total, project) => total + project.amountDue, 0).toLocaleString("en-UG")}</span></div>
+              </> : <p className="py-5 text-sm" style={{ color: "var(--muted-foreground)" }}>No visa charges have accrued for this contractor.</p>}
+            </section>}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full min-h-0 overflow-hidden">
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="px-6 py-4 border-b flex items-center justify-between shrink-0" style={{ borderColor: "var(--border)" }}>
           <div>
@@ -131,15 +186,14 @@ export default function Employers() {
                   {["Company", "Contact person(s)", "Phone number(s)", "Email address(es)", "Country(s)"].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
                   ))}
+                  <th className="px-4 py-3 text-right text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={5} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading contractor records…</td></tr>}
-                {!loading && !error && filtered.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{employers.length ? "No contractors match this search." : "No contractors registered yet."}</td></tr>}
+                {loading && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading contractor records…</td></tr>}
+                {!loading && !error && filtered.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{employers.length ? "No contractors match this search." : "No contractors registered yet."}</td></tr>}
                 {!loading && filtered.map((e) => (
-                  <tr key={e.id} className="border-b cursor-pointer"
-                    style={{ borderColor: "var(--border)", background: selectedEmployerId === e.id ? "var(--secondary)" : "transparent" }}
-                    onClick={() => setSelectedEmployerId(selectedEmployerId === e.id ? null : e.id)}>
+                  <tr key={e.id} className="border-b" style={{ borderColor: "var(--border)" }}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded flex items-center justify-center text-xs font-700 shrink-0"
@@ -153,6 +207,7 @@ export default function Employers() {
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--foreground)" }}>{e.phone_numbers.join(", ")}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{e.email_addresses.join(", ")}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--foreground)" }}>{e.countries.join(", ")}</td>
+                    <td className="px-4 py-3 text-right"><button type="button" onClick={() => setSelectedEmployerId(e.id)} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--card)" }}><Eye size={14} aria-hidden="true" />View</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -160,33 +215,6 @@ export default function Employers() {
           </div>
         </div>
       </div>
-
-      {selected && (
-        <div className="detail-panel w-72 border-l overflow-auto shrink-0" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-          <div className="p-5 border-b" style={{ borderColor: "var(--border)" }}>
-            <button onClick={() => setSelectedEmployerId(null)} className="text-xs mb-3 flex items-center gap-1.5" style={{ color: "var(--muted-foreground)" }}><ArrowLeft size={13} aria-hidden="true" />Close</button>
-            <div className="w-12 h-12 rounded flex items-center justify-center text-base font-700 mb-3"
-              style={{ background: "#6366f130", color: "#6366f1" }}>
-              {selected.company_name.split(" ").map((word) => word[0]).join("").slice(0, 2)}
-            </div>
-            <h2 className="font-700" style={{ color: "var(--foreground)" }}>{selected.company_name}</h2>
-            <p className="text-xs mt-0.5" style={{ color: "var(--muted-foreground)" }}>{selected.countries.join(", ")}</p>
-          </div>
-          <div className="p-5 space-y-4">
-            {[
-              { label: "Contact person(s)", value: selected.contact_persons.join(", ") },
-              { label: "Phone number(s)", value: selected.phone_numbers.join(", ") },
-              { label: "Email address(es)", value: selected.email_addresses.join(", ") },
-              { label: "Country(s)", value: selected.countries.join(", ") },
-            ].map(({ label, value }) => (
-              <div key={label}>
-                <div className="text-xs font-700 uppercase tracking-wider mb-0.5" style={{ color: "var(--muted-foreground)" }}>{label}</div>
-                <div className="text-sm" style={{ color: "var(--foreground)" }}>{value}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {showNew && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeNewEmployer(); }}>

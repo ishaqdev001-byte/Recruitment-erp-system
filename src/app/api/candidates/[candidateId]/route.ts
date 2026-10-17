@@ -82,6 +82,19 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       const assignedAgent = typeof updates.agent_name === "string" ? updates.agent_name : "";
       const passportError = passportSetupError(details, assignedAgent);
       if (passportError) return NextResponse.json({ error: passportError }, { status: 400, headers });
+      const { data: currentCandidate, error: currentCandidateError } = await supabase.from("candidates")
+        .select("details").eq("id", candidateId).maybeSingle();
+      if (currentCandidateError || !currentCandidate) return NextResponse.json({ error: "Candidate not found." }, { status: 404, headers });
+      const currentDetails = currentCandidate.details && typeof currentCandidate.details === "object" && !Array.isArray(currentCandidate.details)
+        ? currentCandidate.details as Record<string, unknown>
+        : {};
+      details.stage = typeof currentDetails.stage === "string" && currentDetails.stage ? currentDetails.stage : "Registration";
+      details.assignedContracts = typeof currentDetails.assignedContracts === "string" ? currentDetails.assignedContracts : "";
+      details.contracts = typeof currentDetails.contracts === "string" ? currentDetails.contracts : "";
+      details.assignedProjectId = typeof currentDetails.assignedProjectId === "string" ? currentDetails.assignedProjectId : "";
+      for (const field of ["offerLetter", "wakalaReceived", "molReceived"] as const) {
+        if (currentDetails[field] === "Yes" || currentDetails[field] === "No") details[field] = currentDetails[field];
+      }
       updates.details = details;
     }
     if (!Object.keys(updates).length) return NextResponse.json({ error: "Provide at least one candidate field to update." }, { status: 400, headers });

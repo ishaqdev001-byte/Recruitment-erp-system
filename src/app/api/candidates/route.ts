@@ -85,6 +85,9 @@ export async function POST(request: Request) {
     }
     const details = readCandidateDetails(body.details);
     if (!details) return NextResponse.json({ error: "One or more extended candidate details are invalid." }, { status: 400, headers });
+    details.stage = "Registration";
+    details.assignedContracts = "";
+    details.contracts = "";
     const passportError = passportSetupError(details, typeof body.agent === "string" ? body.agent.trim() : "");
     if (passportError) return NextResponse.json({ error: passportError }, { status: 400, headers });
 

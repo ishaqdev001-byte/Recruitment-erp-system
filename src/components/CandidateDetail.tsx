@@ -121,25 +121,9 @@ const activityLog = [
 
 export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Props) {
   const [form, setForm] = useState<Candidate>({ ...candidate });
-  const [activeProjectNames, setActiveProjectNames] = useState<string[]>([]);
-  const [projectLoadError, setProjectLoadError] = useState("");
   const [activeTab, setActiveTab] = useState<Tab>("Personal");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/projects", { cache: "no-store" })
-      .then(async (response) => {
-        const payload = await response.json() as { projects?: { project_name: string; status: string }[]; error?: string };
-        if (!response.ok) throw new Error(payload.error ?? "Unable to load assigned projects.");
-        if (!cancelled) setActiveProjectNames((payload.projects ?? []).filter((project) => project.status === "active").map((project) => project.project_name));
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setProjectLoadError(error instanceof Error ? error.message : "Unable to load assigned projects.");
-      });
-    return () => { cancelled = true; };
-  }, []);
 
   const set = (key: keyof Candidate, val: string | string[] | number) =>
     setForm((f) => ({ ...f, [key]: val }));
@@ -429,17 +413,10 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
               <MultiField label="Preferred Countries" value={form.preferredCountries} onChange={(v) => set("preferredCountries", v)}
                 options={["Saudi Arabia", "UAE", "Kuwait", "Qatar", "Oman", "Bahrain", "Jordan", "Lebanon"]} />
             </div>
-            <div className="col-span-2">
-              <label className="text-xs font-600 block mb-1" style={{ color: "var(--muted-foreground)" }}>Assigned Contracts</label>
-              <SearchableSelect ariaLabel="Search assigned contracts" value={form.assignedContracts} onChange={(value) => set("assignedContracts", value)} options={[...new Set([...activeProjectNames, ...(form.assignedContracts ? [form.assignedContracts] : [])])].map((name) => ({ value: name, label: name }))} placeholder="Type a contract or project name" />
-              {projectLoadError && <p role="alert" className="mt-1 text-xs text-red-400">Unable to load active projects. Visa invoicing requires an assigned active project.</p>}
-            </div>
             <div />
             <div />
 
-            <SectionHeader title="Application Status" />
-            <SelectField label="Stage" value={form.stage} onChange={(v) => set("stage", v)}
-              options={["Registration", "Visa Processing", "Final Round", "Travelled", "Withdrawn"]} />
+            <SectionHeader title="Travel and Processing Status" />
             <SelectField label="Travel Status" value={form.travelStatus} onChange={(v) => set("travelStatus", v)}
               options={["Pending Travel", "Travelled", "Withdrawn"]} />
             <SelectField label="Visa Status" value={form.visaStatus} onChange={(v) => set("visaStatus", v)}

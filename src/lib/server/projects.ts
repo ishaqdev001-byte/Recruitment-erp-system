@@ -42,10 +42,10 @@ export type ProjectInput = {
   salaryRange: string;
   ageBracket: string;
   totalDemand: number;
-  serviceCharge: number;
+  contractorServiceCharge: number;
+  candidateServiceCharge: number;
   interviewMode: "Face to face" | "Online" | "Direct submission";
   status: "active" | "inactive" | "cancelled";
-  submittedCount: number;
   visaCount: number;
   ticketCount: number;
 };
@@ -63,8 +63,8 @@ export function parseProjectInput(value: unknown): ProjectInput | null {
   const ageBracket = typeof body.ageBracket === "string" ? body.ageBracket.trim() : "";
   const contractorId = typeof body.contractorId === "string" && body.contractorId ? body.contractorId : null;
   const totalDemand = Number(body.totalDemand);
-  const serviceCharge = Number(body.serviceCharge);
-  const submittedCount = body.submittedCount === undefined ? 0 : Number(body.submittedCount);
+  const contractorServiceCharge = Number(body.contractorServiceCharge);
+  const candidateServiceCharge = Number(body.candidateServiceCharge);
   const visaCount = body.visaCount === undefined ? 0 : Number(body.visaCount);
   const ticketCount = body.ticketCount === undefined ? 0 : Number(body.ticketCount);
   const interviewMode = typeof body.interviewMode === "string" ? body.interviewMode : "";
@@ -73,8 +73,8 @@ export function parseProjectInput(value: unknown): ProjectInput | null {
   if (!projectName || projectName.length > 200 || !contractorName || contractorName.length > 200
     || !country || country.length > 200 || !salaryRange || salaryRange.length > 200
     || !ageBracket || ageBracket.length > 100 || !Number.isInteger(totalDemand) || totalDemand < 1
-    || !Number.isFinite(serviceCharge) || serviceCharge < 0
-    || !Number.isInteger(submittedCount) || submittedCount < 0
+    || !Number.isFinite(contractorServiceCharge) || contractorServiceCharge < 0
+    || !Number.isFinite(candidateServiceCharge) || candidateServiceCharge < 0
     || !Number.isInteger(visaCount) || visaCount < 0
     || !Number.isInteger(ticketCount) || ticketCount < 0
     || !interviewModes.has(interviewMode) || !projectStatuses.has(status)) return null;
@@ -87,10 +87,10 @@ export function parseProjectInput(value: unknown): ProjectInput | null {
     salaryRange,
     ageBracket,
     totalDemand,
-    serviceCharge,
+    contractorServiceCharge,
+    candidateServiceCharge,
     interviewMode: interviewMode as ProjectInput["interviewMode"],
     status: status as ProjectInput["status"],
-    submittedCount,
     visaCount,
     ticketCount,
   };
@@ -105,10 +105,10 @@ export function projectToDatabase(input: ProjectInput) {
     salary_range: input.salaryRange,
     age_bracket: input.ageBracket,
     total_demand: input.totalDemand,
-    service_charge: input.serviceCharge,
+    contractor_service_charge: input.contractorServiceCharge,
+    candidate_service_charge: input.candidateServiceCharge,
     interview_mode: input.interviewMode,
     status: input.status,
-    submitted_count: input.submittedCount,
     visa_count: input.visaCount,
     ticket_count: input.ticketCount,
   };

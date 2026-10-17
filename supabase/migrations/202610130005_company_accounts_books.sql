@@ -6,14 +6,41 @@ create table if not exists public.company_accounts (
   account_number text not null default '' check (length(account_number) <= 100),
   description text not null default '' check (length(description) <= 500),
   status text not null default 'active' check (status in ('active', 'inactive')),
+  is_default boolean not null default false,
   created_by uuid not null references auth.users (id) on delete restrict,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (id, company_id)
 );
 
+alter table public.company_accounts add column if not exists status text;
+alter table public.company_accounts add column if not exists is_default boolean;
+alter table public.company_accounts add column if not exists updated_at timestamptz;
+
+update public.company_accounts
+set status = 'active'
+where status is null;
+update public.company_accounts
+set is_default = false
+where is_default is null;
+update public.company_accounts
+set updated_at = coalesce(updated_at, created_at, now())
+where updated_at is null;
+
+alter table public.company_accounts
+  alter column status set default 'active',
+  alter column is_default set default false,
+  alter column updated_at set default now();
+alter table public.company_accounts
+  alter column status set not null,
+  alter column is_default set not null,
+  alter column updated_at set not null;
+
 create unique index if not exists company_accounts_name_uidx
   on public.company_accounts (company_id, lower(name));
+create unique index if not exists company_accounts_default_uidx
+  on public.company_accounts (company_id)
+  where is_default;
 create index if not exists company_accounts_company_status_idx
   on public.company_accounts (company_id, status, lower(name));
 
@@ -63,23 +90,111 @@ create index if not exists company_expenses_company_paid_idx
   on public.company_expenses (company_id, paid_at desc);
 
 alter table public.financial_receipts add column if not exists account_id uuid;
-alter table public.financial_receipts
-  add constraint financial_receipts_account_company_fk
-  foreign key (account_id, company_id) references public.company_accounts (id, company_id) on delete restrict;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'financial_receipts_account_company_fk'
+      and conrelid = 'public.financial_receipts'::regclass
+  ) then
+    alter table public.financial_receipts
+      add constraint financial_receipts_account_company_fk
+      foreign key (account_id, company_id) references public.company_accounts (id, company_id) on delete restrict;
+  end if;
+end;
+$$;
 
 alter table public.invoice_payments add column if not exists account_id uuid;
-alter table public.invoice_payments
-  add constraint invoice_payments_account_company_fk
-  foreign key (account_id, company_id) references public.company_accounts (id, company_id) on delete restrict;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'invoice_payments_account_company_fk'
+      and conrelid = 'public.invoice_payments'::regclass
+  ) then
+    alter table public.invoice_payments
+      add constraint invoice_payments_account_company_fk
+      foreign key (account_id, company_id) references public.company_accounts (id, company_id) on delete restrict;
+  end if;
+end;
+$$;
 
 alter table public.company_staff_paychecks add column if not exists account_id uuid;
-alter table public.company_staff_paychecks
-  add constraint company_staff_paychecks_account_company_fk
-  foreign key (account_id, company_id) references public.company_accounts (id, company_id) on delete restrict;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'company_staff_paychecks_account_company_fk'
+      and conrelid = 'public.company_staff_paychecks'::regclass
+  ) then
+    alter table public.company_staff_paychecks
+      add constraint company_staff_paychecks_account_company_fk
+      foreign key (account_id, company_id) references public.company_accounts (id, company_id) on delete restrict;
+  end if;
+end;
+$$;
 
 drop trigger if exists company_accounts_set_updated_at on public.company_accounts;
 create trigger company_accounts_set_updated_at before update on public.company_accounts
   for each row execute function public.set_updated_at();
+
+create or replace function public.create_company_default_account(p_company_id uuid, p_creator_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  creator_id uuid;
+begin
+  creator_id := p_creator_id;
+  if creator_id is null then
+    creator_id := (
+      select membership.user_id
+      from public.company_memberships membership
+      where membership.company_id = p_company_id and membership.status = 'active'
+      order by membership.created_at asc
+      limit 1
+    );
+  end if;
+  if creator_id is null then
+    return;
+  end if;
+
+  insert into public.company_accounts (
+    company_id, name, account_type, description, is_default, created_by
+  )
+  select
+    p_company_id,
+    'Open Account',
+    'cash',
+    'Default account for initial company transactions before other accounts are created.',
+    true,
+    creator_id
+  where not exists (
+    select 1
+    from public.company_accounts account
+    where account.company_id = p_company_id
+      and lower(account.name) = 'open account'
+  );
+end;
+$$;
+
+create or replace function public.ensure_company_default_open_account()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.create_company_default_account(new.id, coalesce(auth.uid(), new.primary_admin_user_id));
+  return new;
+end;
+$$;
+
+drop trigger if exists companies_create_default_open_account on public.companies;
+create trigger companies_create_default_open_account after insert on public.companies
+  for each row execute function public.ensure_company_default_open_account();
 
 create or replace function public.post_company_account_ledger_entry()
 returns trigger

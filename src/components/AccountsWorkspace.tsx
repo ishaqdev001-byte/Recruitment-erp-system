@@ -8,7 +8,7 @@ type AccountType = "cash" | "bank" | "mobile_money" | "project" | "other";
 type Account = { id: string; name: string; account_type: AccountType; account_number: string; description: string; status: string; balance: number };
 type AccountTransaction = { id: string; account_id: string; account_name: string; transaction_type: string; direction: "credit" | "debit"; amount: number; transaction_date: string; payment_method: string; reference: string; description: string };
 type Expense = { id: string; account_id: string; account_name: string; expense_type: string; description: string; paid_to: string; amount: number; payment_method: string; reference: string; paid_at: string };
-type AccountsPayload = { accounts?: Account[]; transactions?: AccountTransaction[]; expenses?: Expense[]; totals?: { accountCount: number; totalBalance: number }; permissions?: { canCreate: boolean; canManageAccounts: boolean }; error?: string };
+type AccountsPayload = { accounts?: Account[]; transactions?: AccountTransaction[]; expenses?: Expense[]; totals?: { accountCount: number; totalBalance: number }; permissions?: { canCreate: boolean; canManageAccounts: boolean; canAdministerAccounts: boolean }; error?: string };
 type AccountAction = "deposit" | "withdrawal" | "expense" | null;
 
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
@@ -24,6 +24,7 @@ export default function AccountsWorkspace() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [canCreate, setCanCreate] = useState(false);
   const [canManageAccounts, setCanManageAccounts] = useState(false);
+  const [canAdministerAccounts, setCanAdministerAccounts] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -34,6 +35,7 @@ export default function AccountsWorkspace() {
   const [accountForm, setAccountForm] = useState({ name: "", accountType: "cash" as AccountType, accountNumber: "", description: "", openingBalance: "0", openingDate: today() });
   const [movementForm, setMovementForm] = useState({ accountId: "", amount: "", paymentMethod: "Cash", reference: "", description: "", transactionDate: today() });
   const [expenseForm, setExpenseForm] = useState({ accountId: "", expenseType: "Operating", description: "", paidTo: "", amount: "", paymentMethod: "Cash", reference: "", paidAt: today() });
+  const [renameAccount, setRenameAccount] = useState<{ id: string; name: string } | null>(null);
 
   const loadAccounts = async () => {
     setLoading(true);
@@ -47,6 +49,7 @@ export default function AccountsWorkspace() {
       setExpenses(result.expenses ?? []);
       setCanCreate(Boolean(result.permissions?.canCreate));
       setCanManageAccounts(Boolean(result.permissions?.canManageAccounts));
+      setCanAdministerAccounts(Boolean(result.permissions?.canAdministerAccounts));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load accounts.");
     } finally {
@@ -118,6 +121,50 @@ export default function AccountsWorkspace() {
     }
   };
 
+  const handleRename = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!renameAccount) return;
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/finance/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "rename-account", accountId: renameAccount.id, name: renameAccount.name }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Unable to rename account.");
+      setRenameAccount(null);
+      setNotice("Account renamed.");
+      await loadAccounts();
+    } catch (renameError) {
+      setError(renameError instanceof Error ? renameError.message : "Unable to rename account.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (accountId: string) => {
+    if (!window.confirm("Delete this account? It must have a zero balance and no recorded activity.")) return;
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/finance/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete-account", accountId }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Unable to delete account.");
+      setNotice("Account deleted.");
+      await loadAccounts();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete account.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const inputClass = "mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none";
   const labelClass = "block text-xs font-700 uppercase tracking-wider";
 
@@ -142,7 +189,7 @@ export default function AccountsWorkspace() {
       <div className="min-h-0 flex-1 space-y-6 overflow-auto p-6">
         <section>
           <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-700" style={{ color: "var(--foreground)" }}>Company accounts</h2><span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{accounts.length} total</span></div>
-          {!accounts.length && !loading ? <div className="border px-4 py-10 text-center" style={{ borderColor: "var(--border)", background: "var(--card)" }}><WalletCards size={22} className="mx-auto" style={{ color: "var(--muted-foreground)" }} /><p className="mt-3 text-sm font-600" style={{ color: "var(--foreground)" }}>No accounts configured</p><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>An owner, CEO, General Manager, or Finance Manager can create the company’s first account.</p></div> : <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{accounts.map((account) => <article key={account.id} className="border p-4" style={{ borderColor: "var(--border)", background: "var(--card)" }}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate text-sm font-700" style={{ color: "var(--foreground)" }}>{account.name}</h3><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{accountTypeLabel[account.account_type]}{account.account_number ? ` · ${account.account_number}` : ""}</p></div><span className="text-[10px] font-700 uppercase" style={{ color: account.status === "active" ? "#17845b" : "var(--muted-foreground)" }}>{account.status}</span></div><div className="mt-5 mono text-xl font-700" style={{ color: account.balance < 0 ? "#c2413a" : "var(--primary)" }}>{money(account.balance)}</div>{account.description && <p className="mt-2 line-clamp-2 text-xs" style={{ color: "var(--muted-foreground)" }}>{account.description}</p>}</article>)}</div>}
+          {!accounts.length && !loading ? <div className="border px-4 py-10 text-center" style={{ borderColor: "var(--border)", background: "var(--card)" }}><WalletCards size={22} className="mx-auto" style={{ color: "var(--muted-foreground)" }} /><p className="mt-3 text-sm font-600" style={{ color: "var(--foreground)" }}>No accounts configured</p><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>An owner, CEO, General Manager, or Finance Manager can create the company’s first account.</p></div> : <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{accounts.map((account) => <article key={account.id} className="border p-4" style={{ borderColor: "var(--border)", background: "var(--card)" }}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate text-sm font-700" style={{ color: "var(--foreground)" }}>{account.name}</h3><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{accountTypeLabel[account.account_type]}{account.account_number ? ` · ${account.account_number}` : ""}</p></div><span className="text-[10px] font-700 uppercase" style={{ color: account.status === "active" ? "#17845b" : "var(--muted-foreground)" }}>{account.status}</span></div><div className="mt-5 mono text-xl font-700" style={{ color: account.balance < 0 ? "#c2413a" : "var(--primary)" }}>{money(account.balance)}</div>{account.description && <p className="mt-2 line-clamp-2 text-xs" style={{ color: "var(--muted-foreground)" }}>{account.description}</p>}{canAdministerAccounts && <div className="mt-4 flex gap-2"><button type="button" onClick={() => setRenameAccount({ id: account.id, name: account.name })} className="rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>Rename</button><button type="button" onClick={() => void handleDelete(account.id)} className="rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "#c2413a" }}>Delete</button></div>}</article>)}</div>}
         </section>
 
         <section>
@@ -164,6 +211,13 @@ export default function AccountsWorkspace() {
           {Number(accountForm.openingBalance) > 0 && <label className={labelClass} style={{ color: "var(--muted-foreground)" }}>Opening balance date<input required type="date" value={accountForm.openingDate} onChange={(event) => setAccountForm((current) => ({ ...current, openingDate: event.target.value }))} className={inputClass} style={fieldStyle} /></label>}
           <label className={labelClass} style={{ color: "var(--muted-foreground)" }}>Description<textarea maxLength={500} rows={2} value={accountForm.description} onChange={(event) => setAccountForm((current) => ({ ...current, description: event.target.value }))} className={`${inputClass} resize-y`} style={fieldStyle} /></label>
           <FormActions saving={saving} onCancel={() => setShowAccountForm(false)} label="Create account" />
+        </form>
+      </Modal>}
+
+      {renameAccount && <Modal title="Rename account" onClose={() => !saving && setRenameAccount(null)}>
+        <form onSubmit={handleRename} className="space-y-4">
+          <label className={labelClass} style={{ color: "var(--muted-foreground)" }}>Account name<input required maxLength={120} value={renameAccount.name} onChange={(event) => setRenameAccount((current) => current ? { ...current, name: event.target.value } : current)} className={inputClass} style={fieldStyle} /></label>
+          <FormActions saving={saving} onCancel={() => setRenameAccount(null)} label="Save name" />
         </form>
       </Modal>}
 

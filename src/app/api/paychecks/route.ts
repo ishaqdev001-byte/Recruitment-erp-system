@@ -176,7 +176,7 @@ export async function GET() {
     const [{ data: paychecks, error: paychecksError }, { data: staff, error: staffError }, { data: accounts, error: accountsError }] = await Promise.all([
       access.admin.from("company_staff_paychecks").select("id, staff_member_id, pay_period, base_salary, earnings, benefits, deductions, gross_amount, benefits_total, deductions_total, net_amount, payment_date, payment_method, payment_reference, created_at")
         .eq("company_id", access.companyId).order("pay_period", { ascending: false }).order("payment_date", { ascending: false }),
-      access.admin.from("company_staff_members").select("id, staff_id, name, position").eq("company_id", access.companyId).order("name"),
+      access.admin.from("company_staff_members").select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined").eq("company_id", access.companyId).order("name"),
       access.admin.from("company_accounts").select("id, name, account_type, account_number").eq("company_id", access.companyId).eq("status", "active").order("name"),
     ]);
     if (paychecksError || staffError || accountsError) throw paychecksError ?? staffError ?? accountsError;
@@ -207,7 +207,6 @@ export async function POST(request: Request) {
     const staffMemberId = typeof body?.staffMemberId === "string" ? body.staffMemberId : "";
     const payPeriod = typeof body?.payPeriod === "string" ? body.payPeriod : "";
     const paymentDate = typeof body?.paymentDate === "string" ? body.paymentDate : "";
-    const baseSalary = Number(body?.baseSalary);
     const paymentMethod = typeof body?.paymentMethod === "string" ? body.paymentMethod : "";
     const accountId = typeof body?.accountId === "string" ? body.accountId : "";
     const earnings = parseLines(body?.earnings ?? []);
@@ -216,29 +215,40 @@ export async function POST(request: Request) {
     const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00`));
     if (!/^[0-9a-f-]{36}$/i.test(staffMemberId) || !/^\d{4}-\d{2}-01$/.test(payPeriod) || !validDate(paymentDate)
       || Number(payPeriod.slice(5, 7)) < 1 || Number(payPeriod.slice(5, 7)) > 12
-      || !Number.isFinite(baseSalary) || baseSalary < 0 || baseSalary > 999999999
       || !paymentMethods.includes(paymentMethod as (typeof paymentMethods)[number]) || !/^[0-9a-f-]{36}$/i.test(accountId)
       || !earnings || !submittedBenefits || !submittedDeductions) {
       return NextResponse.json({ error: "Enter a valid employee, month, salary, payment method, and payroll items." }, { status: 400, headers });
     }
-    const salary = Math.round(baseSalary * 100) / 100;
-    const gross = Math.round((salary + earnings.reduce((sum, item) => sum + item.amount, 0)) * 100) / 100;
-
     const [{ data: employee, error: employeeError }, { data: company, error: companyError }, { data: account, error: accountError }] = await Promise.all([
-      access.admin.from("company_staff_members").select("id, staff_id, name, position").eq("id", staffMemberId).eq("company_id", access.companyId).maybeSingle(),
+      access.admin.from("company_staff_members").select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined").eq("id", staffMemberId).eq("company_id", access.companyId).maybeSingle(),
       access.admin.from("companies").select("name, logo_url, registration_number, phone, email, office_address").eq("id", access.companyId).maybeSingle(),
       access.admin.from("company_accounts").select("id").eq("id", accountId).eq("company_id", access.companyId).eq("status", "active").maybeSingle(),
     ]);
     if (accountError) throw accountError;
     if (!account) return NextResponse.json({ error: "Select an active company account for payroll." }, { status: 400, headers });
     if (employeeError || companyError || !employee || !company) throw employeeError ?? companyError ?? new Error("Employee or company was not found.");
+    if (employee.pay_type !== "payroll" || Number(employee.base_salary) <= 0) {
+      return NextResponse.json({ error: "Only payroll staff with a configured base salary can receive a monthly paycheck." }, { status: 400, headers });
+    }
+    if (Number(employee.weekly_transport_allowance) > 0 && employee.transport_account_id !== account.id) {
+      return NextResponse.json({ error: "Use the funding account selected for this staff member's transport allowance." }, { status: 400, headers });
+    }
+    const salary = Math.round(Number(employee.base_salary) * 100) / 100;
+    const gross = Math.round((salary + earnings.reduce((sum, item) => sum + item.amount, 0)) * 100) / 100;
 
     const { data: adjustments, error: adjustmentsError } = await access.admin.from("company_staff_payroll_adjustments")
       .select("id, adjustment_type, amount, description, payment_reference")
       .eq("company_id", access.companyId).eq("staff_member_id", employee.id).eq("pay_period", payPeriod).is("paycheck_id", null);
     if (adjustmentsError) throw adjustmentsError;
+    const weeklyTransportAllowance = Number(employee.weekly_transport_allowance ?? 0);
+    const monthlyTransportAllowance = Math.round((weeklyTransportAllowance * 52 / 12) * 100) / 100;
+    const recurringBenefits = monthlyTransportAllowance > 0 ? [{
+      description: `Weekly transport allowance (UGX ${weeklyTransportAllowance.toLocaleString("en-UG", { minimumFractionDigits: 2 })}/week)`,
+      amount: monthlyTransportAllowance,
+    }] : [];
     const benefits = [
       ...submittedBenefits,
+      ...recurringBenefits,
       ...(adjustments ?? []).filter((item) => item.adjustment_type === "benefit").map((item) => ({
         description: `${item.description} (${item.payment_reference})`, amount: Number(item.amount),
       })),

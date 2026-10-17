@@ -12,7 +12,9 @@ type ProjectRecord = {
   salary_range: string;
   age_bracket: string;
   total_demand: number;
-  service_charge: number;
+  contractor_service_charge: number;
+  candidate_service_charge: number;
+  account_id: string;
   interview_mode: "Face to face" | "Online" | "Direct submission";
   status: ProjectStatus;
   submitted_count: number;
@@ -27,10 +29,10 @@ type ProjectForm = {
   salaryRange: string;
   ageBracket: string;
   totalDemand: string;
-  serviceCharge: string;
+  contractorServiceCharge: string;
+  candidateServiceCharge: string;
   interviewMode: ProjectRecord["interview_mode"];
   status: ProjectStatus;
-  submittedCount: string;
   visaCount: string;
   ticketCount: string;
 };
@@ -38,8 +40,8 @@ type ProjectPermissions = { canCreate: boolean; canEdit: boolean; canDelete: boo
 
 const initialForm = (): ProjectForm => ({
   projectName: "", contractorName: "", country: "", salaryRange: "", ageBracket: "",
-  totalDemand: "", serviceCharge: "", interviewMode: "Face to face", status: "active",
-  submittedCount: "0", visaCount: "0", ticketCount: "0",
+  totalDemand: "", contractorServiceCharge: "", candidateServiceCharge: "", interviewMode: "Face to face", status: "active",
+  visaCount: "0", ticketCount: "0",
 });
 const defaultPermissions: ProjectPermissions = { canCreate: false, canEdit: false, canDelete: false, canChangeStatus: false };
 const statusLabels: Record<ProjectStatus, string> = { active: "Active", inactive: "Inactive", cancelled: "Cancelled" };
@@ -53,10 +55,10 @@ function formFromProject(project: ProjectRecord): ProjectForm {
     salaryRange: project.salary_range,
     ageBracket: project.age_bracket,
     totalDemand: String(project.total_demand),
-    serviceCharge: String(project.service_charge),
+    contractorServiceCharge: String(project.contractor_service_charge),
+    candidateServiceCharge: String(project.candidate_service_charge),
     interviewMode: project.interview_mode,
     status: project.status,
-    submittedCount: String(project.submitted_count),
     visaCount: String(project.visa_count),
     ticketCount: String(project.ticket_count),
   };
@@ -133,6 +135,10 @@ export default function Projects() {
   const saveProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const matchingContractor = contractors.find((contractor) => contractor.company_name.toLocaleLowerCase() === form.contractorName.trim().toLocaleLowerCase());
+    if (!matchingContractor) {
+      setError("Select a registered contractor so visa charges can appear in Contractor Finance.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -141,17 +147,17 @@ export default function Projects() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectName: form.projectName,
-          contractorId: matchingContractor?.id ?? (form.contractorName.trim() === editingProject?.contractor_name ? editingProject.contractor_id : null),
+          contractorId: matchingContractor.id,
           contractorName: form.contractorName,
           country: form.country,
           salaryRange: form.salaryRange,
           ageBracket: form.ageBracket,
           totalDemand: form.totalDemand,
-          serviceCharge: form.serviceCharge || "0",
+          contractorServiceCharge: form.contractorServiceCharge || "0",
+          candidateServiceCharge: form.candidateServiceCharge || "0",
           interviewMode: form.interviewMode,
           ...(permissions.canChangeStatus ? { status: form.status } : {}),
           ...(editingProject ? {
-            submittedCount: form.submittedCount,
             visaCount: form.visaCount,
             ticketCount: form.ticketCount,
           } : {}),
@@ -216,10 +222,10 @@ export default function Projects() {
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-275 text-sm">
-            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Project", "Contractor", "Country", "Salary range", "Age bracket", "Vacancies", "Submitted", "Shortfall", "Visas", "Tickets", "Status", "Actions"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Project", "Contractor", "Country", "Salary range", "Age bracket", "Vacancies", "Submitted", "Shortfall", "Visas", "Candidate fee", "Contractor fee", "Book", "Tickets", "Status", "Actions"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={12} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading projects…</td></tr>}
-              {!loading && !error && filteredProjects.length === 0 && <tr><td colSpan={12} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{projects.length ? "No projects match this search." : "No projects registered yet."}</td></tr>}
+              {loading && <tr><td colSpan={15} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading projects…</td></tr>}
+              {!loading && !error && filteredProjects.length === 0 && <tr><td colSpan={15} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{projects.length ? "No projects match this search." : "No projects registered yet."}</td></tr>}
               {!loading && filteredProjects.map((project) => <tr key={project.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>{project.project_name}</td>
                 <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.contractor_name}</td>
@@ -230,6 +236,9 @@ export default function Projects() {
                 <td className="px-3 py-3 mono" style={{ color: "var(--foreground)" }}>{project.submitted_count}</td>
                 <td className="px-3 py-3 mono font-700" style={{ color: "#f59e0b" }}>{Math.max(0, project.total_demand - project.submitted_count)}</td>
                 <td className="px-3 py-3 mono" style={{ color: "var(--foreground)" }}>{project.visa_count}</td>
+                <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>UGX {project.candidate_service_charge.toLocaleString("en-UG")}</td>
+                <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>UGX {project.contractor_service_charge.toLocaleString("en-UG")}</td>
+                <td className="whitespace-nowrap px-3 py-3 text-xs font-600" style={{ color: "#17845b" }}>Project: {project.project_name} #{project.id.replace(/-/g, "").slice(-12)}</td>
                 <td className="px-3 py-3 mono" style={{ color: "var(--foreground)" }}>{project.ticket_count}</td>
                 <td className="px-3 py-3"><select aria-label={`Status for ${project.project_name}`} value={project.status} disabled={!permissions.canChangeStatus} onChange={(event) => void updateStatus(project, event.target.value as ProjectStatus)} className="border px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-70" style={fieldStyle}><option value="active">Active</option><option value="inactive">Inactive</option><option value="cancelled">Cancelled</option></select></td>
                 <td className="whitespace-nowrap px-3 py-3"><div className="flex items-center gap-1"><button type="button" aria-label={`Edit ${project.project_name}`} title="Edit project" disabled={!permissions.canEdit} onClick={() => openEditProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "var(--muted-foreground)" }}><Pencil size={15} aria-hidden="true" /></button><button type="button" aria-label={`Delete ${project.project_name}`} title="Delete project" disabled={!permissions.canDelete} onClick={() => void deleteProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "#ef4444" }}><Trash2 size={15} aria-hidden="true" /></button></div></td>
@@ -244,16 +253,16 @@ export default function Projects() {
           <div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>{editingProject ? "Edit project" : "Add project"}</h2><button type="button" onClick={closeForm} aria-label="Close project form" className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project name<input required maxLength={200} value={form.projectName} onChange={(event) => setForm((current) => ({ ...current, projectName: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
-            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Contractor name<SearchableSelect required allowCustom ariaLabel="Search or enter a contractor" value={form.contractorName} onChange={(contractorName) => setForm((current) => ({ ...current, contractorName }))} options={contractors.map((contractor) => ({ value: contractor.company_name, label: contractor.company_name }))} placeholder="Type a contractor name" className="mt-1 normal-case tracking-normal" /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Contractor name<SearchableSelect required ariaLabel="Select a registered contractor" value={form.contractorName} onChange={(contractorName) => setForm((current) => ({ ...current, contractorName }))} options={contractors.map((contractor) => ({ value: contractor.company_name, label: contractor.company_name }))} placeholder="Search registered contractors" className="mt-1 normal-case tracking-normal" /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Country of deployment<input required maxLength={200} value={form.country} onChange={(event) => setForm((current) => ({ ...current, country: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Salary range<input required maxLength={200} value={form.salaryRange} onChange={(event) => setForm((current) => ({ ...current, salaryRange: event.target.value }))} placeholder="e.g. UGX 1,000,000 - 1,500,000" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Age bracket<input required maxLength={100} value={form.ageBracket} onChange={(event) => setForm((current) => ({ ...current, ageBracket: event.target.value }))} placeholder="e.g. 21-35 years" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Total demand (vacancies)<input required min={1} step={1} type="number" value={form.totalDemand} onChange={(event) => setForm((current) => ({ ...current, totalDemand: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
-            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Service charge<input min={0} step="0.01" type="number" value={form.serviceCharge} onChange={(event) => setForm((current) => ({ ...current, serviceCharge: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Contractor service charge per visa (UGX)<input min={0} step="0.01" type="number" value={form.contractorServiceCharge} onChange={(event) => setForm((current) => ({ ...current, contractorServiceCharge: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Candidate service charge per visa (UGX)<input min={0} step="0.01" type="number" value={form.candidateServiceCharge} onChange={(event) => setForm((current) => ({ ...current, candidateServiceCharge: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Interview mode<select value={form.interviewMode} onChange={(event) => setForm((current) => ({ ...current, interviewMode: event.target.value as ProjectForm["interviewMode"] }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}><option>Face to face</option><option>Online</option><option>Direct submission</option></select></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Status<select disabled={!permissions.canChangeStatus} value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as ProjectStatus }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none disabled:opacity-60" style={fieldStyle}><option value="active">Active</option><option value="inactive">Inactive</option><option value="cancelled">Cancelled</option></select></label>
             {editingProject && <>
-              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Candidates submitted<input min={0} step={1} required type="number" value={form.submittedCount} onChange={(event) => setForm((current) => ({ ...current, submittedCount: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
               <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Visas<input min={0} step={1} required type="number" value={form.visaCount} onChange={(event) => setForm((current) => ({ ...current, visaCount: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
               <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Tickets<input min={0} step={1} required type="number" value={form.ticketCount} onChange={(event) => setForm((current) => ({ ...current, ticketCount: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             </>}

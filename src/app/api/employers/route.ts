@@ -51,7 +51,36 @@ export async function GET() {
       return NextResponse.json({ error: "Unable to load company contractors." }, { status: 500, headers: responseHeaders });
     }
 
-    return NextResponse.json({ employers: data ?? [] }, { headers: responseHeaders });
+    const { data: canViewFinance, error: financePermissionError } = await access.supabase.rpc("current_user_has_company_permission", {
+      requested_company_id: access.companyId,
+      requested_permission: "finance.view",
+    });
+    if (financePermissionError) throw financePermissionError;
+    let financeByContractor = new Map<string, { projectId: string; projectName: string; visaCount: number; contractorServiceCharge: number; amountDue: number; accountId: string }[]>();
+    if (canViewFinance) {
+      const { data: projectFinance, error: projectFinanceError } = await access.supabase.rpc("list_project_contractor_finance", {
+        requested_company_id: access.companyId,
+      });
+      if (projectFinanceError) throw projectFinanceError;
+      financeByContractor = new Map();
+      for (const project of projectFinance ?? []) {
+        const rows = financeByContractor.get(project.contractor_id) ?? [];
+        rows.push({
+          projectId: project.project_id,
+          projectName: project.project_name,
+          visaCount: Number(project.visa_count),
+          contractorServiceCharge: Number(project.contractor_service_charge),
+          amountDue: Number(project.amount_due),
+          accountId: project.account_id,
+        });
+        financeByContractor.set(project.contractor_id, rows);
+      }
+    }
+
+    return NextResponse.json({
+      employers: (data ?? []).map((employer) => ({ ...employer, financeProjects: financeByContractor.get(employer.id) ?? [] })),
+      permissions: { canViewFinance: Boolean(canViewFinance) },
+    }, { headers: responseHeaders });
   } catch (error) {
     console.error("Employer list request failed", error);
     return NextResponse.json({ error: "Contractor data is unavailable." }, { status: 503, headers: responseHeaders });

@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 
 const headers = { "Cache-Control": "private, no-store" };
 const statuses = ["Active", "On Leave", "Inactive"] as const;
+const payTypes = ["payroll", "project", "no_payroll"] as const;
 
 type StaffInput = {
   name: string;
@@ -13,6 +14,10 @@ type StaffInput = {
   status: (typeof statuses)[number];
   dateJoined: string;
   linkedUserId: string | null;
+  payType: (typeof payTypes)[number];
+  baseSalary: number;
+  weeklyTransportAllowance: number;
+  transportAccountId: string | null;
 };
 
 function createAdminClient() {
@@ -69,6 +74,10 @@ function mapStaff(record: Record<string, unknown>) {
     status: String(record.status),
     dateJoined: String(record.date_joined),
     linkedUserId: String(record.linked_user_id ?? ""),
+    payType: String(record.pay_type ?? "payroll"),
+    baseSalary: Number(record.base_salary ?? 0),
+    weeklyTransportAllowance: Number(record.weekly_transport_allowance ?? 0),
+    transportAccountId: String(record.transport_account_id ?? ""),
   };
 }
 
@@ -77,14 +86,35 @@ function parseStaffInput(body: Record<string, unknown>): StaffInput | null {
   const position = typeof body.position === "string" ? body.position.trim() : "";
   const dateJoined = typeof body.dateJoined === "string" ? body.dateJoined : "";
   const status = body.status;
+  const payType = body.payType;
+  const baseSalary = Number(body.baseSalary ?? 0);
+  const weeklyTransportAllowance = Number(body.weeklyTransportAllowance ?? 0);
   const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00`));
   const linkedUserId = typeof body.linkedUserId === "string" && body.linkedUserId ? body.linkedUserId : null;
+  const transportAccountId = typeof body.transportAccountId === "string" && body.transportAccountId ? body.transportAccountId : null;
 
   if (!name || name.length > 200 || !position || position.length > 150 || !validDate(dateJoined)
     || !statuses.includes(status as (typeof statuses)[number])
+    || !payTypes.includes(payType as (typeof payTypes)[number])
+    || !Number.isFinite(baseSalary) || baseSalary < 0 || baseSalary > 999999999999.99
+    || !Number.isFinite(weeklyTransportAllowance) || weeklyTransportAllowance < 0 || weeklyTransportAllowance > 999999999999.99
+    || (payType === "payroll" && baseSalary <= 0)
+    || (payType !== "payroll" && (baseSalary !== 0 || weeklyTransportAllowance !== 0 || transportAccountId !== null))
+    || (weeklyTransportAllowance > 0 && (payType !== "payroll" || !transportAccountId))
+    || (transportAccountId !== null && !/^[0-9a-f-]{36}$/i.test(transportAccountId))
     || (linkedUserId !== null && !/^[0-9a-f-]{36}$/i.test(linkedUserId))) return null;
 
-  return { name, position, status: status as StaffInput["status"], dateJoined, linkedUserId };
+  return {
+    name,
+    position,
+    status: status as StaffInput["status"],
+    dateJoined,
+    linkedUserId,
+    payType: payType as StaffInput["payType"],
+    baseSalary: Math.round(baseSalary * 100) / 100,
+    weeklyTransportAllowance: Math.round(weeklyTransportAllowance * 100) / 100,
+    transportAccountId: weeklyTransportAllowance > 0 ? transportAccountId : null,
+  };
 }
 
 export async function GET() {
@@ -115,19 +145,27 @@ export async function GET() {
       }
     }
 
-    const { data: staff, error: staffError } = await access.admin.from("company_staff_members")
-      .select("id, staff_id, name, position, phone, status, date_joined, linked_user_id")
-      .eq("company_id", access.companyId)
-      .order("created_at", { ascending: false });
-    if (staffError) throw staffError;
+    const [{ data: staff, error: staffError }, { data: accounts, error: accountsError }] = await Promise.all([
+      access.admin.from("company_staff_members")
+        .select("id, staff_id, name, position, phone, status, date_joined, linked_user_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id")
+        .eq("company_id", access.companyId)
+        .order("created_at", { ascending: false }),
+      access.admin.from("company_accounts")
+        .select("id, name, account_type, account_number")
+        .eq("company_id", access.companyId)
+        .eq("status", "active")
+        .order("name"),
+    ]);
+    if (staffError || accountsError) throw staffError ?? accountsError;
 
     return NextResponse.json({
       staff: (staff ?? []).map((record) => mapStaff(record as Record<string, unknown>)),
+      accounts: accounts ?? [],
       settings: { prefix: settings.staff_id_prefix, nextSequence: settings.next_sequence, canChangeSequence: access.isPrimaryAdmin },
     }, { headers });
   } catch (error) {
     console.error("Company staff request failed", error);
-    return NextResponse.json({ error: "Staff records are unavailable. Apply the company staff migration and try again." }, { status: 503, headers });
+    return NextResponse.json({ error: "Staff records are unavailable. Apply the company staff and accounts migrations and try again." }, { status: 503, headers });
   }
 }
 
@@ -137,7 +175,7 @@ export async function POST(request: Request) {
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     const input = body ? parseStaffInput(body) : null;
-    if (!input) return NextResponse.json({ error: "Enter valid staff details, including name, position, phone, dates, status, and marital status." }, { status: 400, headers });
+    if (!input) return NextResponse.json({ error: "Choose a pay arrangement. Payroll staff need a positive base salary; a weekly transport allowance needs an active funding account." }, { status: 400, headers });
 
     const { data: allocation, error: allocationError } = await access.admin.rpc("allocate_company_staff_sequence", { requested_company_id: access.companyId });
     if (allocationError) throw allocationError;
@@ -149,6 +187,11 @@ export async function POST(request: Request) {
         .eq("company_id", access.companyId).eq("user_id", input.linkedUserId).eq("status", "active").maybeSingle();
       if (!membership) return NextResponse.json({ error: "Link an active user in this company." }, { status: 400, headers });
     }
+    if (input.transportAccountId) {
+      const { data: account } = await access.admin.from("company_accounts").select("id")
+        .eq("id", input.transportAccountId).eq("company_id", access.companyId).eq("status", "active").maybeSingle();
+      if (!account) return NextResponse.json({ error: "Choose an active funding account from this company." }, { status: 400, headers });
+    }
     const { data: staff, error } = await access.admin.from("company_staff_members").insert({
       company_id: access.companyId,
       staff_id: staffId,
@@ -158,9 +201,13 @@ export async function POST(request: Request) {
         position: input.position,
         status: input.status,
         date_joined: input.dateJoined,
+        pay_type: input.payType,
+        base_salary: input.baseSalary,
+        weekly_transport_allowance: input.weeklyTransportAllowance,
+        transport_account_id: input.transportAccountId,
         created_by: access.userId,
       },
-    }).select("id, staff_id, name, position, phone, status, date_joined, linked_user_id").single();
+    }).select("id, staff_id, name, position, phone, status, date_joined, linked_user_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id").single();
     if (error?.code === "23505") return NextResponse.json({ error: "That user is already linked to a staff record." }, { status: 409, headers });
     if (error || !staff) throw error ?? new Error("Staff record was not created.");
     return NextResponse.json({ staff: mapStaff(staff as Record<string, unknown>) }, { status: 201, headers });
@@ -203,11 +250,16 @@ export async function PATCH(request: Request) {
 
     const id = typeof body.id === "string" ? body.id : "";
     const input = parseStaffInput(body);
-    if (!/^[0-9a-f-]{36}$/i.test(id) || !input) return NextResponse.json({ error: "Enter valid staff details." }, { status: 400, headers });
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !input) return NextResponse.json({ error: "Choose a pay arrangement. Payroll staff need a positive base salary; a weekly transport allowance needs an active funding account." }, { status: 400, headers });
     if (input.linkedUserId) {
       const { data: membership } = await access.admin.from("company_memberships").select("user_id")
         .eq("company_id", access.companyId).eq("user_id", input.linkedUserId).eq("status", "active").maybeSingle();
       if (!membership) return NextResponse.json({ error: "Link an active user in this company." }, { status: 400, headers });
+    }
+    if (input.transportAccountId) {
+      const { data: account } = await access.admin.from("company_accounts").select("id")
+        .eq("id", input.transportAccountId).eq("company_id", access.companyId).eq("status", "active").maybeSingle();
+      if (!account) return NextResponse.json({ error: "Choose an active funding account from this company." }, { status: 400, headers });
     }
     const { data: staff, error } = await access.admin.from("company_staff_members").update({
       name: input.name,
@@ -215,9 +267,13 @@ export async function PATCH(request: Request) {
       status: input.status,
       date_joined: input.dateJoined,
       linked_user_id: input.linkedUserId,
+      pay_type: input.payType,
+      base_salary: input.baseSalary,
+      weekly_transport_allowance: input.weeklyTransportAllowance,
+      transport_account_id: input.transportAccountId,
       updated_by: access.userId,
     }).eq("company_id", access.companyId).eq("id", id)
-      .select("id, staff_id, name, position, phone, status, date_joined, linked_user_id")
+      .select("id, staff_id, name, position, phone, status, date_joined, linked_user_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id")
       .maybeSingle();
     if (error?.code === "23505") return NextResponse.json({ error: "That user is already linked to a staff record." }, { status: 409, headers });
     if (error) throw error;

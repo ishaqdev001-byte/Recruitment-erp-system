@@ -36,8 +36,9 @@ async function getAccountsAccess(permission: "finance.view" | "finance.create") 
   ]);
   if (companyError || roleError || !company || !role) return { error: "Unable to verify account access.", status: 500 as const };
   const canManageAccounts = company.primary_admin_user_id === user.id
-    || ["CEO", "General Manager", "Finance Manager"].includes(role.name);
-  return { admin, companyId: membership.company_id, userId: user.id, canManageAccounts };
+    || ["CEO", "Finance Manager"].includes(role.name);
+  const canAdministerAccounts = company.primary_admin_user_id === user.id || role.name === "CEO";
+  return { admin, companyId: membership.company_id, userId: user.id, canManageAccounts, canAdministerAccounts };
 }
 
 function validDate(value: unknown): value is string {
@@ -56,7 +57,7 @@ export async function GET(request: Request) {
       if (accountError || createError) throw accountError ?? createError;
       return NextResponse.json({
         accounts: accounts ?? [],
-        permissions: { canCreate: Boolean(canCreate), canManageAccounts: access.canManageAccounts },
+        permissions: { canCreate: Boolean(canCreate), canManageAccounts: access.canManageAccounts, canAdministerAccounts: access.canAdministerAccounts },
       }, { headers });
     }
     const [{ data: accounts, error: accountError }, { data: ledger, error: ledgerError }, { data: expenses, error: expenseError }, { data: canCreate, error: createError }] = await Promise.all([
@@ -80,7 +81,7 @@ export async function GET(request: Request) {
         accountCount: accountsWithBalances.filter((account) => account.status === "active").length,
         totalBalance: Math.round(accountsWithBalances.reduce((sum, account) => sum + account.balance, 0) * 100) / 100,
       },
-      permissions: { canCreate: Boolean(canCreate), canManageAccounts: access.canManageAccounts },
+      permissions: { canCreate: Boolean(canCreate), canManageAccounts: access.canManageAccounts, canAdministerAccounts: access.canAdministerAccounts },
     }, { headers });
   } catch (error) {
     console.error("Company accounts request failed", error);
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
     if (!body || typeof body.action !== "string") return NextResponse.json({ error: "Choose an account action." }, { status: 400, headers });
 
     if (body.action === "create-account") {
-      if (!access.canManageAccounts) return NextResponse.json({ error: "Only the company owner, CEO, General Manager, or Finance Manager can create accounts." }, { status: 403, headers });
+      if (!access.canManageAccounts) return NextResponse.json({ error: "Only the company owner, CEO, or Finance Manager can create accounts." }, { status: 403, headers });
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const accountType = body.accountType;
       const accountNumber = typeof body.accountNumber === "string" ? body.accountNumber.trim() : "";
@@ -139,6 +140,55 @@ export async function POST(request: Request) {
         }
       }
       return NextResponse.json({ account }, { status: 201, headers });
+    }
+
+    if (body.action === "rename-account") {
+      if (!access.canAdministerAccounts) return NextResponse.json({ error: "Only the company owner or CEO can rename accounts." }, { status: 403, headers });
+      const accountId = typeof body.accountId === "string" ? body.accountId : "";
+      const newName = typeof body.name === "string" ? body.name.trim() : "";
+      if (!/^[0-9a-f-]{36}$/i.test(accountId) || !newName || newName.length > 120) {
+        return NextResponse.json({ error: "Enter a valid account ID and new account name." }, { status: 400, headers });
+      }
+      const { data: account, error: accountError } = await access.admin.from("company_accounts")
+        .select("id, name, is_default").eq("id", accountId).eq("company_id", access.companyId).maybeSingle();
+      if (accountError || !account) return NextResponse.json({ error: "Select an account from this company." }, { status: 404, headers });
+      const { error: renameError } = await access.admin.from("company_accounts")
+        .update({ name: newName, updated_at: new Date().toISOString() })
+        .eq("id", account.id).eq("company_id", access.companyId);
+      if (renameError?.code === "23505") return NextResponse.json({ error: "An account with this name already exists." }, { status: 409, headers });
+      if (renameError) throw renameError;
+      return NextResponse.json({ account: { ...account, name: newName, is_default: Boolean(account.is_default) } }, { status: 200, headers });
+    }
+
+    if (body.action === "delete-account") {
+      if (!access.canAdministerAccounts) return NextResponse.json({ error: "Only the company owner or CEO can delete accounts." }, { status: 403, headers });
+      const accountId = typeof body.accountId === "string" ? body.accountId : "";
+      if (!/^[0-9a-f-]{36}$/i.test(accountId)) {
+        return NextResponse.json({ error: "Enter a valid account ID to delete." }, { status: 400, headers });
+      }
+      const { data: account, error: accountError } = await access.admin.from("company_accounts")
+        .select("id, name, is_default").eq("id", accountId).eq("company_id", access.companyId).maybeSingle();
+      if (accountError || !account) return NextResponse.json({ error: "Select an account from this company." }, { status: 404, headers });
+      const balanceQuery = await access.admin.from("company_account_transactions")
+        .select("direction, amount", { count: "exact", head: false })
+        .eq("company_id", access.companyId)
+        .eq("account_id", accountId);
+      const totals = (balanceQuery.data ?? []).reduce((sum, entry) => sum + (entry.direction === "credit" ? Number(entry.amount) : -Number(entry.amount)), 0);
+      if (Math.abs(totals) > 0.01) return NextResponse.json({ error: "Accounts can only be deleted when the balance is zero and there are no ledger entries." }, { status: 400, headers });
+      const tablesToCheck = [
+        access.admin.from("company_account_transactions").select("id").eq("company_id", access.companyId).eq("account_id", accountId).limit(1),
+        access.admin.from("company_expenses").select("id").eq("company_id", access.companyId).eq("account_id", accountId).limit(1),
+        access.admin.from("financial_receipts").select("id").eq("company_id", access.companyId).eq("account_id", accountId).limit(1),
+        access.admin.from("invoice_payments").select("id").eq("company_id", access.companyId).eq("account_id", accountId).limit(1),
+        access.admin.from("company_staff_paychecks").select("id").eq("company_id", access.companyId).eq("account_id", accountId).limit(1),
+      ];
+      const results = await Promise.all(tablesToCheck);
+      if (results.some((result) => (result.data ?? []).length > 0)) {
+        return NextResponse.json({ error: "This account has recorded activity and cannot be deleted." }, { status: 400, headers });
+      }
+      const { error: deleteError } = await access.admin.from("company_accounts").delete().eq("id", account.id).eq("company_id", access.companyId);
+      if (deleteError) throw deleteError;
+      return NextResponse.json({ success: true }, { status: 200, headers });
     }
 
     if (body.action === "record-movement") {

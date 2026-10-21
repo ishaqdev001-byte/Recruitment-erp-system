@@ -8,6 +8,7 @@ import {
   ChevronDown,
   CircleDollarSign,
   ClipboardCheck,
+  ClipboardList,
   FileText,
   History,
   IdCard,
@@ -27,11 +28,19 @@ import type { View, WorkspaceRole } from "../App";
 
 type NavItem =
   | { type: "item"; id: View; label: string; icon: LucideIcon }
-  | { type: "group"; id: "agents" | "finance" | "employers" | "workforce"; label: string; icon: LucideIcon; children: { id: View; label: string; icon: LucideIcon }[] };
+  | { type: "group"; id: "agents" | "finance" | "employers" | "workforce" | "candidates"; label: string; icon: LucideIcon; children: { id: View; label: string; icon: LucideIcon }[] };
 
 const nav: NavItem[] = [
   { type: "item",  id: "dashboard",      label: "Dashboard",         icon: LayoutDashboard },
-  { type: "item",  id: "candidates",     label: "Candidates",        icon: UsersRound },
+  {
+    type: "group", id: "candidates", label: "Candidates", icon: UsersRound,
+    children: [
+      { id: "candidate-inquiries", label: "Inquiries", icon: MessageSquareText },
+      { id: "candidates", label: "Pipeline", icon: UsersRound },
+      { id: "medical-appointments", label: "Medical Appointments", icon: CalendarDays },
+      { id: "medical-management", label: "Medical Examinations", icon: ClipboardCheck },
+    ],
+  },
   {
     type: "group", id: "workforce", label: "Human Resource", icon: CalendarDays,
     children: [
@@ -57,11 +66,12 @@ const nav: NavItem[] = [
   {
     type: "group", id: "finance", label: "Finance", icon: WalletCards,
     children: [
-      { id: "finance",   label: "Overview",          icon: WalletCards },
-      { id: "accounts",  label: "Accounts",          icon: WalletCards },
-      { id: "invoices",  label: "Invoices",          icon: ReceiptText },
-      { id: "payments",  label: "Payments & Deposits", icon: CircleDollarSign },
-      { id: "paychecks", label: "Paychecks",         icon: FileText },
+      { id: "finance",       label: "Overview",              icon: WalletCards },
+      { id: "accounts",      label: "Accounts & Other Income", icon: WalletCards },
+      { id: "invoices",      label: "Invoices",              icon: ReceiptText },
+      { id: "payments",      label: "Payments & Deposits",   icon: CircleDollarSign },
+      { id: "paychecks",     label: "Paychecks",             icon: FileText },
+      { id: "requisitions",  label: "Requisitions",          icon: ClipboardList },
     ],
   },
   { type: "item",  id: "passport",       label: "Passport Custody",  icon: IdCard },
@@ -75,19 +85,21 @@ const nav: NavItem[] = [
   { type: "item",  id: "settings",       label: "Settings",          icon: Settings },
 ];
 
-const financeViews = new Set<View>(["finance", "accounts", "invoices", "payments", "paychecks"]);
+const financeViews = new Set<View>(["finance", "accounts", "invoices", "payments", "paychecks", "requisitions"]);
 const employerViews = new Set<View>(["contractors", "projects"]);
 const agentSupplierViews = new Set<View>(["agents", "suppliers"]);
 const workforceViews = new Set<View>(["human-resources", "attendance", "leave"]);
+const candidateViews = new Set<View>(["candidates", "candidate-inquiries", "medical-appointments", "medical-management"]);
 
 export default function Sidebar({ active, onNavigate, role, userName, companyName, companyLogo, mobileOpen, onLogout }: { active: View; onNavigate: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void }) {
-  const [openGroups, setOpenGroups] = useState({ agents: agentSupplierViews.has(active), finance: financeViews.has(active), employers: employerViews.has(active), workforce: workforceViews.has(active) });
+  const [openGroups, setOpenGroups] = useState({ agents: agentSupplierViews.has(active), finance: financeViews.has(active), employers: employerViews.has(active), workforce: workforceViews.has(active), candidates: candidateViews.has(active) });
 
   useEffect(() => {
     if (financeViews.has(active)) setOpenGroups((current) => current.finance ? current : { ...current, finance: true });
     if (employerViews.has(active)) setOpenGroups((current) => current.employers ? current : { ...current, employers: true });
     if (agentSupplierViews.has(active)) setOpenGroups((current) => current.agents ? current : { ...current, agents: true });
     if (workforceViews.has(active)) setOpenGroups((current) => current.workforce ? current : { ...current, workforce: true });
+    if (candidateViews.has(active)) setOpenGroups((current) => current.candidates ? current : { ...current, candidates: true });
   }, [active]);
 
   return (
@@ -130,7 +142,7 @@ export default function Sidebar({ active, onNavigate, role, userName, companyNam
 
           // Group
           const Icon = item.icon;
-          const groupViews = item.id === "finance" ? financeViews : item.id === "employers" ? employerViews : item.id === "workforce" ? workforceViews : agentSupplierViews;
+          const groupViews = item.id === "finance" ? financeViews : item.id === "employers" ? employerViews : item.id === "workforce" ? workforceViews : item.id === "candidates" ? candidateViews : agentSupplierViews;
           const isGroupActive = groupViews.has(active);
           const groupOpen = openGroups[item.id];
           return (

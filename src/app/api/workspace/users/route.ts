@@ -36,7 +36,13 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
   });
   if (permissionError || !allowed) return { error: "You do not have permission to manage company users.", status: 403 as const };
 
-  return { companyId: membership.company_id, userId: user.id };
+  // Also check if this user can manage roles (roles.manage permission)
+  const { data: canManageRoles } = await supabase.rpc("current_user_has_company_permission", {
+    requested_company_id: membership.company_id,
+    requested_permission: "roles.manage",
+  });
+
+  return { companyId: membership.company_id, userId: user.id, canManageRoles: Boolean(canManageRoles) };
 }
 
 export async function GET() {
@@ -48,7 +54,7 @@ export async function GET() {
     if (!admin) return NextResponse.json({ error: "Set SUPABASE_SERVICE_ROLE_KEY in .env.local and restart the Next.js server to enable user management." }, { status: 503, headers: responseHeaders });
 
     const [rolesResult, membershipsResult, permissionsResult, companyResult] = await Promise.all([
-      admin.from("company_roles").select("id, name, description, created_at").eq("company_id", access.companyId).order("name"),
+      admin.from("company_roles").select("id, name, description, is_system_default, created_at").eq("company_id", access.companyId).order("name"),
       admin.from("company_memberships").select("user_id, status, role_id, role:company_roles(name)").eq("company_id", access.companyId).order("created_at"),
       admin.from("permissions").select("code, description").order("code"),
       admin.from("companies").select("primary_admin_user_id").eq("id", access.companyId).single(),
@@ -96,6 +102,7 @@ export async function GET() {
       roles: rolesResult.data ?? [],
       permissions: permissionsResult.data ?? [],
       rolePermissions: rolePermissions ?? [],
+      canManageRoles: access.canManageRoles,
     }, { headers: responseHeaders });
   } catch (error) {
     console.error("Workspace users request failed", error);
@@ -210,6 +217,117 @@ export async function POST(request: Request) {
       }
 
       return NextResponse.json({ role }, { status: 201, headers: responseHeaders });
+    }
+
+    // ── update-role ──────────────────────────────────────────────────────────────
+    if (body.action === "update-role") {
+      if (!access.canManageRoles) return NextResponse.json({ error: "You do not have permission to manage roles." }, { status: 403, headers: responseHeaders });
+
+      const roleId = typeof body.roleId === "string" ? body.roleId.trim() : "";
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const description = typeof body.description === "string" ? body.description.trim() : "";
+      const requestedPermissions = Array.isArray(body.permissions) ? body.permissions.filter((v): v is string => typeof v === "string") : [];
+
+      if (!roleId) return NextResponse.json({ error: "Select a role to update." }, { status: 400, headers: responseHeaders });
+      if (!name || name.length > 100) return NextResponse.json({ error: "Role name must be between 1 and 100 characters." }, { status: 400, headers: responseHeaders });
+      if (!description || description.length > 1000) return NextResponse.json({ error: "Role duties must be between 1 and 1,000 characters." }, { status: 400, headers: responseHeaders });
+
+      // Verify role belongs to this company and get its current state
+      const { data: existingRole, error: existingRoleError } = await admin
+        .from("company_roles")
+        .select("id, name, is_system_default")
+        .eq("id", roleId)
+        .eq("company_id", access.companyId)
+        .maybeSingle();
+      if (existingRoleError || !existingRole) return NextResponse.json({ error: "Role not found in this company." }, { status: 404, headers: responseHeaders });
+
+      // The primary admin role name is immutable — protect it from rename
+      const isPrimaryAdminRole = existingRole.name === "Company Owner / Primary Administrator" || existingRole.name === "Primary Administrator";
+      if (isPrimaryAdminRole && name !== existingRole.name) {
+        return NextResponse.json({ error: "The primary administrator role name cannot be changed." }, { status: 403, headers: responseHeaders });
+      }
+
+      // Validate all requested permission codes against catalog
+      const { data: catalog } = await admin.from("permissions").select("code");
+      const allowedPermissions = new Set((catalog ?? []).map((p) => p.code));
+      if (requestedPermissions.some((p) => !allowedPermissions.has(p))) {
+        return NextResponse.json({ error: "One or more selected permissions are invalid." }, { status: 400, headers: responseHeaders });
+      }
+
+      // Update name and description
+      const { data: updatedRole, error: updateError } = await admin
+        .from("company_roles")
+        .update({ name, description })
+        .eq("id", roleId)
+        .eq("company_id", access.companyId)
+        .select("id, name, description, is_system_default, created_at")
+        .single();
+      if (updateError || !updatedRole) {
+        return NextResponse.json({ error: updateError?.code === "23505" ? "A role with that name already exists." : "Unable to update role." }, { status: 400, headers: responseHeaders });
+      }
+
+      // Replace permissions: delete all existing, insert new set
+      const { error: deletePermsError } = await admin
+        .from("role_permissions")
+        .delete()
+        .eq("role_id", roleId)
+        .eq("company_id", access.companyId);
+      if (deletePermsError) return NextResponse.json({ error: "Unable to update role permissions." }, { status: 500, headers: responseHeaders });
+
+      if (requestedPermissions.length) {
+        const { error: insertPermsError } = await admin.from("role_permissions").insert(
+          requestedPermissions.map((permission_code) => ({
+            role_id: roleId,
+            company_id: access.companyId,
+            permission_code,
+          }))
+        );
+        if (insertPermsError) return NextResponse.json({ error: "Role details saved but permissions could not be updated." }, { status: 500, headers: responseHeaders });
+      }
+
+      return NextResponse.json({ role: updatedRole, permissions: requestedPermissions }, { headers: responseHeaders });
+    }
+
+    // ── delete-role ──────────────────────────────────────────────────────────────
+    if (body.action === "delete-role") {
+      if (!access.canManageRoles) return NextResponse.json({ error: "You do not have permission to manage roles." }, { status: 403, headers: responseHeaders });
+
+      const roleId = typeof body.roleId === "string" ? body.roleId.trim() : "";
+      if (!roleId) return NextResponse.json({ error: "Select a role to delete." }, { status: 400, headers: responseHeaders });
+
+      // Verify role belongs to this company
+      const { data: existingRole, error: existingRoleError } = await admin
+        .from("company_roles")
+        .select("id, name, is_system_default")
+        .eq("id", roleId)
+        .eq("company_id", access.companyId)
+        .maybeSingle();
+      if (existingRoleError || !existingRole) return NextResponse.json({ error: "Role not found in this company." }, { status: 404, headers: responseHeaders });
+
+      // Primary admin role and its system-default partners cannot be deleted
+      if (existingRole.name === "Company Owner / Primary Administrator" || existingRole.name === "Primary Administrator") {
+        return NextResponse.json({ error: "The primary administrator role cannot be deleted." }, { status: 403, headers: responseHeaders });
+      }
+
+      // Cannot delete a role that is currently assigned to users
+      const { count, error: memberCountError } = await admin
+        .from("company_memberships")
+        .select("user_id", { count: "exact", head: true })
+        .eq("company_id", access.companyId)
+        .eq("role_id", roleId);
+      if (memberCountError) return NextResponse.json({ error: "Unable to verify role membership." }, { status: 500, headers: responseHeaders });
+      if (count && count > 0) {
+        return NextResponse.json({ error: `Cannot delete a role that is assigned to ${count} user${count === 1 ? "" : "s"}. Reassign them first.` }, { status: 409, headers: responseHeaders });
+      }
+
+      const { error: deleteError } = await admin
+        .from("company_roles")
+        .delete()
+        .eq("id", roleId)
+        .eq("company_id", access.companyId);
+      if (deleteError) return NextResponse.json({ error: "Unable to delete role." }, { status: 500, headers: responseHeaders });
+
+      return NextResponse.json({ ok: true }, { headers: responseHeaders });
     }
 
     if (body.action === "invite-user") {

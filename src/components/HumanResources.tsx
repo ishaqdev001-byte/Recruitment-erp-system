@@ -85,8 +85,18 @@ export default function HumanResources({ isOwner }: { isOwner: boolean }) {
       setError("");
       try {
         const response = await fetch("/api/workspace/staff/profile", { cache: "no-store" });
+        if (!response.ok) {
+          const contentType = response.headers.get("content-type");
+          if (contentType?.includes("application/json")) {
+            const result = await response.json() as { error?: string };
+            throw new Error(result.error ?? "Unable to load your HR profile.");
+          } else {
+            const text = await response.text();
+            console.error("Non-JSON response from HR profile API:", text.substring(0, 500));
+            throw new Error("The server returned an unexpected response. Please check if the development server is running correctly.");
+          }
+        }
         const result = await response.json() as { profile?: StaffProfile; error?: string };
-        if (!response.ok) throw new Error(result.error ?? "Unable to load your HR profile.");
         if (cancelled || !result.profile) return;
         const normalized = {
           ...emptyProfile,
@@ -131,8 +141,18 @@ export default function HumanResources({ isOwner }: { isOwner: boolean }) {
       const response = await fetch("/api/workspace/staff/profile", {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
       });
+      if (!response.ok) {
+        const contentType = response.headers.get("content-type");
+        if (contentType?.includes("application/json")) {
+          const result = await response.json() as { error?: string };
+          throw new Error(result.error ?? "Unable to save your HR profile.");
+        } else {
+          const text = await response.text();
+          console.error("Non-JSON response from HR profile save API:", text.substring(0, 500));
+          throw new Error("The server returned an unexpected response. Please check if the development server is running correctly.");
+        }
+      }
       const result = await response.json() as { profile?: StaffProfile; error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Unable to save your HR profile.");
       if (result.profile) setProfile(result.profile);
       setNotice("Your HR profile has been updated.");
     } catch (saveError) {

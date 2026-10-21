@@ -41,6 +41,8 @@ type NotificationItem = {
   time: string;
   read: boolean;
   taskNotificationId?: string;
+  candidateInquiryNotificationId?: string;
+  leaveNotificationId?: string;
 };
 
 const notifications: NotificationItem[] = [
@@ -111,14 +113,62 @@ export default function TopBar({
 
   useEffect(() => {
     let cancelled = false;
-    const loadTaskReminders = async () => {
+    const loadReminders = async () => {
       try {
-        const response = await fetch("/api/tasks/reminders", { cache: "no-store" });
-        if (!response.ok) return;
-        const payload = await response.json() as { reminders?: { id: string; title: string; body: string; sent_at: string; read_at: string | null }[] };
+        const [taskResponse, inquiryResponse, leaveResponse] = await Promise.all([
+          fetch("/api/tasks/reminders", { cache: "no-store" }),
+          fetch("/api/candidate-inquiries/reminders", { cache: "no-store" }),
+          fetch("/api/leave/notifications", { cache: "no-store" }),
+        ]);
+        const payload = taskResponse.ok
+          ? await taskResponse.json() as { reminders?: { id: string; title: string; body: string; sent_at: string; read_at: string | null }[] }
+          : { reminders: [] };
+        const inquiryPayload = inquiryResponse.ok
+          ? await inquiryResponse.json() as { reminders?: { id: string; title: string; body: string; sent_at: string; read_at: string | null }[] }
+          : { reminders: [] };
+        const leavePayload = leaveResponse.ok
+          ? await leaveResponse.json() as { notifications?: { id: string; stage: string; title: string; body: string; sent_at: string; read_at: string | null }[] }
+          : { notifications: [] };
         if (cancelled) return;
         const reminders = payload.reminders ?? [];
+        const inquiryReminders = inquiryPayload.reminders ?? [];
+        const leaveNotifications = leavePayload.notifications ?? [];
+
+        // Determine leave notification priority by stage
+        const leaveNotifPriority = (stage: string): NotificationPriority => {
+          if (stage === "final_approved") return "Important";
+          if (stage === "supervisor_approved" || stage === "manager_approved") return "Informational";
+          if (stage.endsWith("_rejected")) return "Important";
+          return "Informational";
+        };
+        const leaveNotifType = (stage: string): NotificationItem["type"] => {
+          if (stage === "final_approved") return "success";
+          if (stage.endsWith("_rejected")) return "error";
+          if (stage === "submitted") return "info";
+          return "info";
+        };
+
         setNotifs((current) => [
+          ...leaveNotifications.map((n) => ({
+            id: `leave-${n.id}`,
+            leaveNotificationId: n.id,
+            priority: leaveNotifPriority(n.stage),
+            type: leaveNotifType(n.stage),
+            title: n.title,
+            body: n.body,
+            time: new Date(n.sent_at).toLocaleString(),
+            read: Boolean(n.read_at),
+          })),
+          ...inquiryReminders.map((reminder) => ({
+            id: `candidate-inquiry-${reminder.id}`,
+            candidateInquiryNotificationId: reminder.id,
+            priority: "Important" as const,
+            type: "info" as const,
+            title: reminder.title,
+            body: reminder.body,
+            time: new Date(reminder.sent_at).toLocaleString(),
+            read: Boolean(reminder.read_at),
+          })),
           ...reminders.map((reminder) => ({
             id: `task-${reminder.id}`,
             taskNotificationId: reminder.id,
@@ -129,12 +179,12 @@ export default function TopBar({
             time: new Date(reminder.sent_at).toLocaleString(),
             read: Boolean(reminder.read_at),
           })),
-          ...current.filter((item) => !item.taskNotificationId),
+          ...current.filter((item) => !item.taskNotificationId && !item.candidateInquiryNotificationId && !item.leaveNotificationId),
         ]);
         const canNotify = "Notification" in window && window.Notification.permission === "granted";
         if (!canNotify) return;
         const cutoff = Date.now() - 5 * 60 * 1000;
-        for (const reminder of reminders) {
+        for (const reminder of [...reminders, ...inquiryReminders]) {
           if (reminder.read_at || shownReminderIds.current.has(reminder.id) || Date.parse(reminder.sent_at) < cutoff) continue;
           shownReminderIds.current.add(reminder.id);
           const notification = new window.Notification(reminder.title, { body: reminder.body, tag: reminder.id });
@@ -144,18 +194,31 @@ export default function TopBar({
             notification.close();
           };
         }
+        // Browser notifications for leave updates
+        for (const n of leaveNotifications) {
+          if (n.read_at || shownReminderIds.current.has(`leave-${n.id}`) || Date.parse(n.sent_at) < cutoff) continue;
+          shownReminderIds.current.add(`leave-${n.id}`);
+          const notification = new window.Notification(n.title, { body: n.body, tag: `leave-${n.id}` });
+          notification.onclick = () => {
+            window.focus();
+            onNavigate("leave");
+            notification.close();
+          };
+        }
       } catch {
         return;
       }
     };
-    const refreshTaskReminders = () => { void loadTaskReminders(); };
-    void loadTaskReminders();
-    const interval = window.setInterval(() => { void loadTaskReminders(); }, 60000);
-    window.addEventListener("task-reminders-changed", refreshTaskReminders);
+    const refreshReminders = () => { void loadReminders(); };
+    void loadReminders();
+    const interval = window.setInterval(() => { void loadReminders(); }, 60000);
+    window.addEventListener("task-reminders-changed", refreshReminders);
+    window.addEventListener("leave-notifications-changed", refreshReminders);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
-      window.removeEventListener("task-reminders-changed", refreshTaskReminders);
+      window.removeEventListener("task-reminders-changed", refreshReminders);
+      window.removeEventListener("leave-notifications-changed", refreshReminders);
     };
   }, [onNavigate]);
 
@@ -179,7 +242,11 @@ export default function TopBar({
   ];
 
   const markAllRead = async () => {
-    await fetch("/api/tasks/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }).catch(() => undefined);
+    await Promise.all([
+      fetch("/api/tasks/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }),
+      fetch("/api/candidate-inquiries/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }),
+      fetch("/api/leave/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }),
+    ]).catch(() => undefined);
     setNotifs((prev) => prev.map((n) => ({ ...n, read: true })));
   };
 
@@ -187,6 +254,12 @@ export default function TopBar({
     const notification = notifs.find((item) => item.id === id);
     if (notification?.taskNotificationId) {
       await fetch("/api/tasks/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.taskNotificationId }) }).catch(() => undefined);
+    }
+    if (notification?.candidateInquiryNotificationId) {
+      await fetch("/api/candidate-inquiries/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.candidateInquiryNotificationId }) }).catch(() => undefined);
+    }
+    if (notification?.leaveNotificationId) {
+      await fetch("/api/leave/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.leaveNotificationId }) }).catch(() => undefined);
     }
     setNotifs((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
   };
@@ -342,7 +415,7 @@ export default function TopBar({
                               <div className="mono text-[11px] mt-1" style={{ color: "var(--muted-foreground)" }}>{n.time}</div>
                             </div>
                             <div className="flex flex-col items-end gap-2">
-                              {n.taskNotificationId && <button onClick={() => { onNavigate("communications"); setShowNotifs(false); }} className="text-[10px] font-600" style={{ color: "var(--primary)" }}>Open</button>}
+                              {(n.taskNotificationId || n.candidateInquiryNotificationId || n.leaveNotificationId) && <button onClick={() => { onNavigate(n.leaveNotificationId ? "leave" : n.candidateInquiryNotificationId ? "candidates" : "communications"); setShowNotifs(false); }} className="text-[10px] font-600" style={{ color: "var(--primary)" }}>Open</button>}
                               {!n.read && <div className="w-2 h-2 rounded-full" style={{ background: "var(--primary)" }} />}
                               <button onClick={() => snoozeNotification(n.id)} className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>
                                 Snooze

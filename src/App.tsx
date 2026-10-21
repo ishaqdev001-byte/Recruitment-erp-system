@@ -21,15 +21,22 @@ import PassportCustody from "./components/PassportCustodyWorkspace";
 import Attendance from "./components/Attendance";
 import LeaveManagement from "./components/LeaveManagement";
 import HumanResources from "./components/HumanResources";
+import MedicalAppointments from "./components/MedicalAppointments";
+import MedicalManagement from "./components/MedicalManagement";
+import Requisitions from "./components/RequisitionsWorkspace";
 import CompanyDrive from "./components/CompanyDrive";
 import Tasks from "./components/TaskWorkspace";
 import Communications from "./components/Communications";
 import AIAssistant from "./components/AIAssistant";
+import DepartmentsSettings from "./components/settings/DepartmentsSettings";
+import CurrenciesSettings from "./components/settings/CurrenciesSettings";
+import ServiceProvidersSettings from "./components/settings/ServiceProvidersSettings";
 import { createSupabaseBrowserClient } from "./lib/supabase/browser";
 
 export type View =
   | "dashboard"
   | "candidates"
+  | "candidate-inquiries"
   | "agents"
   | "suppliers"
   | "jobs"
@@ -54,16 +61,22 @@ export type View =
   | "auditlog"
   | "attendance"
   | "leave"
-  | "human-resources";
+  | "human-resources"
+  | "medical-appointments"
+  | "medical-management"
+  | "requisitions";
 
 export type WorkspaceRole =
   | "Company Owner / Primary Administrator"
+  | "General Manager"
+  | "CEO"
   | "Recruitment Manager"
   | "Recruitment Agent"
   | "Finance Manager"
   | "Finance Officer"
   | "Document Officer"
   | "Medical Officer"
+  | "Doctor"
   | "Viewer"
   | "Administrator"
   | "Manager"
@@ -174,8 +187,9 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   if (!companyRecord || !roleRecord) throw new Error("Your company membership is incomplete.");
 
   const knownRoles: WorkspaceRole[] = [
-    "Company Owner / Primary Administrator", "Recruitment Manager", "Recruitment Agent",
-    "Finance Manager", "Finance Officer", "Document Officer", "Medical Officer", "Viewer",
+    "Company Owner / Primary Administrator", "General Manager", "CEO",
+    "Recruitment Manager", "Recruitment Agent",
+    "Finance Manager", "Finance Officer", "Document Officer", "Medical Officer", "Doctor", "Viewer",
     "Administrator", "Manager", "Finance User",
   ];
   const role = knownRoles.find((candidateRole) => candidateRole === roleRecord.name) ?? roleRecord.name as WorkspaceRole;
@@ -278,6 +292,13 @@ export default function App() {
     const restoreSession = async () => {
       const currentUrl = new URL(window.location.href);
       if (currentUrl.searchParams.get("view") === "communications") setView("communications");
+      // Restore active view from the URL path on load / hard refresh.
+      // Supports both /candidates (clean path) and legacy ?v= / ?view= params.
+      const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","requisitions","drive"]);
+      const pathView = currentUrl.pathname.replace(/^\//, ""); // strip leading /
+      const paramView = currentUrl.searchParams.get("v") ?? currentUrl.searchParams.get("view");
+      const detectedView = (validViews.has(pathView) ? pathView : null) ?? (paramView && validViews.has(paramView) ? paramView : null);
+      if (detectedView) setView(detectedView as View);
       const hashParams = new URLSearchParams(currentUrl.hash.slice(1));
       const inviteLink = hashParams.get("type") === "invite" || currentUrl.searchParams.get("invite") === "1";
       const recoveryLink = currentUrl.searchParams.get("view") === "reset-password" || hashParams.get("type") === "recovery";
@@ -392,6 +413,35 @@ export default function App() {
       window.localStorage.setItem("recruitos.workspace-preferences", JSON.stringify({ role, theme, density }));
     }
   }, [density, preferencesReady, role, theme]);
+
+  // Keep URL path in sync with the active view — real paths like /candidates, /finance.
+  // Uses pushState so the browser back button navigates between views.
+  useEffect(() => {
+    if (!session) return;
+    const targetPath = view === "dashboard" ? "/" : `/${view}`;
+    if (window.location.pathname !== targetPath) {
+      // Strip legacy ?v= / ?view= params on first navigation
+      const url = new URL(window.location.href);
+      url.searchParams.delete("v");
+      url.searchParams.delete("view");
+      url.pathname = targetPath;
+      window.history.pushState({ view }, "", url.toString());
+    }
+  }, [view, session]);
+
+  // Handle browser back / forward buttons
+  useEffect(() => {
+    const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","requisitions","drive"]);
+    const onPopState = (event: PopStateEvent) => {
+      const stateView = (event.state as { view?: string } | null)?.view;
+      const pathView = window.location.pathname.replace(/^\//, "");
+      const resolved = (stateView && validViews.has(stateView) ? stateView : null)
+        ?? (validViews.has(pathView) ? pathView : "dashboard");
+      setView(resolved as View);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const activeCompany = useMemo(
     () => companies.find((company) => company.id === session?.companyId) ?? companies[0],
@@ -591,7 +641,9 @@ export default function App() {
       case "dashboard":
         return <Dashboard role={activeUser?.role ?? role} onNavigate={setView} />;
       case "candidates":
-        return <Candidates />;
+        return <Candidates page="pipeline" onNavigate={setView} />;
+      case "candidate-inquiries":
+        return <Candidates page="inquiries" onNavigate={setView} />;
       case "documents":
         return <CompanyDrive companyName={session?.companyName ?? ""} />;
       case "users":
@@ -619,7 +671,12 @@ export default function App() {
       case "leave":
         return <LeaveManagement />;
       case "human-resources":
-        return <HumanResources isOwner={activeUser?.role === "Company Owner / Primary Administrator"} />;
+      case "medical-appointments":
+        return <MedicalAppointments />;
+      case "medical-management":
+        return <MedicalManagement />;
+      case "requisitions":
+        return <Requisitions />;
       case "tasks":
         return <Tasks />;
       case "communications":
@@ -628,6 +685,8 @@ export default function App() {
         return <AIAssistant />;
       case "passport":
         return <PassportCustody companyName={session?.companyName ?? ""} onRegisterCandidate={() => setView("candidates")} />;
+      case "settings":
+        return <SettingsPage company={activeCompany} user={activeUser} />;
       default:
         return <DatabaseModulePending view={view} />;
     }
@@ -728,6 +787,7 @@ export default function App() {
           userEmail={activeUser?.email}
           userAvatarUrl={session.userAvatarUrl}
         />
+        <OfflineBanner />
         <main className="min-w-0 flex-1 overflow-auto">
           {renderView()}
         </main>
@@ -1157,6 +1217,43 @@ function AuthenticationExperience({
   );
 }
 
+function OfflineBanner() {
+  const [offline, setOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
+
+  useEffect(() => {
+    const goOffline = () => setOffline(true);
+    const goOnline = () => setOffline(false);
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    return () => {
+      window.removeEventListener("offline", goOffline);
+      window.removeEventListener("online", goOnline);
+    };
+  }, []);
+
+  if (!offline) return null;
+
+  return (
+    <div
+      role="alert"
+      aria-live="assertive"
+      className="flex shrink-0 items-center gap-2 px-4 py-2 text-sm font-600"
+      style={{ background: "#78350f", color: "#fef3c7", borderBottom: "1px solid #92400e" }}
+    >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <line x1="1" y1="1" x2="23" y2="23" />
+        <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" />
+        <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" />
+        <path d="M10.71 5.05A16 16 0 0 1 22.56 9" />
+        <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" />
+        <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+        <line x1="12" y1="20" x2="12.01" y2="20" />
+      </svg>
+      You are offline — check your internet connection. Changes you make may not be saved.
+    </div>
+  );
+}
+
 function DatabaseModulePending({ view }: { view: View }) {
   const label = view.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
 
@@ -1291,6 +1388,8 @@ function OnboardingWizard({
 }
 
 function SettingsPage({ company, user }: { company?: CompanyProfile; user?: CompanyUser }) {
+  const [settingsTab, setSettingsTab] = useState<"general" | "departments" | "currencies" | "service-providers">("general");
+
   const permissionRows = [
     ["Candidates", "View / Create / Edit / Approve", "Recruitment Agent"],
     ["Finance", "View only", "Recruitment Agent"],
@@ -1299,94 +1398,127 @@ function SettingsPage({ company, user }: { company?: CompanyProfile; user?: Comp
     ["Passport Custody", "View / Approve", "Document Officer"],
   ];
 
+  const tabs: { id: typeof settingsTab; label: string }[] = [
+    { id: "general", label: "General" },
+    { id: "departments", label: "Departments" },
+    { id: "currencies", label: "Currencies" },
+    { id: "service-providers", label: "Service Providers" },
+  ];
+
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Settings header */}
+      <div className="shrink-0 px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
         <div>
           <div className="text-xs uppercase tracking-[0.20em]" style={{ color: "var(--muted-foreground)" }}>Company settings</div>
-          <h1 className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>Settings</h1>
+          <h1 className="mt-1 text-2xl font-700" style={{ color: "var(--foreground)" }}>Settings</h1>
         </div>
         <div className="rounded-full border px-3 py-1 text-[10px] font-700 uppercase tracking-widest" style={{ borderColor: "var(--border)", color: "var(--primary)" }}>
           {user?.role ?? "Company Owner / Primary Administrator"}
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="space-y-4">
-          <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Company</div>
-            <div className="grid gap-4 md:grid-cols-2">
-              {[
-                ["Company Name", company?.name ?? ""],
-                ["Registration Number", company?.registrationNumber ?? ""],
-                ["Country", company?.country ?? ""],
-                ["City", company?.city ?? ""],
-                ["Phone", company?.phone ?? ""],
-                ["Email", company?.email ?? ""],
-                ["Website", company?.website ?? ""],
-                ["Currency", company?.currency ?? "USD"],
-              ].map(([label, value]) => (
-                <div key={label}>
-                  <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>{label}</label>
-                  <input defaultValue={String(value)} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} />
+      {/* Tab bar */}
+      <div className="shrink-0 flex border-b" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+        {tabs.map((t) => (
+          <button key={t.id} type="button" onClick={() => setSettingsTab(t.id)}
+            className="px-5 py-3 text-sm font-600 transition-colors"
+            style={{
+              color: settingsTab === t.id ? "var(--primary)" : "var(--muted-foreground)",
+              borderBottom: settingsTab === t.id ? "2px solid var(--primary)" : "2px solid transparent",
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      <div className="flex-1 overflow-auto">
+        {settingsTab === "general" && (
+          <div className="p-8 max-w-5xl mx-auto">
+            <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+              <div className="space-y-4">
+                <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+                  <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Company</div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {[
+                      ["Company Name", company?.name ?? ""],
+                      ["Registration Number", company?.registrationNumber ?? ""],
+                      ["Country", company?.country ?? ""],
+                      ["City", company?.city ?? ""],
+                      ["Phone", company?.phone ?? ""],
+                      ["Email", company?.email ?? ""],
+                      ["Website", company?.website ?? ""],
+                      ["Currency", company?.currency ?? "USD"],
+                    ].map(([label, value]) => (
+                      <div key={label}>
+                        <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>{label}</label>
+                        <input defaultValue={String(value)} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
 
-          <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Permissions matrix</div>
-            <div className="overflow-hidden rounded border" style={{ borderColor: "var(--border)" }}>
-              <table className="w-full text-left text-sm">
-                <thead style={{ background: "var(--secondary)" }}>
-                  <tr>
-                    <th className="px-3 py-2 font-600" style={{ color: "var(--foreground)" }}>Module</th>
-                    <th className="px-3 py-2 font-600" style={{ color: "var(--foreground)" }}>Permission</th>
-                    <th className="px-3 py-2 font-600" style={{ color: "var(--foreground)" }}>Role</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {permissionRows.map(([module, permission, roleName]) => (
-                    <tr key={module} className="border-t" style={{ borderColor: "var(--border)" }}>
-                      <td className="px-3 py-2" style={{ color: "var(--foreground)" }}>{module}</td>
-                      <td className="px-3 py-2" style={{ color: "var(--muted-foreground)" }}>{permission}</td>
-                      <td className="px-3 py-2" style={{ color: "var(--muted-foreground)" }}>{roleName}</td>
-                    </tr>
+                <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+                  <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Permissions matrix</div>
+                  <div className="overflow-hidden rounded border" style={{ borderColor: "var(--border)" }}>
+                    <table className="w-full text-left text-sm">
+                      <thead style={{ background: "var(--secondary)" }}>
+                        <tr>
+                          <th className="px-3 py-2 font-600" style={{ color: "var(--foreground)" }}>Module</th>
+                          <th className="px-3 py-2 font-600" style={{ color: "var(--foreground)" }}>Permission</th>
+                          <th className="px-3 py-2 font-600" style={{ color: "var(--foreground)" }}>Role</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {permissionRows.map(([module, permission, roleName]) => (
+                          <tr key={module} className="border-t" style={{ borderColor: "var(--border)" }}>
+                            <td className="px-3 py-2" style={{ color: "var(--foreground)" }}>{module}</td>
+                            <td className="px-3 py-2" style={{ color: "var(--muted-foreground)" }}>{permission}</td>
+                            <td className="px-3 py-2" style={{ color: "var(--muted-foreground)" }}>{roleName}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+                  <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Primary admin</div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full font-700" style={{ background: "var(--secondary)", color: "var(--primary)" }}>
+                      {formatInitials(user?.name ?? "Owner User")}
+                    </div>
+                    <div>
+                      <div className="font-700" style={{ color: "var(--foreground)" }}>{user?.name ?? "Primary Admin"}</div>
+                      <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>{user?.title ?? "Company Owner / Primary Administrator"}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+                  <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Audit log</div>
+                  {[
+                    "Company profile updated",
+                    "Security policy applied",
+                    "Primary admin role confirmed",
+                    "Recruitment stages configured",
+                  ].map((entry) => (
+                    <div key={entry} className="mb-3 rounded border px-3 py-2 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--muted-foreground)" }}>
+                      {entry}
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Primary admin</div>
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full font-700" style={{ background: "var(--secondary)", color: "var(--primary)" }}>
-                {formatInitials(user?.name ?? "Owner User")}
-              </div>
-              <div>
-                <div className="font-700" style={{ color: "var(--foreground)" }}>{user?.name ?? "Primary Admin"}</div>
-                <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>{user?.title ?? "Company Owner / Primary Administrator"}</div>
+                </div>
               </div>
             </div>
           </div>
+        )}
 
-          <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Audit log</div>
-            {[
-              "Company profile updated", 
-              "Security policy applied", 
-              "Primary admin role confirmed", 
-              "Recruitment stages configured",
-            ].map((entry) => (
-              <div key={entry} className="mb-3 rounded border px-3 py-2 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--muted-foreground)" }}>
-                {entry}
-              </div>
-            ))}
-          </div>
-        </div>
+        {settingsTab === "departments" && <DepartmentsSettings />}
+        {settingsTab === "currencies" && <CurrenciesSettings />}
+        {settingsTab === "service-providers" && <ServiceProvidersSettings />}
       </div>
     </div>
   );

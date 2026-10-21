@@ -8,6 +8,7 @@ interface Props {
   isNew: boolean;
   onSave: (c: Candidate) => void | Promise<void>;
   onBack: () => void;
+  agentOptions?: string[];
 }
 
 function Field({
@@ -119,7 +120,7 @@ const activityLog = [
   { time: "Aug 11, 2026 09:00", user: "Director Vicent", action: "Created candidate profile" },
 ];
 
-export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Props) {
+export default function CandidateDetail({ candidate, isNew, onSave, onBack, agentOptions = [] }: Props) {
   const [form, setForm] = useState<Candidate>({ ...candidate });
   const [activeTab, setActiveTab] = useState<Tab>("Personal");
   const [saving, setSaving] = useState(false);
@@ -145,7 +146,7 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
       {/* Top bar */}
       <div className="px-6 py-4 border-b flex items-center justify-between shrink-0" style={{ borderColor: "var(--border)" }}>
         <h1 className="text-lg font-700" style={{ color: "var(--foreground)" }}>
-          {isNew ? "New Candidate Enquiry" : `Edit Candidate: ${form.firstName} ${form.lastName}`}
+          {isNew ? "Register Candidate" : `Edit Candidate: ${form.firstName} ${form.lastName}`}
         </h1>
         <button
           onClick={onBack}
@@ -201,12 +202,12 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack }: Pr
             <SelectField label="Abroad Experience" value={form.abroadExperience} onChange={(v) => set("abroadExperience", v)} required
               options={["None", "Certificate", "1 Year", "2 Years", "3 Years", "5+ Years"]} />
             <SelectField label="Source" value={form.source} onChange={(v) => set("source", v)} required
-              options={["Walk-in", "Referred By Friend", "Agent Referral", "Social Media", "Newspaper", "Online"]} />
+              options={["Walk-in", "Referred By Friend", "Agent Referral", "Radio", "Television Advert", "Sign Post", "Social Media", "Newspaper", "Online"]} />
             <div />
 
             <div className="col-span-2">
               <label className="text-xs font-600 block mb-1" style={{ color: "var(--muted-foreground)" }}>Agent<span style={{ color: "#ef4444" }}> *</span></label>
-              <SearchableSelect required ariaLabel="Search agent" value={form.agent} onChange={(value) => set("agent", value)} options={["Director Vicent", "Asiimwe david", "Aisha Tendo", "Peter Mukasa"].map((name) => ({ value: name, label: name }))} placeholder="Type an agent name" />
+              <SearchableSelect required ariaLabel="Search agent" value={form.agent} onChange={(value) => set("agent", value)} options={[...new Set([...agentOptions, ...(form.agent ? [form.agent] : [])])].map((name) => ({ value: name, label: name }))} placeholder="Type an agent name" />
             </div>
             <div className="col-span-2">
               <MultiField label="Media Channel" value={form.mediaChannel} onChange={(v) => set("mediaChannel", v)} required

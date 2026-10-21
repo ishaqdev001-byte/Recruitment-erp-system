@@ -66,6 +66,18 @@ const candidateVisaInvoicesMigration = await readFile(
   new URL("../supabase/migrations/202610040015_candidate_visa_invoices.sql", import.meta.url),
   "utf8",
 );
+const candidateInquiriesMigration = await readFile(
+  new URL("../supabase/migrations/202610170001_candidate_inquiries.sql", import.meta.url),
+  "utf8",
+);
+const candidateInquiryMultipleJobsMigration = await readFile(
+  new URL("../supabase/migrations/202610170002_candidate_inquiry_multiple_jobs.sql", import.meta.url),
+  "utf8",
+);
+const medicalAppointmentsAndOtherIncomeMigration = await readFile(
+  new URL("../supabase/migrations/202610170003_medical_appointments_and_other_income.sql", import.meta.url),
+  "utf8",
+);
 const attendanceLeaveMigration = await readFile(
   new URL("../supabase/migrations/202610040016_attendance_leave.sql", import.meta.url),
   "utf8",
@@ -215,6 +227,8 @@ try {
   await database.exec(passportTrackingMigration);
   await database.exec(candidateVisaInvoicesMigration);
   await database.exec(candidateVisaInvoicesMigration);
+  await database.exec(candidateInquiriesMigration);
+  await database.exec(candidateInquiriesMigration);
   await database.exec(attendanceLeaveMigration);
   await database.exec(attendanceLeaveMigration);
   await database.exec(attendanceHistoryMigration);
@@ -277,6 +291,8 @@ try {
   await database.exec(payrollAdjustmentMigration);
   await database.exec(companyAccountsMigration);
   await database.exec(companyAccountsMigration);
+  await database.exec(medicalAppointmentsAndOtherIncomeMigration);
+  await database.exec(medicalAppointmentsAndOtherIncomeMigration);
   await database.exec(staffPayrollCompensationMigration);
   await database.exec(staffPayrollCompensationMigration);
   await database.exec(`
@@ -550,6 +566,78 @@ try {
       ('${documentMedical}', '${companyA}', '${candidateA}', 'medical.pdf', 'medical.pdf', 'pdf',
         'application/pdf', 100, 'company/${companyA}/candidates/${candidateA}/medical/60000000-0000-4000-8000-000000000002.pdf', 'medical', '${userA}');
   `);
+  const defaultMedicalTypes = await database.query(
+    "select name, fee, account_id from public.company_income_types where company_id = $1 and is_default order by name",
+    [companyD],
+  );
+  assert.deepEqual(defaultMedicalTypes.rows.map((item) => item.name), ["General Medical Examination", "Laboratory Test", "X-Ray"]);
+  assert.ok(defaultMedicalTypes.rows.every((item) => item.fee === "0.00" && item.account_id));
+  const convertedInquiryId = "91000000-0000-4000-8000-000000000001";
+  const overdueInquiryId = "91000000-0000-4000-8000-000000000002";
+  const legacyInquiryId = "91000000-0000-4000-8000-000000000003";
+  const convertedInquiryCandidateId = "40000000-0000-4000-8000-000000000004";
+  await database.exec("reset role; set role authenticated");
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+  await database.exec("reset role; set role service_role");
+  await database.query(
+    `insert into public.candidate_inquiries (
+      id, company_id, created_by, first_name, last_name, phone, discovery_source,
+      desired_countries, job_of_interest, communication_method, handled_by_user_id, handled_by_name
+    ) values ($1, $2, $3, 'Legacy', 'Inquiry', '+256700000003', 'walk_in', array['UAE'], 'Cleaner', 'call', $3, 'Recruiter A')`,
+    [legacyInquiryId, companyA, userA],
+  );
+  await database.exec("reset role");
+  await database.exec(candidateInquiryMultipleJobsMigration);
+  await database.exec(candidateInquiryMultipleJobsMigration);
+  const migratedJobInterests = await database.query("select job_of_interest from public.candidate_inquiries where id = $1", [legacyInquiryId]);
+  assert.deepEqual(migratedJobInterests.rows, [{ job_of_interest: ["Cleaner"] }]);
+  await database.exec("set role authenticated");
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+  await database.query(
+    `insert into public.candidate_inquiries (
+      id, company_id, created_by, first_name, last_name, phone, discovery_source,
+      desired_countries, job_of_interest, communication_method, handled_by_user_id, handled_by_name
+    ) values ($1, $2, $3, 'Converted', 'Inquiry', '+256700000001', 'walk_in', array['UAE'], array['Cleaner', 'Cook'], 'call', $3, 'Recruiter A')`,
+    [convertedInquiryId, companyA, userA],
+  );
+  await database.query(
+    `insert into public.candidates (id, company_id, file_number, first_name, last_name, phone, created_by, inquiry_id)
+      values ($1, $2, 'A-INQ-001', 'Converted', 'Inquiry', '+256700000001', $3, $4)`,
+    [convertedInquiryCandidateId, companyA, userA, convertedInquiryId],
+  );
+  const convertedInquiry = await database.query("select status, job_of_interest from public.candidate_inquiries where id = $1", [convertedInquiryId]);
+  assert.deepEqual(convertedInquiry.rows, [{ status: "converted", job_of_interest: ["Cleaner", "Cook"] }]);
+
+  await database.query(
+    `insert into public.candidate_inquiries (
+      id, company_id, created_by, first_name, last_name, phone, discovery_source,
+      desired_countries, job_of_interest, communication_method, handled_by_user_id, handled_by_name, created_at
+    ) values ($1, $2, $3, 'Overdue', 'Inquiry', '+256700000002', 'radio', array['Qatar'], array['Cook'], 'both', $3, 'Recruiter A', now() - interval '16 days')`,
+    [overdueInquiryId, companyA, userA],
+  );
+  await database.query("select public.dispatch_candidate_inquiry_reminders($1)", [companyA]);
+  await database.query("select public.dispatch_candidate_inquiry_reminders($1)", [companyA]);
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userD]);
+  const firstInquiryReminder = await database.query(
+    "select title, body from public.candidate_inquiry_notifications where company_id = $1 and recipient_id = $2",
+    [companyA, userD],
+  );
+  assert.equal(firstInquiryReminder.rows.length, 1);
+  assert.equal(firstInquiryReminder.rows[0].title, "Candidate inquiry follow-up");
+  assert.match(firstInquiryReminder.rows[0].body, /Hello/);
+  assert.match(firstInquiryReminder.rows[0].body, /Overdue Inquiry/);
+  await database.exec("reset role; set role service_role");
+  await database.query("update public.candidate_inquiries set last_reminded_at = now() - interval '16 days' where id = $1", [overdueInquiryId]);
+  await database.exec("reset role; set role authenticated");
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+  await database.query("select public.dispatch_candidate_inquiry_reminders($1)", [companyA]);
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userD]);
+  const repeatedInquiryReminders = await database.query(
+    "select id from public.candidate_inquiry_notifications where company_id = $1 and recipient_id = $2",
+    [companyA, userD],
+  );
+  assert.equal(repeatedInquiryReminders.rows.length, 2);
+  await database.exec("reset role; set role service_role");
   const largeCandidateInvoiceId = "50000000-0000-4000-8000-000000000003";
   await database.query(
     `insert into public.candidate_documents (
@@ -565,6 +653,9 @@ try {
   );
   assert.deepEqual(largeCandidateInvoice.rows, [{ file_size: 5242880, document_type: "invoice" }]);
   await database.query("delete from public.candidate_documents where id = $1", [largeCandidateInvoiceId]);
+  await database.exec("reset role; set role authenticated");
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+  await database.exec("reset role; set role service_role");
   const invitationId = "90000000-0000-4000-8000-000000000001";
   await database.query(
     `insert into public.workspace_invitations (id, company_id, user_id, role_id)
@@ -577,6 +668,8 @@ try {
     [invitationId],
   );
   assert.equal(invitationExpiry.rows[0].lifetime_seconds, 300);
+  await database.exec("reset role; set role authenticated");
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
   const invitationTableAccess = await database.query(
     "select has_table_privilege('authenticated', 'public.workspace_invitations', 'select') as can_read",
   );
@@ -623,7 +716,10 @@ try {
     "select id from public.candidates where company_id = $1 order by id",
     [companyA],
   );
-  assert.deepEqual(coworkerCandidates.rows, [{ id: candidateA }]);
+  assert.deepEqual(coworkerCandidates.rows, [
+    { id: candidateA },
+    { id: convertedInquiryCandidateId },
+  ]);
   const unrelatedFinanceAccess = await database.query(
     "select public.can_access_company_drive($1, 'finance', 'view') as can_view",
     [companyA],
@@ -858,7 +954,7 @@ try {
   assert.deepEqual(recruiterFinanceDriveAccess.rows, []);
 
   const visibleCandidates = await database.query("select id from public.candidates order by id");
-  assert.deepEqual(visibleCandidates.rows.map((row) => row.id), [candidateA]);
+  assert.deepEqual(visibleCandidates.rows.map((row) => row.id), [candidateA, convertedInquiryCandidateId]);
   await database.query(
     `update public.candidates set details = $2::jsonb where id = $1`,
     [candidateA, JSON.stringify({ passportNumber: "P-0001", passportIssue: "2026-01-01", passportExpiry: "2031-01-01", passportStatus: "Available", passportBranch: "Kampala", passportStorageLocation: "Locker A" })],
@@ -1024,7 +1120,7 @@ try {
   const visibleSuppliers = await database.query("select id from public.suppliers order by id");
   assert.deepEqual(visibleSuppliers.rows.map((row) => row.id), [supplierId]);
   const recipientOptions = await database.query("select recipient_type, recipient_name from public.list_invoice_recipients($1) order by recipient_type", [companyA]);
-  assert.deepEqual(recipientOptions.rows.map((recipient) => recipient.recipient_type), ["candidate", "contractor", "supplier"]);
+  assert.deepEqual(recipientOptions.rows.map((recipient) => recipient.recipient_type), ["candidate", "candidate", "contractor", "supplier"]);
   const createdInvoice = await database.query(
     `insert into public.invoices (company_id, recipient_type, recipient_id, recipient_name, description, amount, due_date, created_by)
       values ($1, 'candidate', $2, 'Untrusted Recipient Name', 'Recruitment invoice', 100, '2026-10-15', $3)
@@ -1044,7 +1140,7 @@ try {
   assert.equal(paidInvoice.rows[0].status, "paid");
   await assert.rejects(database.query("select public.record_invoice_payment($1, $2, $3)", [invoiceId, 1, accountId]), /exceeds the outstanding/);
   const receiptCandidates = await database.query("select candidate_name from public.list_finance_candidates($1)", [companyA]);
-  assert.deepEqual(receiptCandidates.rows.map((candidate) => candidate.candidate_name), ["Candidate A"]);
+  assert.deepEqual(receiptCandidates.rows.map((candidate) => candidate.candidate_name), ["Converted Inquiry", "Candidate A"]);
   const candidateDeposit = await database.query(
     `insert into public.financial_receipts (company_id, entry_type, candidate_id, received_from, category, amount, payment_method, created_by, account_id)
       values ($1, 'candidate_deposit', $2, 'Spoofed Name', 'Candidate deposit', 25, 'Cash', $3, $4)

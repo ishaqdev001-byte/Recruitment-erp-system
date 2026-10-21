@@ -125,46 +125,56 @@ function mapProfile(record: Record<string, unknown>) {
 const selection = "id, name, position, phone, date_of_birth, sex, local_address, permanent_address, next_of_kin, next_of_kin_phone, emergency_contact_address, passport_number, passport_expiry, national_id_number, national_id_expiry, academic_qualifications, professional_qualifications, work_experience, languages, has_criminal_record, criminal_case_type, criminal_case_year, criminal_case_status";
 
 export async function GET() {
-  const access = await getLinkedStaffAccess();
-  if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
-  const { data, error } = await access.admin.from("company_staff_members").select(selection)
-    .eq("company_id", access.companyId).eq("id", access.staffId).single();
-  if (error) return NextResponse.json({ error: "Unable to load your HR profile." }, { status: 500, headers });
-  return NextResponse.json({ profile: mapProfile(data as Record<string, unknown>) }, { headers });
+  try {
+    const access = await getLinkedStaffAccess();
+    if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
+    const { data, error } = await access.admin.from("company_staff_members").select(selection)
+      .eq("company_id", access.companyId).eq("id", access.staffId).single();
+    if (error) return NextResponse.json({ error: "Unable to load your HR profile." }, { status: 500, headers });
+    return NextResponse.json({ profile: mapProfile(data as Record<string, unknown>) }, { headers });
+  } catch (err) {
+    console.error("Error in GET /api/workspace/staff/profile:", err);
+    return NextResponse.json({ error: "An unexpected error occurred while loading your HR profile." }, { status: 500, headers });
+  }
 }
 
 export async function PATCH(request: Request) {
-  const access = await getLinkedStaffAccess();
-  if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
-  const body = await request.json().catch(() => null) as Record<string, unknown> | null;
-  const profile = body ? parseProfile(body) : null;
-  if (!profile) return NextResponse.json({ error: "Complete all required personal details and provide at least two academic and two professional qualifications." }, { status: 400, headers });
+  try {
+    const access = await getLinkedStaffAccess();
+    if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    const profile = body ? parseProfile(body) : null;
+    if (!profile) return NextResponse.json({ error: "Complete all required personal details and provide at least two academic and two professional qualifications." }, { status: 400, headers });
 
-  const { data, error } = await access.admin.from("company_staff_members").update({
-    name: profile.name,
-    phone: profile.phone,
-    date_of_birth: profile.dateOfBirth,
-    sex: profile.sex,
-    local_address: profile.localAddress,
-    permanent_address: profile.permanentAddress,
-    next_of_kin: profile.nextOfKin,
-    next_of_kin_phone: profile.nextOfKinPhone,
-    emergency_contact_address: profile.emergencyContactAddress,
-    passport_number: profile.passportNumber,
-    passport_expiry: profile.passportExpiry,
-    national_id_number: profile.nationalIdNumber,
-    national_id_expiry: profile.nationalIdExpiry,
-    academic_qualifications: profile.academicQualifications,
-    professional_qualifications: profile.professionalQualifications,
-    work_experience: profile.workExperience,
-    languages: profile.languages,
-    has_criminal_record: profile.hasCriminalRecord,
-    criminal_case_type: profile.criminalCaseType,
-    criminal_case_year: profile.criminalCaseYear,
-    criminal_case_status: profile.criminalCaseStatus,
-    updated_by: access.userId,
-  }).eq("company_id", access.companyId).eq("id", access.staffId).eq("linked_user_id", access.userId)
-    .select(selection).single();
-  if (error) return NextResponse.json({ error: "Unable to save your HR profile." }, { status: 500, headers });
-  return NextResponse.json({ profile: mapProfile(data as Record<string, unknown>) }, { headers });
+    const { data, error } = await access.admin.from("company_staff_members").update({
+      name: profile.name,
+      phone: profile.phone,
+      date_of_birth: profile.dateOfBirth,
+      sex: profile.sex,
+      local_address: profile.localAddress,
+      permanent_address: profile.permanentAddress,
+      next_of_kin: profile.nextOfKin,
+      next_of_kin_phone: profile.nextOfKinPhone,
+      emergency_contact_address: profile.emergencyContactAddress,
+      passport_number: profile.passportNumber,
+      passport_expiry: profile.passportExpiry,
+      national_id_number: profile.nationalIdNumber,
+      national_id_expiry: profile.nationalIdExpiry,
+      academic_qualifications: profile.academicQualifications,
+      professional_qualifications: profile.professionalQualifications,
+      work_experience: profile.workExperience,
+      languages: profile.languages,
+      has_criminal_record: profile.hasCriminalRecord,
+      criminal_case_type: profile.criminalCaseType,
+      criminal_case_year: profile.criminalCaseYear,
+      criminal_case_status: profile.criminalCaseStatus,
+      updated_by: access.userId,
+    }).eq("company_id", access.companyId).eq("id", access.staffId).eq("linked_user_id", access.userId)
+      .select(selection).single();
+    if (error) return NextResponse.json({ error: "Unable to save your HR profile." }, { status: 500, headers });
+    return NextResponse.json({ profile: mapProfile(data as Record<string, unknown>) }, { headers });
+  } catch (err) {
+    console.error("Error in PATCH /api/workspace/staff/profile:", err);
+    return NextResponse.json({ error: "An unexpected error occurred while saving your HR profile." }, { status: 500, headers });
+  }
 }

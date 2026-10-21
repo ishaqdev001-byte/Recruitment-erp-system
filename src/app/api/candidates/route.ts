@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import { isUuid } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ensureInterServerCandidateFolders } from "@/lib/storage/interserver";
 
@@ -85,6 +86,10 @@ export async function POST(request: Request) {
     }
     const details = readCandidateDetails(body.details);
     if (!details) return NextResponse.json({ error: "One or more extended candidate details are invalid." }, { status: 400, headers });
+    const inquiryId = body.inquiryId === undefined || body.inquiryId === null || body.inquiryId === ""
+      ? null
+      : typeof body.inquiryId === "string" && isUuid(body.inquiryId) ? body.inquiryId : false;
+    if (inquiryId === false) return NextResponse.json({ error: "The candidate inquiry is invalid." }, { status: 400, headers });
     details.stage = "Registration";
     details.assignedContracts = "";
     details.contracts = "";
@@ -99,6 +104,12 @@ export async function POST(request: Request) {
       .limit(1)
       .maybeSingle();
     if (membershipError || !membership) return NextResponse.json({ error: "Active company membership not found." }, { status: 403, headers });
+
+    if (inquiryId) {
+      const { data: inquiry, error: inquiryError } = await supabase.from("candidate_inquiries")
+        .select("id").eq("id", inquiryId).eq("company_id", membership.company_id).eq("status", "inquiry").maybeSingle();
+      if (inquiryError || !inquiry) return NextResponse.json({ error: "This inquiry is no longer open for registration." }, { status: 409, headers });
+    }
 
     const dateOfBirth = typeof body.dob === "string" && body.dob ? body.dob : null;
     if (dateOfBirth && (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth) || Number.isNaN(Date.parse(dateOfBirth)))) {
@@ -115,6 +126,7 @@ export async function POST(request: Request) {
       id: candidateId,
       company_id: membership.company_id,
       created_by: user.id,
+      inquiry_id: inquiryId,
       file_number: fileNumber,
       first_name: firstName,
       last_name: lastName,

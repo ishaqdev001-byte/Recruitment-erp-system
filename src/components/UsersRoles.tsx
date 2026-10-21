@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { SearchableSelect } from "./SearchableSelect";
 
 type UserRecord = { id: string; name: string; email: string; roleId: string; role: string; status: string; isPrimaryAdmin: boolean };
-type RoleRecord = { id: string; name: string; description: string; created_at: string };
+type RoleRecord = { id: string; name: string; description: string; is_system_default: boolean; created_at: string };
 type PermissionRecord = { code: string; description: string };
 type RolePermissionRecord = { role_id: string; permission_code: string };
 type StaffPayType = "payroll" | "project" | "no_payroll";
@@ -24,7 +24,7 @@ type StaffRecord = {
   transportAccountId: string;
 };
 type StaffIdSettings = { prefix: string; nextSequence: number; canChangeSequence: boolean };
-type WorkspaceData = { users: UserRecord[]; roles: RoleRecord[]; permissions: PermissionRecord[]; rolePermissions: RolePermissionRecord[] };
+type WorkspaceData = { users: UserRecord[]; roles: RoleRecord[]; permissions: PermissionRecord[]; rolePermissions: RolePermissionRecord[]; canManageRoles: boolean };
 
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 
@@ -42,10 +42,15 @@ const emptyStaffForm = {
 
 export default function UsersRoles({ companyId, currentUserId }: { companyId: string; currentUserId: string }) {
   const [tab, setTab] = useState<"users" | "roles" | "staff">("users");
-  const [data, setData] = useState<WorkspaceData>({ users: [], roles: [], permissions: [], rolePermissions: [] });
+  const [data, setData] = useState<WorkspaceData>({ users: [], roles: [], permissions: [], rolePermissions: [], canManageRoles: false });
   const [selectedRoleId, setSelectedRoleId] = useState("");
   const [showNewUser, setShowNewUser] = useState(false);
   const [showNewRole, setShowNewRole] = useState(false);
+  const [editingRole, setEditingRole] = useState<RoleRecord | null>(null);
+  const [showEditRole, setShowEditRole] = useState(false);
+  const [roleEditName, setRoleEditName] = useState("");
+  const [roleEditDescription, setRoleEditDescription] = useState("");
+  const [roleEditPermissions, setRoleEditPermissions] = useState<string[]>([]);
   const [showStaffForm, setShowStaffForm] = useState(false);
   const [editingStaffId, setEditingStaffId] = useState("");
   const [staffMembers, setStaffMembers] = useState<StaffRecord[]>([]);
@@ -78,7 +83,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
         const result = await response.json() as WorkspaceData & { error?: string };
         if (!response.ok) throw new Error(result.error ?? "Unable to load users and roles.");
         if (!cancelled) {
-          setData(result);
+          setData({ users: result.users ?? [], roles: result.roles ?? [], permissions: result.permissions ?? [], rolePermissions: result.rolePermissions ?? [], canManageRoles: Boolean(result.canManageRoles) });
           setSelectedRoleId((current) => current || result.roles[0]?.id || "");
           setUserRoleId((current) => current || result.roles[0]?.id || "");
         }
@@ -168,6 +173,68 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
       setError(saveError instanceof Error ? saveError.message : "Unable to create role.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openEditRole = (role: RoleRecord) => {
+    setEditingRole(role);
+    setRoleEditName(role.name);
+    setRoleEditDescription(role.description);
+    setRoleEditPermissions(
+      data.rolePermissions.filter((rp) => rp.role_id === role.id).map((rp) => rp.permission_code)
+    );
+    setError("");
+    setShowEditRole(true);
+  };
+
+  const submitEditRole = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingRole) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/workspace/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update-role",
+          roleId: editingRole.id,
+          name: roleEditName,
+          description: roleEditDescription,
+          permissions: roleEditPermissions,
+        }),
+      });
+      const result = await response.json() as { role?: RoleRecord; permissions?: string[]; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Unable to update role.");
+      setShowEditRole(false);
+      setEditingRole(null);
+      setNotice(`"${result.role?.name ?? roleEditName}" updated.`);
+      setReloadKey((key) => key + 1);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to update role.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteRole = async (role: RoleRecord) => {
+    if (!window.confirm(`Delete the "${role.name}" role? This cannot be undone. Users assigned this role must be reassigned first.`)) return;
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/workspace/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete-role", roleId: role.id }),
+      });
+      const result = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Unable to delete role.");
+      if (selectedRoleId === role.id) setSelectedRoleId("");
+      setNotice(`"${role.name}" deleted.`);
+      setReloadKey((key) => key + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete role.");
     }
   };
 
@@ -279,6 +346,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
   const selectedRole = data.roles.find((role) => role.id === selectedRoleId);
   const permissionsForRole = new Set(data.rolePermissions.filter((permission) => permission.role_id === selectedRoleId).map((permission) => permission.permission_code));
   const canManageStaff = data.users.some((user) => user.id === currentUserId && (user.isPrimaryAdmin || user.role === "CEO" || user.role === "General Manager"));
+  const canManageRoles = data.users.some((user) => user.id === currentUserId && (user.isPrimaryAdmin || user.role === "CEO")) || data.canManageRoles;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -290,7 +358,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
         {tab === "users" ? (
           <button type="button" onClick={() => setShowNewUser(true)} disabled={!data.roles.length} className="rounded px-4 py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>Invite user</button>
         ) : tab === "roles" ? (
-          <button type="button" onClick={() => setShowNewRole(true)} className="rounded px-4 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>New role</button>
+          canManageRoles ? <button type="button" onClick={() => setShowNewRole(true)} className="rounded px-4 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>New role</button> : null
         ) : (
           <button type="button" onClick={openNewStaff} className="rounded px-4 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>Add staff</button>
         )}
@@ -337,29 +405,95 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
         )}
 
         {!loading && tab === "roles" && (
-          <div className="grid gap-5 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.3fr)]">
+          <div className="grid gap-5 lg:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.25fr)]">
+            {/* Role list */}
             <div className="space-y-2">
               <h2 className="mb-3 text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company roles</h2>
-              {data.roles.map((role) => (
-                <button key={role.id} type="button" onClick={() => setSelectedRoleId(role.id)} className="w-full rounded border px-3 py-3 text-left" style={{ background: selectedRoleId === role.id ? "var(--secondary)" : "var(--card)", borderColor: selectedRoleId === role.id ? "var(--primary)" : "var(--border)", color: "var(--foreground)" }}><span className="block text-sm font-600">{role.name}</span>{role.description ? <span className="mt-1 block text-xs font-normal" style={{ color: "var(--muted-foreground)" }}>{role.description}</span> : null}</button>
-              ))}
+              {data.roles.map((role) => {
+                const isPrimaryAdmin = role.name === "Company Owner / Primary Administrator" || role.name === "Primary Administrator";
+                const memberCount = data.users.filter((u) => u.roleId === role.id).length;
+                return (
+                  <div key={role.id} className="rounded border" style={{ background: selectedRoleId === role.id ? "var(--secondary)" : "var(--card)", borderColor: selectedRoleId === role.id ? "var(--primary)" : "var(--border)" }}>
+                    <button type="button" onClick={() => setSelectedRoleId(role.id)} className="w-full px-3 py-3 text-left">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-600" style={{ color: "var(--foreground)" }}>{role.name}</span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {role.is_system_default && (
+                            <span className="rounded px-1.5 py-0.5 text-[10px] font-600 uppercase tracking-wide" style={{ background: "var(--border)", color: "var(--muted-foreground)" }}>Default</span>
+                          )}
+                          {memberCount > 0 && (
+                            <span className="rounded px-1.5 py-0.5 text-[10px] font-600" style={{ background: "var(--secondary)", color: "var(--muted-foreground)" }}>{memberCount} user{memberCount !== 1 ? "s" : ""}</span>
+                          )}
+                        </div>
+                      </div>
+                      {role.description ? <span className="mt-1 block text-xs" style={{ color: "var(--muted-foreground)" }}>{role.description}</span> : null}
+                    </button>
+                    {canManageRoles && (
+                      <div className="flex gap-1.5 border-t px-3 py-2" style={{ borderColor: "var(--border)" }}>
+                        <button type="button" onClick={() => openEditRole(role)}
+                          className="rounded border px-2.5 py-1 text-xs font-600"
+                          style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                          Edit
+                        </button>
+                        {!isPrimaryAdmin && (
+                          <button type="button" onClick={() => void deleteRole(role)}
+                            className="rounded border px-2.5 py-1 text-xs font-600"
+                            style={{ borderColor: "#ef444440", color: "#ef4444" }}>
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               {!data.roles.length && <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>No roles are configured.</p>}
             </div>
+
+            {/* Permission detail panel */}
             <div className="rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-              <div className="border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
-                <h2 className="text-sm font-700" style={{ color: "var(--foreground)" }}>{selectedRole?.name ?? "Permissions"}</h2>
-                <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{selectedRole?.description || "Permissions assigned to this role"}</p>
-              </div>
-              <div className="grid gap-x-6 gap-y-3 p-4 sm:grid-cols-2">
-                {data.permissions.filter((permission) => permissionsForRole.has(permission.code)).map((permission) => (
-                  <div key={permission.code} className="text-sm" style={{ color: "var(--foreground)" }}>
-                    <div className="font-600">{permission.code}</div>
-                    <div className="mt-0.5 text-xs" style={{ color: "var(--muted-foreground)" }}>{permission.description}</div>
+              {selectedRole ? (
+                <>
+                  <div className="border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-sm font-700" style={{ color: "var(--foreground)" }}>{selectedRole.name}</h2>
+                        <p className="mt-0.5 text-xs" style={{ color: "var(--muted-foreground)" }}>{selectedRole.description || "No description."}</p>
+                      </div>
+                      <span className="shrink-0 text-xs" style={{ color: "var(--muted-foreground)" }}>{permissionsForRole.size} permission{permissionsForRole.size !== 1 ? "s" : ""}</span>
+                    </div>
                   </div>
-                ))}
-                {selectedRole && permissionsForRole.size === 0 && <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>No permissions have been assigned to this role.</p>}
-                {!selectedRole && <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>Select a role to review its permissions.</p>}
-              </div>
+                  {permissionsForRole.size === 0 ? (
+                    <p className="px-4 py-6 text-sm" style={{ color: "var(--muted-foreground)" }}>No permissions assigned to this role.</p>
+                  ) : (
+                    <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+                      {(() => {
+                        // Group permissions by prefix (e.g. "candidates", "finance")
+                        const grouped = new Map<string, PermissionRecord[]>();
+                        data.permissions.filter((p) => permissionsForRole.has(p.code)).forEach((p) => {
+                          const group = p.code.split(".")[0] ?? "other";
+                          if (!grouped.has(group)) grouped.set(group, []);
+                          grouped.get(group)!.push(p);
+                        });
+                        return Array.from(grouped.entries()).map(([group, perms]) => (
+                          <div key={group} className="px-4 py-3">
+                            <div className="mb-2 text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>{group.replace(/_/g, " ")}</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {perms.map((p) => (
+                                <span key={p.code} title={p.description} className="rounded border px-2 py-0.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                                  {p.code.split(".").slice(1).join(".")}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Select a role to review its permissions.</p>
+              )}
             </div>
           </div>
         )}
@@ -459,6 +593,120 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
             <div className="mt-6 flex gap-3">
               <button type="submit" disabled={saving} className="flex-1 rounded py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Creating…" : "Create role"}</button>
               <button type="button" onClick={() => setShowNewRole(false)} className="flex-1 rounded border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showEditRole && editingRole && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) { setShowEditRole(false); setError(""); } }}>
+          <form onSubmit={submitEditRole} className="flex max-h-[92dvh] w-full max-w-2xl flex-col rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+            {/* Header */}
+            <div className="flex shrink-0 items-center justify-between border-b px-6 py-4" style={{ borderColor: "var(--border)" }}>
+              <div>
+                <h2 className="text-base font-700" style={{ color: "var(--foreground)" }}>Edit role</h2>
+                {editingRole.is_system_default && (
+                  <p className="mt-0.5 text-xs" style={{ color: "var(--muted-foreground)" }}>System default role — name changes are applied immediately to all users with this role.</p>
+                )}
+              </div>
+              <button type="button" onClick={() => { setShowEditRole(false); setError(""); }}
+                className="rounded p-1 text-xs" style={{ color: "var(--muted-foreground)" }}>✕</button>
+            </div>
+
+            {/* Scrollable body */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-5">
+              {error && <div role="alert" className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">{error}</div>}
+
+              <div>
+                <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                  Role name {(editingRole.name === "Company Owner / Primary Administrator" || editingRole.name === "Primary Administrator") && <span className="ml-1 text-xs normal-case tracking-normal" style={{ color: "var(--muted-foreground)" }}>(protected — cannot be renamed)</span>}
+                </label>
+                <input required maxLength={100}
+                  value={roleEditName}
+                  onChange={(e) => setRoleEditName(e.target.value)}
+                  disabled={editingRole.name === "Company Owner / Primary Administrator" || editingRole.name === "Primary Administrator"}
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm outline-none disabled:opacity-50"
+                  style={fieldStyle}
+                  placeholder="e.g. Branch Supervisor" />
+              </div>
+
+              <div>
+                <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Duties and responsibilities</label>
+                <textarea required maxLength={1000} rows={3} value={roleEditDescription}
+                  onChange={(e) => setRoleEditDescription(e.target.value)}
+                  className="mt-1 w-full resize-y rounded border px-3 py-2.5 text-sm outline-none"
+                  style={fieldStyle}
+                  placeholder="Describe what this role is responsible for." />
+              </div>
+
+              <fieldset>
+                <div className="mb-3 flex items-center justify-between">
+                  <legend className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                    Permissions <span className="ml-1 normal-case tracking-normal font-400">({roleEditPermissions.length} selected)</span>
+                  </legend>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setRoleEditPermissions(data.permissions.map((p) => p.code))}
+                      className="text-xs" style={{ color: "var(--primary)" }}>Select all</button>
+                    <button type="button" onClick={() => setRoleEditPermissions([])}
+                      className="text-xs" style={{ color: "var(--muted-foreground)" }}>Clear all</button>
+                  </div>
+                </div>
+                {/* Group permissions by prefix for readability */}
+                {(() => {
+                  const grouped = new Map<string, PermissionRecord[]>();
+                  data.permissions.forEach((p) => {
+                    const group = p.code.split(".")[0] ?? "other";
+                    if (!grouped.has(group)) grouped.set(group, []);
+                    grouped.get(group)!.push(p);
+                  });
+                  return Array.from(grouped.entries()).map(([group, perms]) => (
+                    <div key={group} className="mb-4">
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>{group.replace(/_/g, " ")}</span>
+                        <button type="button" className="text-[10px]" style={{ color: "var(--muted-foreground)" }}
+                          onClick={() => {
+                            const codes = perms.map((p) => p.code);
+                            const allSelected = codes.every((c) => roleEditPermissions.includes(c));
+                            setRoleEditPermissions((prev) => allSelected
+                              ? prev.filter((c) => !codes.includes(c))
+                              : [...new Set([...prev, ...codes])]);
+                          }}>
+                          {perms.every((p) => roleEditPermissions.includes(p.code)) ? "deselect group" : "select group"}
+                        </button>
+                      </div>
+                      <div className="grid gap-1.5 sm:grid-cols-2">
+                        {perms.map((p) => (
+                          <label key={p.code} className="flex cursor-pointer items-start gap-2 rounded border p-2.5 text-xs" style={{ borderColor: roleEditPermissions.includes(p.code) ? "var(--primary)" : "var(--border)", color: "var(--foreground)", background: roleEditPermissions.includes(p.code) ? "color-mix(in srgb, var(--primary) 8%, transparent)" : "transparent" }}>
+                            <input type="checkbox"
+                              checked={roleEditPermissions.includes(p.code)}
+                              onChange={(e) => setRoleEditPermissions((prev) => e.target.checked ? [...prev, p.code] : prev.filter((c) => c !== p.code))}
+                              className="mt-0.5 shrink-0" />
+                            <span>
+                              <span className="block font-600">{p.code.split(".").slice(1).join(".")}</span>
+                              <span style={{ color: "var(--muted-foreground)" }}>{p.description}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </fieldset>
+            </div>
+
+            {/* Footer */}
+            <div className="flex shrink-0 gap-3 border-t px-6 py-4" style={{ borderColor: "var(--border)" }}>
+              <button type="submit" disabled={saving}
+                className="flex-1 rounded py-2.5 text-sm font-600 disabled:opacity-50"
+                style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+                {saving ? "Saving…" : "Save changes"}
+              </button>
+              <button type="button" onClick={() => { setShowEditRole(false); setError(""); }}
+                className="rounded border px-5 py-2.5 text-sm font-600"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                Cancel
+              </button>
             </div>
           </form>
         </div>

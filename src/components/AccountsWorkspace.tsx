@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowDownLeft, ArrowUpRight, Plus, Search, WalletCards } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
+import OtherIncomeWorkspace from "./OtherIncomeWorkspace";
 
 type AccountType = "cash" | "bank" | "mobile_money" | "project" | "other";
 type Account = { id: string; name: string; account_type: AccountType; account_number: string; description: string; status: string; balance: number };
@@ -19,6 +20,7 @@ const money = (amount: number) => `UGX ${Number(amount || 0).toLocaleString("en-
 const newReference = (kind: string) => `${kind}-${Date.now().toString(36).toUpperCase()}`;
 
 export default function AccountsWorkspace() {
+  const [activeSection, setActiveSection] = useState<"accounts" | "other-income">("accounts");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transactions, setTransactions] = useState<AccountTransaction[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -168,11 +170,16 @@ export default function AccountsWorkspace() {
   const inputClass = "mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none";
   const labelClass = "block text-xs font-700 uppercase tracking-wider";
 
+  if (activeSection === "other-income") {
+    return <OtherIncomeWorkspace onNavigate={setActiveSection} />;
+  }
+
   return (
     <section className="flex h-full min-h-0 flex-col" aria-labelledby="accounts-title">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4" style={{ borderColor: "var(--border)" }}>
-        <div><h1 id="accounts-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Accounts</h1><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Company books, balances, deposits, withdrawals, and expenses</p></div>
-        <div className="flex flex-wrap gap-2">
+        <div><h1 id="accounts-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Accounts &amp; Other Income</h1><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Company books, balances, deposits, withdrawals, and expenses</p></div>
+        <div className="flex flex-wrap items-center gap-2">
+          <nav className="inline-flex border" aria-label="Finance pages" style={{ borderColor: "var(--border)" }}><button type="button" aria-current="page" className="px-3 py-2 text-xs font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>Accounts</button><button type="button" onClick={() => setActiveSection("other-income")} className="px-3 py-2 text-xs font-600" style={{ background: "var(--card)", color: "var(--muted-foreground)" }}>Other Income</button></nav>
           <button type="button" disabled={!canManageAccounts} onClick={() => { setError(""); setShowAccountForm(true); }} className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Plus size={15} aria-hidden="true" />New account</button>
           <button type="button" disabled={!canCreate || !activeAccounts.length} onClick={() => openMovement("deposit")} className="inline-flex items-center gap-2 rounded px-3 py-2 text-sm font-600 disabled:opacity-50" style={{ background: "#17845b", color: "white" }}><ArrowDownLeft size={15} aria-hidden="true" />Deposit</button>
           <button type="button" disabled={!canCreate || !activeAccounts.length} onClick={() => openMovement("withdrawal")} className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><ArrowUpRight size={15} aria-hidden="true" />Withdraw</button>

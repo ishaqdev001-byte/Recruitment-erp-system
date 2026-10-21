@@ -45,7 +45,7 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   }
 }
 
-export default function AttachmentDrawer({ candidate, onClose, generatedOnly = false }: { candidate: CandidateIdentity; onClose: () => void; generatedOnly?: boolean }) {
+export default function AttachmentDrawer({ candidate, onClose, onUpload, generatedOnly = false }: { candidate: CandidateIdentity; onClose: () => void; onUpload?: () => void; generatedOnly?: boolean }) {
   const [documents, setDocuments] = useState<CandidateDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -102,6 +102,7 @@ export default function AttachmentDrawer({ candidate, onClose, generatedOnly = f
       setExpiresAt("");
       setShowUpload(false);
       setRefreshKey((key) => key + 1);
+      onUpload?.();
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Unable to upload the attachment.");
     } finally {

@@ -104,6 +104,16 @@ const roleAlerts: Record<WorkspaceRole, { label: string; value: string; detail: 
     { label: "3 team members pending invite response", value: "Action", detail: "Review user access setup", view: "users" },
     { label: "System health is stable", value: "Stable", detail: "Audit the latest operational events", view: "auditlog" },
   ],
+  "General Manager": [
+    { label: "Leave requests pending your review", value: "Action", detail: "Review team leave requests", view: "leave" },
+    { label: "Recruitment funnel slowing", value: "Watch", detail: "Check conversion in analytics", view: "analytics" },
+    { label: "Team capacity forecast updated", value: "Forecast", detail: "Balance staffing load", view: "reports" },
+  ],
+  CEO: [
+    { label: "Leave requests pending final approval", value: "Action", detail: "Review and finalise leave approvals", view: "leave" },
+    { label: "Company KPIs ready for review", value: "Ready", detail: "Open analytics dashboard", view: "analytics" },
+    { label: "Finance overview updated", value: "Stable", detail: "Review latest finance activity", view: "finance" },
+  ],
   "Recruitment Manager": [
     { label: "Recruitment funnel slowing", value: "Watch", detail: "Check conversion in analytics", view: "analytics" },
     { label: "4 vacancies need agent coverage", value: "Action", detail: "Review open roles", view: "jobs" },
@@ -133,6 +143,11 @@ const roleAlerts: Record<WorkspaceRole, { label: string; value: string; detail: 
     { label: "3 candidate medicals pending", value: "Action", detail: "Review appointment queue", view: "documents" },
     { label: "Follow-up required on labs", value: "Today", detail: "Open medical review list", view: "documents" },
     { label: "Medical clearance reports ready", value: "Ready", detail: "Check candidate status update", view: "candidates" },
+  ],
+  Doctor: [
+    { label: "Candidate medicals awaiting examination", value: "Action", detail: "Review the examination queue", view: "medical-management" as View },
+    { label: "Record medical results", value: "Today", detail: "Open the medical examinations module", view: "medical-management" as View },
+    { label: "Upload medical reports", value: "Ready", detail: "Add reports to candidate files", view: "medical-management" as View },
   ],
   Viewer: [
     { label: "No direct actions required", value: "Review", detail: "Monitor team performance", view: "reports" },

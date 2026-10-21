@@ -56,7 +56,7 @@ export async function GET(request: Request) {
     const webhook = await zernioRequest("/webhooks/settings", {
       method: "POST",
       body: JSON.stringify({
-        name: `RecruitOS WhatsApp ${access.companyId.slice(0, 8)}`,
+        name: `Kilax Smart Recruit WhatsApp ${access.companyId.slice(0, 8)}`,
         url: `${origin.replace(/\/$/, "")}/api/communications/whatsapp/webhook`,
         secret: webhookSecret,
         events: ["message.received", "message.sent", "message.delivered", "message.read", "message.failed"],

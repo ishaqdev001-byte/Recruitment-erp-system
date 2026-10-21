@@ -23,7 +23,7 @@ async function getAccess() {
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
 
   const { data: membership, error: membershipError } = await supabase.from("company_memberships")
-    .select("company_id, role_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
+    .select("company_id, role_id, branch_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
 
   const [financeView, candidatesView, candidatesCreate] = await Promise.all([
@@ -54,6 +54,7 @@ async function getAccess() {
     admin,
     companyId: membership.company_id,
     userId: user.id,
+    branchId: membership.branch_id ?? null,
     canManageTypes,
     canBookAppointments,
     canViewAppointments,
@@ -74,18 +75,30 @@ export async function GET() {
   try {
     const access = await getAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
+    // Branch-scoped filtering: non-main-branch users only see their branch's data
+    const isMainBranch = !access.branchId; // null branch_id = main branch
+    const branchFilter = isMainBranch ? null : access.branchId;
+
+    let incomeTypeQuery = access.admin.from("company_income_types").select("id, name, income_kind, fee, account_id, is_default, is_active, created_at")
+      .eq("company_id", access.companyId);
+    if (branchFilter) incomeTypeQuery = incomeTypeQuery.eq("branch_id", branchFilter);
+
+    let accountQuery = access.admin.from("company_accounts").select("id, name, status")
+      .eq("company_id", access.companyId);
+    if (branchFilter) accountQuery = accountQuery.eq("branch_id", branchFilter);
+
     const [{ data: incomeTypes, error: typeError }, { data: accounts, error: accountError }] = await Promise.all([
-      access.admin.from("company_income_types").select("id, name, income_kind, fee, account_id, is_default, is_active, created_at")
-        .eq("company_id", access.companyId).order("income_kind").order("name"),
-      access.admin.from("company_accounts").select("id, name, status")
-        .eq("company_id", access.companyId).order("name"),
+      incomeTypeQuery.order("income_kind").order("name"),
+      accountQuery.order("name"),
     ]);
     if (typeError || accountError) throw typeError ?? accountError;
 
     let appointments: Record<string, unknown>[] = [];
     if (access.canViewAppointments) {
-      const { data, error } = await access.admin.from("medical_appointments").select("*")
-        .eq("company_id", access.companyId).order("appointment_at", { ascending: false });
+      let apptQuery = access.admin.from("medical_appointments").select("*")
+        .eq("company_id", access.companyId);
+      if (branchFilter) apptQuery = apptQuery.eq("branch_id", branchFilter);
+      const { data, error } = await apptQuery.order("appointment_at", { ascending: false });
       if (error) throw error;
       appointments = data ?? [];
     }
@@ -236,6 +249,7 @@ export async function POST(request: Request) {
       // Insert the appointment record
       const { data: appointment, error: apptError } = await access.admin.from("medical_appointments").insert({
         company_id: access.companyId,
+        branch_id: access.branchId,
         ...(candidateId ? { candidate_id: candidateId } : {}),
         income_type_id: incomeType.id,
         account_id: account.id,

@@ -278,12 +278,12 @@ export default function TopBar({
             <img src={companyLogo} alt={companyName ?? "Company"} className="h-7 w-7 rounded object-cover" />
           ) : (
             <div className="flex h-7 w-7 items-center justify-center rounded text-[10px] font-700" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              {formatCompanyInitials(companyName ?? "RecruitOS")}
+              {formatCompanyInitials(companyName ?? "Kilax Smart Recruit")}
             </div>
           )}
           <div className="min-w-0 leading-none">
             <div className="hidden text-[9px] font-700 uppercase tracking-[0.18em] lg:block" style={{ color: "var(--muted-foreground)" }}>Active company</div>
-            <div className="mt-0.5 truncate text-xs font-600" style={{ color: "var(--foreground)" }}>{companyName ?? "RecruitOS"}</div>
+            <div className="mt-0.5 truncate text-xs font-600" style={{ color: "var(--foreground)" }}>{companyName ?? "Kilax Smart Recruit"}</div>
           </div>
         </div>
 

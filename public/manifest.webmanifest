@@ -1,0 +1,46 @@
+{
+  "name": "Kilax Smart Recruit",
+  "short_name": "Kilax",
+  "description": "Kilax Smart Recruit — intelligent recruitment operations management system",
+  "start_url": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/branding/Kilax Smart Copy.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "Go to your recruitment dashboard",
+      "url": "/dashboard",
+      "icons": [{ "src": "/branding/Kilax Smart Copy.png", "sizes": "any" }]
+    },
+    {
+      "name": "Candidates",
+      "short_name": "Candidates",
+      "description": "Open the candidate pipeline",
+      "url": "/candidates",
+      "icons": [{ "src": "/branding/Kilax Smart Copy.png", "sizes": "any" }]
+    },
+    {
+      "name": "Tasks",
+      "short_name": "Tasks",
+      "description": "View your tasks",
+      "url": "/tasks",
+      "icons": [{ "src": "/branding/Kilax Smart Copy.png", "sizes": "any" }]
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "screenshots": []
+}

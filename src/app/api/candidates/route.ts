@@ -98,7 +98,7 @@ export async function POST(request: Request) {
 
     const { data: membership, error: membershipError } = await supabase
       .from("company_memberships")
-      .select("company_id")
+      .select("company_id, branch_id")
       .eq("user_id", user.id)
       .eq("status", "active")
       .limit(1)
@@ -125,6 +125,7 @@ export async function POST(request: Request) {
     const { data, error } = await supabase.from("candidates").insert({
       id: candidateId,
       company_id: membership.company_id,
+      branch_id: membership.branch_id ?? null,
       created_by: user.id,
       inquiry_id: inquiryId,
       file_number: fileNumber,

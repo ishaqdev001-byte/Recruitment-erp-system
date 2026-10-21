@@ -99,10 +99,10 @@ const typeLabel: Record<string, string> = {
 };
 
 const roleAlerts: Record<WorkspaceRole, { label: string; value: string; detail: string; view: View }[]> = {
-  "Company Owner / Primary Administrator": [
-    { label: "Company onboarding still needs final review", value: "Priority", detail: "Open settings and verify the workspace", view: "settings" },
-    { label: "3 team members pending invite response", value: "Action", detail: "Review user access setup", view: "users" },
-    { label: "System health is stable", value: "Stable", detail: "Audit the latest operational events", view: "auditlog" },
+  Chairman: [
+    { label: "Full company oversight across all branches", value: "Overview", detail: "Review all branches and operations", view: "branches" as View },
+    { label: "Pending approvals requiring your decision", value: "Action", detail: "Review the approval queue", view: "approvals" as View },
+    { label: "System health and audit activity", value: "Stable", detail: "Check audit log", view: "auditlog" },
   ],
   "General Manager": [
     { label: "Leave requests pending your review", value: "Action", detail: "Review team leave requests", view: "leave" },
@@ -148,6 +148,11 @@ const roleAlerts: Record<WorkspaceRole, { label: string; value: string; detail: 
     { label: "Candidate medicals awaiting examination", value: "Action", detail: "Review the examination queue", view: "medical-management" as View },
     { label: "Record medical results", value: "Today", detail: "Open the medical examinations module", view: "medical-management" as View },
     { label: "Upload medical reports", value: "Ready", detail: "Add reports to candidate files", view: "medical-management" as View },
+  ],
+  Supervisor: [
+    { label: "Approval requests awaiting your review", value: "Action", detail: "Check the approvals queue", view: "approvals" as View },
+    { label: "Main branch oversight across all branches", value: "Review", detail: "View branch activity", view: "branches" as View },
+    { label: "Monitor candidate pipelines from all branches", value: "Watch", detail: "Open candidate pipeline", view: "candidates" },
   ],
   Viewer: [
     { label: "No direct actions required", value: "Review", detail: "Monitor team performance", view: "reports" },

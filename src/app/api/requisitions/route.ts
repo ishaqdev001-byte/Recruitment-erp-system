@@ -28,13 +28,13 @@ async function getAccess() {
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
   const { data: membership } = await supabase
     .from("company_memberships")
-    .select("company_id")
+    .select("company_id, branch_id")
     .eq("user_id", user.id)
     .eq("status", "active")
     .limit(1)
     .maybeSingle();
   if (!membership) return { error: "Active company membership not found.", status: 403 as const };
-  return { supabase, companyId: membership.company_id, userId: user.id };
+  return { supabase, companyId: membership.company_id, userId: user.id, branchId: membership.branch_id ?? null };
 }
 
 async function insertNotification(
@@ -117,6 +117,8 @@ export async function GET(request: Request) {
 
     if (statusFilter) query = query.eq("status", statusFilter);
     if (myOnly) query = query.eq("created_by", access.userId);
+    // Branch-scoped: non-main-branch users see only their branch's requisitions
+    if (access.branchId) query = query.eq("branch_id", access.branchId);
 
     const { data: requisitions, error } = await query;
     if (error) {
@@ -188,6 +190,7 @@ export async function POST(request: Request) {
       p_service_provider_id: serviceProviderId,
       p_due_date: dueDate,
       p_notes: notes,
+      p_branch_id: access.branchId,
       p_items: JSON.stringify(items.map((item) => ({
         description: String((item as Record<string, unknown>).description ?? "").trim(),
         quantity: Number((item as Record<string, unknown>).quantity),

@@ -12,7 +12,7 @@ async function getInquiryAccess(permission: "candidates.view" | "candidates.crea
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
 
   const { data: membership, error: membershipError } = await supabase.from("company_memberships")
-    .select("company_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
+    .select("company_id, branch_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
 
   const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
@@ -20,7 +20,7 @@ async function getInquiryAccess(permission: "candidates.view" | "candidates.crea
     requested_permission: permission,
   });
   if (permissionError || !allowed) return { error: "You do not have permission to access candidate inquiries.", status: 403 as const };
-  return { supabase, companyId: membership.company_id, userId: user.id };
+  return { supabase, companyId: membership.company_id, userId: user.id, branchId: membership.branch_id ?? null };
 }
 
 export async function GET() {
@@ -100,6 +100,7 @@ export async function POST(request: Request) {
 
     const { data: inquiry, error } = await access.supabase.from("candidate_inquiries").insert({
       company_id: access.companyId,
+      branch_id: access.branchId,
       created_by: access.userId,
       first_name: firstName,
       last_name: lastName,

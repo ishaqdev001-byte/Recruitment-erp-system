@@ -34,7 +34,7 @@ async function getStaffAccess() {
 
   const { data: membership, error: membershipError } = await supabase
     .from("company_memberships")
-    .select("company_id, role_id")
+    .select("company_id, role_id, branch_id")
     .eq("user_id", user.id)
     .eq("status", "active")
     .limit(1)
@@ -51,12 +51,16 @@ async function getStaffAccess() {
   if (companyError || roleError || !company || !role) return { error: "Unable to verify staff-management access.", status: 500 as const };
 
   const isPrimaryAdmin = company.primary_admin_user_id === user.id;
-  const allowedRoles = ["CEO", "General Manager"];
+  const allowedRoles = ["Chairman", "CEO", "General Manager"];
   if (!isPrimaryAdmin && !allowedRoles.includes(role.name)) {
-    return { error: "Staff records are limited to the company owner, CEO, and General Manager.", status: 403 as const };
+    return { error: "Staff records are limited to the Chairman, CEO, and General Manager.", status: 403 as const };
   }
 
-  return { admin, companyId: membership.company_id, userId: user.id, primaryAdminId: company.primary_admin_user_id, isPrimaryAdmin };
+  // Chairman (primary admin) can change the staff ID prefix and sequence.
+  // CEO and GM can manage staff records but cannot change the ID settings.
+  const canChangeSequence = isPrimaryAdmin || role.name === "Chairman";
+
+  return { admin, companyId: membership.company_id, userId: user.id, branchId: membership.branch_id ?? null, primaryAdminId: company.primary_admin_user_id, isPrimaryAdmin, canChangeSequence };
 }
 
 function ownerInitials(name: string) {
@@ -145,11 +149,17 @@ export async function GET() {
       }
     }
 
+    // Branch-scoped: isPrimaryAdmin, CEO, GM see all; Branch Managers see only their branch
+    const branchFilter = access.isPrimaryAdmin ? null : access.branchId;
+
     const [{ data: staff, error: staffError }, { data: accounts, error: accountsError }] = await Promise.all([
-      access.admin.from("company_staff_members")
-        .select("id, staff_id, name, position, phone, status, date_joined, linked_user_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id")
-        .eq("company_id", access.companyId)
-        .order("created_at", { ascending: false }),
+      (() => {
+        let q = access.admin.from("company_staff_members")
+          .select("id, staff_id, name, position, phone, status, date_joined, linked_user_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id")
+          .eq("company_id", access.companyId);
+        if (branchFilter) q = q.eq("branch_id", branchFilter);
+        return q.order("created_at", { ascending: false });
+      })(),
       access.admin.from("company_accounts")
         .select("id, name, account_type, account_number")
         .eq("company_id", access.companyId)
@@ -161,7 +171,7 @@ export async function GET() {
     return NextResponse.json({
       staff: (staff ?? []).map((record) => mapStaff(record as Record<string, unknown>)),
       accounts: accounts ?? [],
-      settings: { prefix: settings.staff_id_prefix, nextSequence: settings.next_sequence, canChangeSequence: access.isPrimaryAdmin },
+      settings: { prefix: settings.staff_id_prefix, nextSequence: settings.next_sequence, canChangeSequence: access.canChangeSequence },
     }, { headers });
   } catch (error) {
     console.error("Company staff request failed", error);
@@ -225,27 +235,71 @@ export async function PATCH(request: Request) {
     if (!body) return NextResponse.json({ error: "Invalid staff update." }, { status: 400, headers });
 
     if (body.action === "configure-ids") {
-      if (!access.isPrimaryAdmin) return NextResponse.json({ error: "Only the primary company owner can change staff ID settings." }, { status: 403, headers });
+      if (!access.canChangeSequence) return NextResponse.json({ error: "Only the Chairman can change staff ID settings." }, { status: 403, headers });
       const prefix = typeof body.prefix === "string" ? body.prefix.trim().toUpperCase() : "";
-      const nextSequence = Number(body.nextSequence);
-      if (!/^[A-Z][A-Z0-9]{0,9}$/.test(prefix) || !Number.isInteger(nextSequence) || nextSequence < 1 || nextSequence > 999999) {
-        return NextResponse.json({ error: "Enter a 1-10 character prefix and a sequence between 1 and 999999." }, { status: 400, headers });
+      const startSequence = Number(body.nextSequence ?? 1);
+      if (!/^[A-Z][A-Z0-9]{0,9}$/.test(prefix) || !Number.isInteger(startSequence) || startSequence < 1 || startSequence > 999999) {
+        return NextResponse.json({ error: "Enter a 1-10 character prefix and a starting sequence between 1 and 999999." }, { status: 400, headers });
       }
-      const { data: existing, error: existingError } = await access.admin.from("company_staff_members").select("staff_id").eq("company_id", access.companyId);
-      if (existingError) throw existingError;
-      const highestUsed = (existing ?? []).reduce((highest, record) => {
-        const match = new RegExp(`^${prefix}-(\\d+)$`).exec(record.staff_id);
-        return match ? Math.max(highest, Number(match[1])) : highest;
-      }, 0);
-      if (nextSequence <= highestUsed) return NextResponse.json({ error: `Choose a sequence greater than the highest existing ${prefix} staff ID (${highestUsed}).` }, { status: 409, headers });
 
-      const { data: settings, error } = await access.admin.from("company_staff_id_settings").upsert({
-        company_id: access.companyId,
-        staff_id_prefix: prefix,
-        next_sequence: nextSequence,
-      }).select("staff_id_prefix, next_sequence").single();
-      if (error || !settings) throw error ?? new Error("Staff ID settings were not updated.");
-      return NextResponse.json({ settings: { prefix: settings.staff_id_prefix, nextSequence: settings.next_sequence, canChangeSequence: true } }, { headers });
+      // Fetch all existing staff ordered by creation date so re-numbering is stable
+      const { data: existingStaff, error: fetchError } = await access.admin
+        .from("company_staff_members")
+        .select("id, staff_id")
+        .eq("company_id", access.companyId)
+        .order("created_at", { ascending: true });
+      if (fetchError) throw fetchError;
+
+      const members = existingStaff ?? [];
+
+      // Re-stamp every existing staff member with the new prefix + sequential number
+      let seq = startSequence;
+      const updates: { id: string; oldId: string; newId: string }[] = [];
+      for (const member of members) {
+        const newStaffId = `${prefix}-${String(seq).padStart(4, "0")}`;
+        updates.push({ id: member.id, oldId: member.staff_id, newId: newStaffId });
+        seq++;
+      }
+
+      // Apply all re-stamps individually (unique constraint requires one at a time
+      // to avoid collisions between old and new IDs in the same batch)
+      for (const update of updates) {
+        const { error: updateError } = await access.admin
+          .from("company_staff_members")
+          .update({ staff_id: update.newId })
+          .eq("id", update.id)
+          .eq("company_id", access.companyId);
+        if (updateError) {
+          console.error(`Failed to re-stamp staff ID ${update.oldId} → ${update.newId}`, updateError);
+          throw new Error(`Unable to update staff ID for ${update.oldId}. Check for conflicts and try again.`);
+        }
+      }
+
+      // next_sequence is the number that will be assigned to the NEXT new member
+      const nextAfterExisting = seq; // seq is now one past the last assigned number
+
+      const { data: settings, error: settingsError } = await access.admin
+        .from("company_staff_id_settings")
+        .upsert({
+          company_id: access.companyId,
+          staff_id_prefix: prefix,
+          next_sequence: nextAfterExisting,
+        })
+        .select("staff_id_prefix, next_sequence")
+        .single();
+      if (settingsError || !settings) throw settingsError ?? new Error("Staff ID settings were not updated.");
+
+      return NextResponse.json({
+        settings: {
+          prefix: settings.staff_id_prefix,
+          nextSequence: settings.next_sequence,
+          canChangeSequence: true,
+        },
+        restamped: updates.length,
+        message: updates.length > 0
+          ? `Staff ID settings saved. ${updates.length} existing staff member${updates.length === 1 ? "'s ID was" : "s' IDs were"} updated to the ${prefix} prefix.`
+          : `Staff ID prefix set to ${prefix}. No existing staff to update.`,
+      }, { headers });
     }
 
     const id = typeof body.id === "string" ? body.id : "";

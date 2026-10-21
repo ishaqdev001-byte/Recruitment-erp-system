@@ -1,0 +1,31 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kilax Smart Recruit">
+  <title>Kilax Smart Recruit</title>
+
+  <!-- Navy rounded-square background -->
+  <rect width="200" height="200" rx="44" fill="#0d1b3e"/>
+
+  <!-- K — vertical white stem -->
+  <rect x="42" y="34" width="22" height="132" rx="8" fill="white"/>
+
+  <!-- K — upper cyan diagonal arm -->
+  <path d="M64 100 L148 34" stroke="#00b4f5" stroke-width="22" stroke-linecap="round"/>
+
+  <!-- Magnifying glass ring (gradient cyan→blue) with person, replacing lower K arm -->
+  <defs>
+    <linearGradient id="mgGrad" x1="64" y1="100" x2="160" y2="176" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00c8ff"/>
+      <stop offset="1" stop-color="#0066ff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Magnifying glass circle stroke -->
+  <circle cx="108" cy="138" r="32" stroke="url(#mgGrad)" stroke-width="14" fill="none"/>
+
+  <!-- Magnifying glass handle -->
+  <line x1="132" y1="162" x2="158" y2="188" stroke="url(#mgGrad)" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- Person silhouette inside glass — head -->
+  <circle cx="108" cy="126" r="10" fill="white"/>
+  <!-- Person silhouette — shoulders -->
+  <path d="M86 155 Q86 138 108 138 Q130 138 130 155" fill="white"/>
+</svg>

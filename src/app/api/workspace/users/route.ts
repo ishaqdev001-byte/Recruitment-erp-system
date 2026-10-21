@@ -55,7 +55,7 @@ export async function GET() {
 
     const [rolesResult, membershipsResult, permissionsResult, companyResult] = await Promise.all([
       admin.from("company_roles").select("id, name, description, is_system_default, created_at").eq("company_id", access.companyId).order("name"),
-      admin.from("company_memberships").select("user_id, status, role_id, role:company_roles(name)").eq("company_id", access.companyId).order("created_at"),
+      admin.from("company_memberships").select("user_id, status, role_id, branch_id, role:company_roles(name)").eq("company_id", access.companyId).order("created_at"),
       admin.from("permissions").select("code, description").order("code"),
       admin.from("companies").select("primary_admin_user_id").eq("id", access.companyId).single(),
     ]);
@@ -90,6 +90,7 @@ export async function GET() {
         email: authUser?.email ?? "",
         phone: profileById.get(membership.user_id)?.phone ?? "",
         branch: profileById.get(membership.user_id)?.branch ?? "",
+        branchId: (membership as unknown as Record<string, unknown>).branch_id as string | null ?? null,
         roleId: membership.role_id,
         role: role ?? roleNameById.get(membership.role_id) ?? "Unknown role",
         status: membership.status === "disabled" ? "disabled" : authUser?.confirmed_at ? membership.status : "invited",

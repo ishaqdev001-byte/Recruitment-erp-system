@@ -5,11 +5,13 @@ import {
   CalendarClock,
   CalendarDays,
   ChartNoAxesCombined,
+  CheckSquare,
   ChevronDown,
   CircleDollarSign,
   ClipboardCheck,
   ClipboardList,
   FileText,
+  GitBranch,
   History,
   IdCard,
   LayoutDashboard,
@@ -76,11 +78,13 @@ const nav: NavItem[] = [
   },
   { type: "item",  id: "passport",       label: "Passport Custody",  icon: IdCard },
   { type: "item",  id: "documents",      label: "Document Mgt",      icon: FileText },
+  { type: "item",  id: "approvals",      label: "Approvals",          icon: CheckSquare },
   { type: "item",  id: "tasks",          label: "Tasks",             icon: ClipboardCheck },
   { type: "item",  id: "communications", label: "Communications",    icon: MessageSquareText },
   { type: "item",  id: "ai",             label: "AI Assistant",      icon: Sparkles },
   { type: "item",  id: "reports",        label: "Reports & Analytics", icon: ChartNoAxesCombined },
   { type: "item",  id: "users",          label: "Users & Roles",     icon: ShieldCheck },
+  { type: "item",  id: "branches",       label: "Branches",           icon: GitBranch },
   { type: "item",  id: "auditlog",       label: "Audit Log",         icon: History },
   { type: "item",  id: "settings",       label: "Settings",          icon: Settings },
 ];
@@ -91,7 +95,7 @@ const agentSupplierViews = new Set<View>(["agents", "suppliers"]);
 const workforceViews = new Set<View>(["human-resources", "attendance", "leave"]);
 const candidateViews = new Set<View>(["candidates", "candidate-inquiries", "medical-appointments", "medical-management"]);
 
-export default function Sidebar({ active, onNavigate, role, userName, companyName, companyLogo, mobileOpen, onLogout }: { active: View; onNavigate: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void }) {
+export default function Sidebar({ active, onNavigate, role, userName, companyName, companyLogo, mobileOpen, onLogout, branchName, isMainBranchUser }: { active: View; onNavigate: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void; branchName?: string; isMainBranchUser?: boolean }) {
   const [openGroups, setOpenGroups] = useState({ agents: agentSupplierViews.has(active), finance: financeViews.has(active), employers: employerViews.has(active), workforce: workforceViews.has(active), candidates: candidateViews.has(active) });
 
   useEffect(() => {
@@ -111,15 +115,25 @@ export default function Sidebar({ active, onNavigate, role, userName, companyNam
           ) : (
             <span className="w-9 h-9 rounded flex items-center justify-center text-xs font-bold mono"
               style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              {(companyName ?? "RecruitOS").split(/\\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "R"}
+              {(companyName ?? "Kilax Smart Recruit").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "KR"}
             </span>
           )}
           <div className="min-w-0">
-            <div className="truncate text-sm font-700 leading-tight" style={{ color: "var(--foreground)" }}>{companyName ?? "RecruitOS"}</div>
+            <div className="truncate text-sm font-700 leading-tight" style={{ color: "var(--foreground)" }}>{companyName ?? "Kilax Smart Recruit"}</div>
             <div className="text-xs mt-0.5 mono" style={{ color: "var(--muted-foreground)" }}>Recruitment workspace</div>
           </div>
         </div>
       </div>
+
+      {/* Branch context banner — shows which branch this user belongs to */}
+      {branchName && (
+        <div className="flex items-center gap-2 border-b px-3 py-2" style={{ borderColor: "var(--border)", background: isMainBranchUser ? "color-mix(in srgb, var(--primary) 8%, transparent)" : "#f59e0b0f" }}>
+          <GitBranch size={12} aria-hidden="true" style={{ color: isMainBranchUser ? "var(--primary)" : "#d97706", flexShrink: 0 }} />
+          <span className="truncate text-xs font-600" style={{ color: isMainBranchUser ? "var(--primary)" : "#b45309" }}>
+            {isMainBranchUser ? `${branchName} · All Branches` : branchName}
+          </span>
+        </div>
+      )}
 
       <nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto">
         {nav.map((item, idx) => {

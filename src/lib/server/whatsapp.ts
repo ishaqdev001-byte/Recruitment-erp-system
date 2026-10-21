@@ -46,7 +46,7 @@ export async function getWhatsAppAccess(permission: "communications.whatsapp.rea
 }
 
 export function getWhatsAppProfileName(companyId: string) {
-  return `RecruitOS ${companyId}`;
+  return `Kilax Smart Recruit ${companyId}`;
 }
 
 export async function getOrCreateZernioProfile(companyId: string) {
@@ -58,7 +58,7 @@ export async function getOrCreateZernioProfile(companyId: string) {
   const created = await zernioRequest("/profiles", {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({ name, description: "Company WhatsApp inbox for RecruitOS" }),
+    body: JSON.stringify({ name, description: "Company WhatsApp inbox for Kilax Smart Recruit" }),
   }) as { profile?: { _id?: string } };
   if (!created.profile?._id) throw new Error("Zernio did not return the company profile ID.");
   return created.profile._id;

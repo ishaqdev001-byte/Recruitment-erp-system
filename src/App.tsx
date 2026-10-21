@@ -3,6 +3,32 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
+
+/** Kilax Smart Recruit logo — shown on all pre-auth screens. */
+function KilaxLogo({ size = 64 }: { size?: number }) {
+  return (
+    <img
+      src="/branding/Kilax Smart Copy.png"
+      alt="Kilax Smart Recruit"
+      width={size}
+      height={size}
+      style={{ display: "block", objectFit: "contain" }}
+    />
+  );
+}
+
+/** Full wordmark used in auth card headers. */
+function KilaxWordmark() {
+  return (
+    <div className="flex items-center gap-3">
+      <KilaxLogo size={52} />
+      <div>
+        <div className="text-xl font-700 leading-tight" style={{ color: "var(--foreground)" }}>Kilax Smart Recruit</div>
+        <div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: "var(--muted-foreground)" }}>Recruitment ERP</div>
+      </div>
+    </div>
+  );
+}
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 import Dashboard from "./components/LiveDashboard";
@@ -23,6 +49,8 @@ import LeaveManagement from "./components/LeaveManagement";
 import HumanResources from "./components/HumanResources";
 import MedicalAppointments from "./components/MedicalAppointments";
 import MedicalManagement from "./components/MedicalManagement";
+import Branches from "./components/Branches";
+import BranchApprovals from "./components/BranchApprovals";
 import Requisitions from "./components/RequisitionsWorkspace";
 import CompanyDrive from "./components/CompanyDrive";
 import Tasks from "./components/TaskWorkspace";
@@ -64,10 +92,12 @@ export type View =
   | "human-resources"
   | "medical-appointments"
   | "medical-management"
+  | "branches"
+  | "approvals"
   | "requisitions";
 
 export type WorkspaceRole =
-  | "Company Owner / Primary Administrator"
+  | "Chairman"
   | "General Manager"
   | "CEO"
   | "Recruitment Manager"
@@ -77,6 +107,7 @@ export type WorkspaceRole =
   | "Document Officer"
   | "Medical Officer"
   | "Doctor"
+  | "Supervisor"
   | "Viewer"
   | "Administrator"
   | "Manager"
@@ -123,6 +154,9 @@ type Session = {
   companyLogo: string;
   role: WorkspaceRole;
   onboarded: boolean;
+  branchId: string | null;
+  branchName: string;
+  isMainBranchUser: boolean;
 };
 
 type CompanyForm = {
@@ -187,12 +221,26 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   if (!companyRecord || !roleRecord) throw new Error("Your company membership is incomplete.");
 
   const knownRoles: WorkspaceRole[] = [
-    "Company Owner / Primary Administrator", "General Manager", "CEO",
+    "Chairman", "General Manager", "CEO",
     "Recruitment Manager", "Recruitment Agent",
-    "Finance Manager", "Finance Officer", "Document Officer", "Medical Officer", "Doctor", "Viewer",
+    "Finance Manager", "Finance Officer", "Document Officer", "Medical Officer", "Doctor", "Supervisor", "Viewer",
     "Administrator", "Manager", "Finance User",
   ];
   const role = knownRoles.find((candidateRole) => candidateRole === roleRecord.name) ?? roleRecord.name as WorkspaceRole;
+
+  // Fetch branch info for the session
+  const { data: membershipBranch } = await supabase
+    .from("company_memberships")
+    .select("branch_id, branch:company_branches(id, name, is_main_branch)")
+    .eq("user_id", user.id)
+    .eq("company_id", companyRecord.id)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+  const branchValue = membershipBranch?.branch as unknown as { id: string; name: string; is_main_branch: boolean } | { id: string; name: string; is_main_branch: boolean }[] | null;
+  const branchRecord = Array.isArray(branchValue) ? branchValue[0] : branchValue;
+  const branchName = branchRecord?.name ?? "Main Branch";
+  const isMainBranchUser = !branchRecord || Boolean(branchRecord.is_main_branch);
   const company: CompanyProfile = {
     id: companyRecord.id,
     name: companyRecord.name,
@@ -233,6 +281,9 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
       companyLogo: company.logo,
       role,
       onboarded: true,
+      branchId: membershipBranch?.branch_id ?? null,
+      branchName,
+      isMainBranchUser,
     } satisfies Session,
   };
 }
@@ -240,7 +291,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [role, setRole] = useState<WorkspaceRole>("Company Owner / Primary Administrator");
+  const [role, setRole] = useState<WorkspaceRole>("Chairman");
   const [theme, setTheme] = useState<Theme>("dark");
   const [density, setDensity] = useState<Density>("comfortable");
   const [preferencesReady, setPreferencesReady] = useState(false);
@@ -276,14 +327,14 @@ export default function App() {
     for (const key of ["recruitos.companies", "recruitos.users", "recruitos.session"]) {
       window.localStorage.removeItem(key);
     }
-    const preferences = window.localStorage.getItem("recruitos.workspace-preferences");
+    const preferences = window.localStorage.getItem("kilax.workspace-preferences");
     if (preferences) {
       try {
         const saved = JSON.parse(preferences) as Partial<{ theme: Theme; density: Density }>;
         if (saved.theme === "light" || saved.theme === "dark") setTheme(saved.theme);
         if (saved.density === "compact" || saved.density === "comfortable") setDensity(saved.density);
       } catch {
-        window.localStorage.removeItem("recruitos.workspace-preferences");
+        window.localStorage.removeItem("kilax.workspace-preferences");
       }
     }
     setPreferencesReady(true);
@@ -294,7 +345,7 @@ export default function App() {
       if (currentUrl.searchParams.get("view") === "communications") setView("communications");
       // Restore active view from the URL path on load / hard refresh.
       // Supports both /candidates (clean path) and legacy ?v= / ?view= params.
-      const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","requisitions","drive"]);
+      const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","branches","approvals","requisitions","drive"]);
       const pathView = currentUrl.pathname.replace(/^\//, ""); // strip leading /
       const paramView = currentUrl.searchParams.get("v") ?? currentUrl.searchParams.get("view");
       const detectedView = (validViews.has(pathView) ? pathView : null) ?? (paramView && validViews.has(paramView) ? paramView : null);
@@ -331,9 +382,9 @@ export default function App() {
         const { data: { user }, error } = await supabase.auth.getUser();
         if (error) throw error;
         if (user) {
-          const needsGoogleMailLink = window.sessionStorage.getItem("recruitos.googleConnectGmail") === "gmail";
+          const needsGoogleMailLink = window.sessionStorage.getItem("kilax.googleConnectGmail") === "gmail";
           if (needsGoogleMailLink) {
-            window.sessionStorage.removeItem("recruitos.googleConnectGmail");
+            window.sessionStorage.removeItem("kilax.googleConnectGmail");
             try {
               const connectResponse = await fetch("/api/communications/mail/connect?provider=gmail", { cache: "no-store" });
               const connectPayload = await connectResponse.json() as { url?: string; error?: string };
@@ -410,15 +461,54 @@ export default function App() {
 
   useEffect(() => {
     if (preferencesReady) {
-      window.localStorage.setItem("recruitos.workspace-preferences", JSON.stringify({ role, theme, density }));
+      window.localStorage.setItem("kilax.workspace-preferences", JSON.stringify({ role, theme, density }));
     }
   }, [density, preferencesReady, role, theme]);
 
-  // Keep URL path in sync with the active view — real paths like /candidates, /finance.
+  // Keep URL path and document title in sync with the active view.
   // Uses pushState so the browser back button navigates between views.
   useEffect(() => {
     if (!session) return;
     const targetPath = view === "dashboard" ? "/" : `/${view}`;
+
+    // Human-readable view titles for the browser tab
+    const viewTitles: Partial<Record<View, string>> = {
+      dashboard:             "Dashboard",
+      candidates:            "Candidates",
+      "candidate-inquiries": "Inquiries",
+      agents:                "Agents",
+      suppliers:             "Suppliers",
+      finance:               "Finance",
+      accounts:              "Accounts",
+      payments:              "Payments",
+      paychecks:             "Paychecks",
+      invoices:              "Invoices",
+      passport:              "Passport Custody",
+      documents:             "Documents",
+      ai:                    "AI Assistant",
+      reports:               "Reports",
+      users:                 "Users & Roles",
+      settings:              "Settings",
+      contractors:           "Contractors",
+      projects:              "Projects",
+      tasks:                 "Tasks",
+      communications:        "Communications",
+      auditlog:              "Audit Log",
+      attendance:            "Attendance",
+      leave:                 "Leave",
+      "human-resources":     "My HR Profile",
+      "medical-appointments":"Medical Appointments",
+      "medical-management":  "Medical Examinations",
+      requisitions:          "Requisitions",
+      branches:              "Branches",
+      approvals:             "Approvals",
+      drive:                 "Drive",
+    };
+
+    const companyLabel = session.companyName ? ` | ${session.companyName}` : "";
+    const viewLabel = viewTitles[view] ?? view;
+    document.title = `${viewLabel} — Kilax Smart Recruit${companyLabel}`;
+
     if (window.location.pathname !== targetPath) {
       // Strip legacy ?v= / ?view= params on first navigation
       const url = new URL(window.location.href);
@@ -431,7 +521,7 @@ export default function App() {
 
   // Handle browser back / forward buttons
   useEffect(() => {
-    const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","requisitions","drive"]);
+    const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","branches","approvals","requisitions","drive"]);
     const onPopState = (event: PopStateEvent) => {
       const stateView = (event.state as { view?: string } | null)?.view;
       const pathView = window.location.pathname.replace(/^\//, "");
@@ -492,7 +582,7 @@ export default function App() {
     setLoginError("");
     try {
       const supabase = createSupabaseBrowserClient();
-      window.sessionStorage.setItem("recruitos.googleConnectGmail", "gmail");
+      window.sessionStorage.setItem("kilax.googleConnectGmail", "gmail");
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -502,7 +592,7 @@ export default function App() {
       });
       if (error) throw error;
     } catch (error) {
-      window.sessionStorage.removeItem("recruitos.googleConnectGmail");
+      window.sessionStorage.removeItem("kilax.googleConnectGmail");
       setLoginError(error instanceof Error ? error.message : "Unable to continue with Google.");
     }
   };
@@ -675,6 +765,10 @@ export default function App() {
         return <MedicalAppointments />;
       case "medical-management":
         return <MedicalManagement />;
+      case "branches":
+        return <Branches />;
+      case "approvals":
+        return <BranchApprovals />;
       case "requisitions":
         return <Requisitions />;
       case "tasks":
@@ -770,6 +864,8 @@ export default function App() {
         userName={session.userName}
         companyName={session.companyName}
         companyLogo={session.companyLogo}
+        branchName={session.branchName}
+        isMainBranchUser={session.isMainBranchUser}
         onLogout={handleLogout}
       />
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -880,6 +976,9 @@ function AuthenticationExperience({
     return (
       <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
         <div className="w-full max-w-md border p-8" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="mb-6">
+            <KilaxWordmark />
+          </div>
           <div className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company invitation</div>
           <h1 className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>Set up your password</h1>
           <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>Your invitation is for this company and position.</p>
@@ -903,6 +1002,9 @@ function AuthenticationExperience({
     return (
       <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
         <div className="w-full max-w-md rounded-2xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="mb-6">
+            <KilaxWordmark />
+          </div>
           <div className="text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Account recovery</div>
           <h1 className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>Choose a new password</h1>
           <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>
@@ -942,9 +1044,12 @@ function AuthenticationExperience({
 
   if (authView === "landing") {
     return (
-      <div className="min-h-screen w-full flex items-center justify-center p-6" style={{ background: "radial-gradient(circle at top, rgba(245,158,11,0.14), transparent 30%), var(--background)" }}>
+      <div className="min-h-screen w-full flex items-center justify-center p-6" style={{ background: "radial-gradient(circle at top, rgba(0,100,255,0.10), transparent 30%), var(--background)" }}>
         <div className="w-full max-w-6xl grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="rounded-3xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+            <div className="mb-6">
+              <KilaxWordmark />
+            </div>
             <div className="mb-6 inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-700 uppercase tracking-[0.22em]" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--primary)" }}>
               Multi-tenant ERP platform
             </div>
@@ -989,7 +1094,7 @@ function AuthenticationExperience({
               </div>
               <div className="rounded border p-4" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
                 <div className="text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Workspace</div>
-                <div className="mt-2 text-lg font-700" style={{ color: "var(--foreground)" }}>RecruitOS Uganda Ltd</div>
+                <div className="mt-2 text-lg font-700" style={{ color: "var(--foreground)" }}>Kilax Smart Recruit Demo</div>
                 <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>Status: Active</div>
               </div>
               <button onClick={onContinueDemo} className="w-full px-4 py-3 rounded font-600" style={{ background: "var(--secondary)", border: "1px solid var(--border)", color: "var(--foreground)" }}>
@@ -1006,15 +1111,11 @@ function AuthenticationExperience({
     return (
       <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
         <div className="w-full max-w-md rounded-2xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <div className="text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Welcome back</div>
-              <h2 className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>Log in</h2>
-            </div>
-            <div className="inline-flex h-12 w-12 items-center justify-center rounded-full text-lg font-700" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              R
-            </div>
+          <div className="mb-6">
+            <KilaxWordmark />
           </div>
+          <div className="mb-1 text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Welcome back</div>
+          <h2 className="mb-5 text-2xl font-700" style={{ color: "var(--foreground)" }}>Log in to your workspace</h2>
 
           <form onSubmit={onLogin} className="space-y-4">
             <div>
@@ -1085,6 +1186,9 @@ function AuthenticationExperience({
     return (
       <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
         <div className="w-full max-w-xl rounded-2xl border p-8 shadow-2xl text-center" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="mb-6 flex justify-center">
+            <KilaxLogo size={72} />
+          </div>
           <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full text-2xl" style={{ background: "rgba(16,185,129,0.14)", color: "#34d399" }}>✓</div>
           <div className="text-xs font-700 uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Account created</div>
           <h2 className="mt-3 text-3xl font-700" style={{ color: "var(--foreground)" }}>Your company workspace is ready.</h2>
@@ -1114,6 +1218,9 @@ function AuthenticationExperience({
       <div className="w-full max-w-4xl rounded-3xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
         <div className="mb-6 flex items-center justify-between">
           <div>
+            <div className="mb-4">
+              <KilaxWordmark />
+            </div>
             <div className="text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Platform onboarding</div>
             <h2 className="mt-2 text-3xl font-700" style={{ color: "var(--foreground)" }}>Register Your Company</h2>
           </div>
@@ -1354,7 +1461,7 @@ function OnboardingWizard({
               </div>
               <div className="grid gap-3 md:grid-cols-3">
                 <input defaultValue="Aisha Khan" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-                <input defaultValue="owner@recruitos.ug" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }} />
+                <input defaultValue="owner@kilaxrecruit.com" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }} />
                 <input defaultValue="Company Owner / Primary Admin" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }} />
               </div>
             </div>
@@ -1414,7 +1521,7 @@ function SettingsPage({ company, user }: { company?: CompanyProfile; user?: Comp
           <h1 className="mt-1 text-2xl font-700" style={{ color: "var(--foreground)" }}>Settings</h1>
         </div>
         <div className="rounded-full border px-3 py-1 text-[10px] font-700 uppercase tracking-widest" style={{ borderColor: "var(--border)", color: "var(--primary)" }}>
-          {user?.role ?? "Company Owner / Primary Administrator"}
+          {user?.role ?? "Chairman"}
         </div>
       </div>
 
@@ -1493,7 +1600,7 @@ function SettingsPage({ company, user }: { company?: CompanyProfile; user?: Comp
                     </div>
                     <div>
                       <div className="font-700" style={{ color: "var(--foreground)" }}>{user?.name ?? "Primary Admin"}</div>
-                      <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>{user?.title ?? "Company Owner / Primary Administrator"}</div>
+                      <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>{user?.title ?? "Chairman"}</div>
                     </div>
                   </div>
                 </div>

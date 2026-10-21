@@ -51,7 +51,7 @@ async function sendSystemAlertEmail(opts: {
 
   try {
     await transport.sendMail({
-      from: `"RecruitOS Alerts" <${fromAddr}>`,
+      from: `"Kilax Smart Recruit Alerts" <${fromAddr}>`,
       to: opts.to.join(", "),
       subject: opts.subject,
       text: opts.text,
@@ -142,7 +142,7 @@ async function getAccess() {
 
   const { data: membership, error: membershipError } = await supabase
     .from("company_memberships")
-    .select("company_id, role_id")
+    .select("company_id, role_id, branch_id")
     .eq("user_id", user.id)
     .eq("status", "active")
     .limit(1)
@@ -185,15 +185,29 @@ async function getAccess() {
 
   if (!canViewMedical) return { error: "You do not have access to the medical examination queue.", status: 403 as const };
 
+  // Check if user is on the main branch (sees all branches)
+  // Graceful fallback if migration not yet applied
+  let isMainBranchUser = false;
+  try {
+    const { data } = await supabase.rpc("current_user_is_main_branch_user", {
+      requested_company_id: membership.company_id,
+    });
+    isMainBranchUser = data !== null && data !== undefined ? Boolean(data) : membership.branch_id == null;
+  } catch {
+    isMainBranchUser = membership.branch_id == null;
+  }
+
   return {
     admin,
     supabase,
     companyId: membership.company_id,
     userId: user.id,
     roleName,
-    companyName: company?.name ?? "RecruitOS",
+    companyName: company?.name ?? "Kilax Smart Recruit",
     canViewMedical,
     canUpdateMedical,
+    branchId: membership.branch_id ?? null,
+    isMainBranchUser,
   };
 }
 
@@ -205,10 +219,11 @@ export async function GET() {
     const access = await getAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
 
-    const { data: appointments, error: apptError } = await access.admin
+    // Branch-scoped filtering: non-main-branch users only see their branch's appointments
+    let apptQuery = access.admin
       .from("medical_appointments")
       .select(`
-        id, company_id, candidate_id,
+        id, company_id, candidate_id, branch_id,
         candidate_first_name, candidate_last_name,
         candidate_date_of_birth, candidate_age,
         candidate_passport_number, candidate_phone,
@@ -217,7 +232,13 @@ export async function GET() {
         payment_reference, created_at,
         income_type:company_income_types(name)
       `)
-      .eq("company_id", access.companyId)
+      .eq("company_id", access.companyId);
+
+    if (!access.isMainBranchUser && access.branchId) {
+      apptQuery = apptQuery.eq("branch_id", access.branchId);
+    }
+
+    const { data: appointments, error: apptError } = await apptQuery
       .order("appointment_at", { ascending: false });
 
     if (apptError) {
@@ -440,7 +461,7 @@ export async function POST(request: Request) {
         <tr>
           <td style="padding:12px 24px;border-top:1px solid #334155;">
             <p style="margin:0;font-size:11px;color:#475569;">
-              This is an automated alert from ${access.companyName} · RecruitOS Medical System.
+              This is an automated alert from ${access.companyName} · Kilax Smart Recruit Medical System.
               Do not reply to this email.
             </p>
           </td>

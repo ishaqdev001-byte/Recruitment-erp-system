@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { SearchableSelect } from "./SearchableSelect";
 
-type UserRecord = { id: string; name: string; email: string; roleId: string; role: string; status: string; isPrimaryAdmin: boolean };
+type UserRecord = { id: string; name: string; email: string; roleId: string; role: string; status: string; isPrimaryAdmin: boolean; branchId: string | null; branch: string };
 type RoleRecord = { id: string; name: string; description: string; is_system_default: boolean; created_at: string };
 type PermissionRecord = { code: string; description: string };
 type RolePermissionRecord = { role_id: string; permission_code: string };
@@ -25,6 +25,7 @@ type StaffRecord = {
 };
 type StaffIdSettings = { prefix: string; nextSequence: number; canChangeSequence: boolean };
 type WorkspaceData = { users: UserRecord[]; roles: RoleRecord[]; permissions: PermissionRecord[]; rolePermissions: RolePermissionRecord[]; canManageRoles: boolean };
+type BranchOption = { id: string; name: string; code: string; isMainBranch: boolean };
 
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 
@@ -72,6 +73,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,13 +81,20 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
       setLoading(true);
       setError("");
       try {
-        const response = await fetch("/api/workspace/users", { cache: "no-store" });
+        const [response, branchRes] = await Promise.all([
+          fetch("/api/workspace/users", { cache: "no-store" }),
+          fetch("/api/branches", { cache: "no-store" }),
+        ]);
         const result = await response.json() as WorkspaceData & { error?: string };
         if (!response.ok) throw new Error(result.error ?? "Unable to load users and roles.");
         if (!cancelled) {
           setData({ users: result.users ?? [], roles: result.roles ?? [], permissions: result.permissions ?? [], rolePermissions: result.rolePermissions ?? [], canManageRoles: Boolean(result.canManageRoles) });
           setSelectedRoleId((current) => current || result.roles[0]?.id || "");
           setUserRoleId((current) => current || result.roles[0]?.id || "");
+        }
+        if (branchRes.ok) {
+          const branchData = await branchRes.json() as { branches?: BranchOption[] };
+          if (!cancelled) setBranches(branchData.branches ?? []);
         }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load users and roles.");
@@ -328,14 +337,16 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "configure-ids", prefix: staffIdPrefix, nextSequence: staffNextSequence }),
       });
-      const result = await response.json() as { settings?: StaffIdSettings; error?: string };
+      const result = await response.json() as { settings?: StaffIdSettings; message?: string; restamped?: number; error?: string };
       if (!response.ok) throw new Error(result.error ?? "Unable to update staff ID settings.");
       if (result.settings) {
         setStaffIdSettings(result.settings);
         setStaffIdPrefix(result.settings.prefix);
         setStaffNextSequence(result.settings.nextSequence);
       }
-      setNotice("Staff ID settings updated.");
+      // Reload staff list so the updated IDs are visible immediately
+      setReloadKey((key) => key + 1);
+      setNotice(result.message ?? "Staff ID settings updated.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to update staff ID settings.");
     } finally {
@@ -345,8 +356,8 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
 
   const selectedRole = data.roles.find((role) => role.id === selectedRoleId);
   const permissionsForRole = new Set(data.rolePermissions.filter((permission) => permission.role_id === selectedRoleId).map((permission) => permission.permission_code));
-  const canManageStaff = data.users.some((user) => user.id === currentUserId && (user.isPrimaryAdmin || user.role === "CEO" || user.role === "General Manager"));
-  const canManageRoles = data.users.some((user) => user.id === currentUserId && (user.isPrimaryAdmin || user.role === "CEO")) || data.canManageRoles;
+  const canManageStaff = data.users.some((user) => user.id === currentUserId && (user.isPrimaryAdmin || user.role === "Chairman" || user.role === "CEO" || user.role === "General Manager"));
+  const canManageRoles = data.users.some((user) => user.id === currentUserId && (user.isPrimaryAdmin || user.role === "Chairman" || user.role === "CEO")) || data.canManageRoles;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -378,13 +389,49 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
         {!loading && tab === "users" && (
           <div className="overflow-x-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
             <table className="w-full min-w-155 text-sm">
-              <thead><tr className="border-b" style={{ borderColor: "var(--border)" }}>{["Name", "Email", "Role", "Status", "Actions"].map((heading) => <th key={heading} className="px-4 py-3 text-left text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+              <thead><tr className="border-b" style={{ borderColor: "var(--border)" }}>{["Name", "Email", "Role", "Branch", "Status", "Actions"].map((heading) => <th key={heading} className="px-4 py-3 text-left text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
               <tbody>
                 {data.users.map((user) => (
                   <tr key={user.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                     <td className="px-4 py-3 font-600" style={{ color: "var(--foreground)" }}>{user.name}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{user.email}</td>
                     <td className="px-4 py-3">{user.isPrimaryAdmin ? <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{user.role}</span> : <select aria-label={`Role for ${user.name}`} value={user.roleId} disabled={user.id === currentUserId || userActionPending === user.id} onChange={(event) => void manageUser(user, "change-role", event.target.value)} className="max-w-56 rounded border px-2 py-1 text-xs disabled:opacity-50" style={fieldStyle}>{data.roles.filter((role) => role.name !== "Company Owner / Primary Administrator" && role.name !== "Primary Administrator").map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select>}</td>
+                    <td className="px-4 py-3">
+                      {user.isPrimaryAdmin ? (
+                        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Main Branch</span>
+                      ) : (
+                        <select
+                          aria-label={`Branch for ${user.name}`}
+                          value={user.branchId ?? ""}
+                          disabled={user.id === currentUserId || userActionPending === user.id || branches.length === 0}
+                          onChange={async (event) => {
+                            setUserActionPending(user.id);
+                            setError("");
+                            try {
+                              const res = await fetch("/api/branches", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ action: "set-member-branch", userId: user.id, branchId: event.target.value || null }),
+                              });
+                              const result = await res.json() as { error?: string };
+                              if (!res.ok) throw new Error(result.error ?? "Unable to assign branch.");
+                              setNotice(`Branch updated for ${user.name}.`);
+                              setReloadKey((key) => key + 1);
+                            } catch (err) {
+                              setError(err instanceof Error ? err.message : "Unable to assign branch.");
+                            } finally {
+                              setUserActionPending("");
+                            }
+                          }}
+                          className="max-w-44 rounded border px-2 py-1 text-xs disabled:opacity-50"
+                          style={fieldStyle}
+                        >
+                          {branches.map((b) => (
+                            <option key={b.id} value={b.id}>{b.name}{b.isMainBranch ? " (Main)" : ""}</option>
+                          ))}
+                        </select>
+                      )}
+                    </td>
                     <td className="px-4 py-3"><span className="rounded px-2 py-1 text-xs font-600" style={{ color: user.status === "active" ? "#10b981" : user.status === "disabled" ? "#ef4444" : "#f59e0b", background: user.status === "active" ? "#10b98120" : user.status === "disabled" ? "#ef444420" : "#f59e0b20" }}>{user.status === "active" ? "Active" : user.status === "disabled" ? "Deactivated" : "Invited"}</span></td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -410,7 +457,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
             <div className="space-y-2">
               <h2 className="mb-3 text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company roles</h2>
               {data.roles.map((role) => {
-                const isPrimaryAdmin = role.name === "Company Owner / Primary Administrator" || role.name === "Primary Administrator";
+                const isPrimaryAdmin = role.name === "Chairman" || role.name === "Company Owner / Primary Administrator" || role.name === "Primary Administrator";
                 const memberCount = data.users.filter((u) => u.roleId === role.id).length;
                 return (
                   <div key={role.id} className="rounded border" style={{ background: selectedRoleId === role.id ? "var(--secondary)" : "var(--card)", borderColor: selectedRoleId === role.id ? "var(--primary)" : "var(--border)" }}>
@@ -509,11 +556,57 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
               </div>
 
               {staffIdSettings?.canChangeSequence && (
-                <form onSubmit={submitStaffIdSettings} className="flex flex-wrap items-end gap-3 border-b p-4" style={{ borderColor: "var(--border)" }}>
-                  <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Staff ID prefix<input required maxLength={10} pattern="[A-Za-z][A-Za-z0-9]{0,9}" value={staffIdPrefix} onChange={(event) => setStaffIdPrefix(event.target.value.toUpperCase())} className="mt-1 block w-36 rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
-                  <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Next sequence<input required type="number" min={1} max={999999} value={staffNextSequence} onChange={(event) => setStaffNextSequence(Number(event.target.value))} className="mt-1 block w-36 rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
-                  <button type="submit" disabled={saving} className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>{saving ? "Saving…" : "Save ID settings"}</button>
-                  <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Preview: {staffIdPrefix || "XX"}-{String(staffNextSequence).padStart(4, "0")}</span>
+                <form onSubmit={submitStaffIdSettings} className="border-b p-4 space-y-3" style={{ borderColor: "var(--border)" }}>
+                  <div>
+                    <p className="text-xs font-700 uppercase tracking-wider mb-0.5" style={{ color: "var(--muted-foreground)" }}>Staff ID Settings</p>
+                    <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                      Changing the prefix will <strong style={{ color: "var(--foreground)" }}>re-number all existing staff</strong> starting from the sequence you enter. New staff added later will continue the sequence automatically.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                      Staff ID Prefix
+                      <input
+                        required
+                        maxLength={10}
+                        pattern="[A-Za-z][A-Za-z0-9]{0,9}"
+                        value={staffIdPrefix}
+                        onChange={(event) => setStaffIdPrefix(event.target.value.toUpperCase())}
+                        className="mt-1 block w-36 rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                        style={fieldStyle}
+                        placeholder="e.g. KDR"
+                      />
+                    </label>
+                    <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                      Start From #
+                      <input
+                        required
+                        type="number"
+                        min={1}
+                        max={999999}
+                        value={staffNextSequence}
+                        onChange={(event) => setStaffNextSequence(Number(event.target.value))}
+                        className="mt-1 block w-36 rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                        style={fieldStyle}
+                      />
+                    </label>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        type="submit"
+                        disabled={saving}
+                        className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
+                        style={{ background: "var(--primary)", color: "var(--primary-foreground)", borderColor: "var(--primary)" }}
+                      >
+                        {saving ? "Applying…" : "Apply to all staff"}
+                      </button>
+                      <span className="text-xs text-center" style={{ color: "var(--muted-foreground)" }}>
+                        Preview: <strong style={{ color: "var(--foreground)" }}>{staffIdPrefix || "XX"}-{String(staffNextSequence).padStart(4, "0")}</strong>
+                        {staffMembers.length > 0 && (
+                          <span> → {staffIdPrefix || "XX"}-{String(staffNextSequence + staffMembers.length - 1).padStart(4, "0")} ({staffMembers.length} member{staffMembers.length === 1 ? "" : "s"})</span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
                 </form>
               )}
 
@@ -765,13 +858,13 @@ const roles = [
 ];
 
 const users = [
-  { id: 1, name: "Aisha Khan", email: "aisha@recruitos.ug", role: "Primary Administrator", branch: "HQ", status: "Active", lastLogin: "Aug 26, 2026" },
-  { id: 2, name: "Director Vicent", email: "vicent@recruitos.ug", role: "Recruitment Manager", branch: "Kampala", status: "Active", lastLogin: "Aug 26, 2026" },
-  { id: 3, name: "Asiimwe David", email: "david@recruitos.ug", role: "Recruitment Agent", branch: "Masaka", status: "Active", lastLogin: "Aug 25, 2026" },
-  { id: 4, name: "Fatuma Nakirya", email: "fatuma@recruitos.ug", role: "Recruitment Agent", branch: "Mbarara", status: "Active", lastLogin: "Aug 24, 2026" },
-  { id: 5, name: "Grace Acen", email: "grace@recruitos.ug", role: "Finance Officer", branch: "HQ", status: "Active", lastLogin: "Aug 26, 2026" },
-  { id: 6, name: "Peter Mukasa", email: "peter@recruitos.ug", role: "Recruitment Agent", branch: "Gulu", status: "Inactive", lastLogin: "Aug 10, 2026" },
-  { id: 7, name: "Sarah Nakigozi", email: "sarah@recruitos.ug", role: "Document Officer", branch: "HQ", status: "Active", lastLogin: "Aug 23, 2026" },
+  { id: 1, name: "Aisha Khan", email: "aisha@kilaxrecruit.com", role: "Primary Administrator", branch: "HQ", status: "Active", lastLogin: "Aug 26, 2026" },
+  { id: 2, name: "Director Vicent", email: "vicent@kilaxrecruit.com", role: "Recruitment Manager", branch: "Kampala", status: "Active", lastLogin: "Aug 26, 2026" },
+  { id: 3, name: "Asiimwe David", email: "david@kilaxrecruit.com", role: "Recruitment Agent", branch: "Masaka", status: "Active", lastLogin: "Aug 25, 2026" },
+  { id: 4, name: "Fatuma Nakirya", email: "fatuma@kilaxrecruit.com", role: "Recruitment Agent", branch: "Mbarara", status: "Active", lastLogin: "Aug 24, 2026" },
+  { id: 5, name: "Grace Acen", email: "grace@kilaxrecruit.com", role: "Finance Officer", branch: "HQ", status: "Active", lastLogin: "Aug 26, 2026" },
+  { id: 6, name: "Peter Mukasa", email: "peter@kilaxrecruit.com", role: "Recruitment Agent", branch: "Gulu", status: "Inactive", lastLogin: "Aug 10, 2026" },
+  { id: 7, name: "Sarah Nakigozi", email: "sarah@kilaxrecruit.com", role: "Document Officer", branch: "HQ", status: "Active", lastLogin: "Aug 23, 2026" },
 ];
 
 const defaultPerms: Record<string, Record<string, boolean>> = Object.fromEntries(
@@ -966,7 +1059,7 @@ function LegacyUsersRoles() {
           <div className="rounded border p-6 w-full max-w-md" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
             <h2 className="text-lg font-700 mb-5" style={{ color: "var(--foreground)" }}>New User</h2>
             <div className="space-y-3">
-              {[{ label: "Full Name", ph: "User full name" }, { label: "Email", ph: "user@recruitos.ug" }, { label: "Password", ph: "Temporary password" }].map(({ label, ph }) => (
+              {[{ label: "Full Name", ph: "User full name" }, { label: "Email", ph: "user@yourcompany.com" }, { label: "Password", ph: "Temporary password" }].map(({ label, ph }) => (
                 <div key={label}>
                   <label className="text-xs font-700 uppercase tracking-wider mb-1 block" style={{ color: "var(--muted-foreground)" }}>{label}</label>
                   <input type={label === "Password" ? "password" : "text"} placeholder={ph} className="w-full px-3 py-2 text-sm rounded border outline-none"

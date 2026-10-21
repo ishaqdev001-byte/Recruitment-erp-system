@@ -17,6 +17,8 @@ function KilaxLogo({ size = 64 }: { size?: number }) {
   );
 }
 
+
+
 /** Full wordmark used in auth card headers. */
 function KilaxWordmark() {
   return (
@@ -94,7 +96,8 @@ export type View =
   | "medical-management"
   | "branches"
   | "approvals"
-  | "requisitions";
+  | "requisitions"
+  | "drive";
 
 export type WorkspaceRole =
   | "Chairman"

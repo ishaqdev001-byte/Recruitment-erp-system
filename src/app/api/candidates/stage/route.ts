@@ -56,6 +56,20 @@ async function queueSms(admin: ReturnType<typeof createAdminClient>, row: {
   await admin.from("candidate_travel_sms_queue").insert(row);
 }
 
+function logBackgroundInsert(
+  operation: () => PromiseLike<{ error: unknown }>,
+  context: string,
+) {
+  void (async () => {
+    try {
+      const { error } = await operation();
+      if (error) console.error(context, error);
+    } catch (error) {
+      console.error(context, error);
+    }
+  })();
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createSupabaseServerClient();
@@ -301,7 +315,7 @@ export async function POST(request: Request) {
           });
           // Also queue in log for audit (fire-and-forget)
           if (admin) {
-            admin.from("candidate_travel_sms_queue").insert({
+            logBackgroundInsert(() => admin.from("candidate_travel_sms_queue").insert({
               company_id: membership.company_id,
               candidate_id: candidate.id,
               phone: candidate.phone,
@@ -311,7 +325,7 @@ export async function POST(request: Request) {
               send_at: new Date().toISOString(),
               status: "sent",
               sent_at: new Date().toISOString(),
-            }).then(() => {}).catch(() => {});
+            }), "Candidate travel SMS queue insert failed");
           }
         }
 
@@ -328,7 +342,7 @@ export async function POST(request: Request) {
             .maybeSingle();
 
           if (inquiry?.agent_user_id) {
-            admin.from("task_notifications").insert({
+            logBackgroundInsert(() => admin.from("task_notifications").insert({
               company_id: membership.company_id,
               task_id: null,
               recipient_id: inquiry.agent_user_id,
@@ -336,7 +350,7 @@ export async function POST(request: Request) {
               body: `${name} has received a visa for ${position} (${country}). Invoice ${invoices.at(-1) ? (invoices.at(-1) as Record<string, unknown>).invoiceNumber : ""} has been raised.`,
               remind_at: new Date().toISOString(),
               sms_status: "not_requested",
-            }).then(() => {}).catch(() => {});
+            }), "Visa task notification insert failed");
           }
         }
       }
@@ -494,7 +508,7 @@ export async function POST(request: Request) {
           .limit(1)
           .maybeSingle();
         if (inquiry?.agent_user_id) {
-          admin.from("task_notifications").insert({
+          logBackgroundInsert(() => admin.from("task_notifications").insert({
             company_id: membership.company_id,
             task_id: null,
             recipient_id: inquiry.agent_user_id,
@@ -502,7 +516,7 @@ export async function POST(request: Request) {
             body: `${name} is travelling to ${country} on ${travelDate} at ${travelTime}. Ticket: ${ticketNumber}.`,
             remind_at: new Date().toISOString(),
             sms_status: "not_requested",
-          }).then(() => {}).catch(() => {});
+          }), "Ticket task notification insert failed");
         }
       }
 

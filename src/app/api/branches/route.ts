@@ -32,14 +32,17 @@ async function getAccess() {
   if (!admin) return { error: "SUPABASE_SERVICE_ROLE_KEY is required.", status: 503 as const };
 
   // Fetch role, company info, and permissions in parallel.
-  // Use safe fallbacks so that missing RPCs (pre-migration) don't crash.
   const [roleResult, companyResult, canManageResult, canViewResult, isMainBranchResult] = await Promise.all([
     admin.from("company_roles").select("name").eq("id", membership.role_id).eq("company_id", membership.company_id).maybeSingle(),
     admin.from("companies").select("primary_admin_user_id, name").eq("id", membership.company_id).maybeSingle(),
-    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "branches.manage" }).then((r) => r).catch(() => ({ data: false, error: null })),
-    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "branches.view" }).then((r) => r).catch(() => ({ data: false, error: null })),
-    supabase.rpc("current_user_is_main_branch_user", { requested_company_id: membership.company_id }).then((r) => r).catch(() => ({ data: null, error: null })),
+    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "branches.manage" }),
+    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "branches.view" }),
+    supabase.rpc("current_user_is_main_branch_user", { requested_company_id: membership.company_id }),
   ]);
+
+  if (canManageResult.error) console.error("Branch manage permission check failed", canManageResult.error);
+  if (canViewResult.error) console.error("Branch view permission check failed", canViewResult.error);
+  if (isMainBranchResult.error) console.error("Main branch check failed", isMainBranchResult.error);
 
   const roleName = (roleResult.data?.name as string) ?? "";
   const isOwner = companyResult.data?.primary_admin_user_id === user.id;

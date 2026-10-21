@@ -35,10 +35,14 @@ async function getAccess() {
 
   const [{ data: role }, { data: isMainBranch }, canViewResult, canManageResult] = await Promise.all([
     admin.from("company_roles").select("name").eq("id", membership.role_id).eq("company_id", membership.company_id).maybeSingle(),
-    supabase.rpc("current_user_is_main_branch_user", { requested_company_id: membership.company_id }).then((r) => r).catch(() => ({ data: null, error: null })),
-    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "approvals.view" }).then((r) => r).catch(() => ({ data: false, error: null })),
-    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "approvals.manage" }).then((r) => r).catch(() => ({ data: false, error: null })),
+    supabase.rpc("current_user_is_main_branch_user", { requested_company_id: membership.company_id }),
+    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "approvals.view" }),
+    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "approvals.manage" }),
   ]);
+
+  if (isMainBranch?.error) console.error("Main branch check failed", isMainBranch.error);
+  if (canViewResult.error) console.error("Approval view permission check failed", canViewResult.error);
+  if (canManageResult.error) console.error("Approval manage permission check failed", canManageResult.error);
 
   if (!canViewResult?.data && !canManageResult?.data) {
     return { error: "You do not have permission to view approvals.", status: 403 as const };

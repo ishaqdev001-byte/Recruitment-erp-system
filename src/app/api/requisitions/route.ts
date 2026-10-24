@@ -222,11 +222,11 @@ export async function POST(request: Request) {
       p_due_date: dueDate,
       p_notes: notes,
       p_branch_id: access.branchId,
-      p_items: JSON.stringify(items.map((item) => ({
+      p_items: items.map((item) => ({
         description: String((item as Record<string, unknown>).description ?? "").trim(),
         quantity: Number((item as Record<string, unknown>).quantity),
         rate: Number((item as Record<string, unknown>).rate),
-      }))),
+      })),
     });
 
     if (error) {
@@ -282,11 +282,11 @@ export async function PUT(request: Request) {
     const { data, error } = await access.supabase.rpc("update_requisition_items_as_verifier", {
       p_company_id: access.companyId,
       p_requisition_id: body.id,
-      p_items: JSON.stringify(items.map((item) => ({
+      p_items: items.map((item) => ({
         description: String((item as Record<string, unknown>).description ?? "").trim(),
         quantity: Number((item as Record<string, unknown>).quantity),
         rate: Number((item as Record<string, unknown>).rate),
-      }))),
+      })),
     });
 
     if (error) {
@@ -333,11 +333,11 @@ export async function PATCH(request: Request) {
       p_service_provider_id: serviceProviderId,
       p_due_date: dueDate,
       p_notes: notes,
-      p_items: JSON.stringify(items.map((item) => ({
+      p_items: items.map((item) => ({
         description: String((item as Record<string, unknown>).description ?? "").trim(),
         quantity: Number((item as Record<string, unknown>).quantity),
         rate: Number((item as Record<string, unknown>).rate),
-      }))),
+      })),
     });
 
     if (error) {

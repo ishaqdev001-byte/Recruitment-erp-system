@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import dynamic from "next/dynamic";
 import { Eye, EyeOff } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
@@ -404,6 +404,15 @@ export default function App() {
   const [forcedPasswordSaving, setForcedPasswordSaving] = useState(false);
   const [forcedPasswordError, setForcedPasswordError] = useState("");
   const [forcedShowPassword, setForcedShowPassword] = useState(false);
+
+  const handleNavigate = useCallback((nextView: View) => {
+    preloadView(nextView);
+    setView(nextView);
+  }, []);
+  const handleSidebarNavigate = useCallback((nextView: View) => {
+    handleNavigate(nextView);
+    setMobileNavOpen(false);
+  }, [handleNavigate]);
 
   useEffect(() => {
     for (const key of ["recruitos.companies", "recruitos.users", "recruitos.session"]) {
@@ -1090,7 +1099,7 @@ export default function App() {
       )}
       <Sidebar
         active={view}
-        onNavigate={(nextView) => { preloadView(nextView); setView(nextView); setMobileNavOpen(false); }}
+        onNavigate={handleSidebarNavigate}
         onPrefetch={preloadView}
         mobileOpen={mobileNavOpen}
         onClose={() => setMobileNavOpen(false)}
@@ -1105,7 +1114,7 @@ export default function App() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <TopBar
           onMenuClick={() => setMobileNavOpen(true)}
-          onNavigate={(nextView) => { preloadView(nextView); setView(nextView); }}
+          onNavigate={handleNavigate}
           role={activeUser?.role ?? role}
           theme={theme}
           onThemeChange={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}

@@ -7,7 +7,21 @@
  *   • Navigation requests  → Network-first, fall back to cached shell.
  */
 
-const CACHE_NAME = "kilax-recruit-v3";
+const CACHE_NAME = "kilax-recruit-v4";
+
+function networkErrorResponse(request) {
+  const isApi = new URL(request.url).pathname.startsWith("/api/");
+  return new Response(
+    isApi ? JSON.stringify({ error: "The server could not be reached. Check your connection and try again." }) : "The server could not be reached. Check your connection and try again.",
+    {
+      status: 503,
+      headers: {
+        "Content-Type": isApi ? "application/json" : "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    },
+  );
+}
 
 // Resources to pre-cache on install (the app shell)
 const PRECACHE_URLS = [
@@ -50,7 +64,7 @@ self.addEventListener("fetch", (event) => {
 
   // API calls — always network-only, never cache
   if (url.pathname.startsWith("/api/")) {
-    event.respondWith(fetch(request).catch(() => Response.error()));
+    event.respondWith(fetch(request).catch(() => networkErrorResponse(request)));
     return;
   }
 
@@ -64,7 +78,7 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
         }
         return response;
-      }).catch(() => caches.match(request).then((cached) => cached ?? Response.error()))
+      }).catch(() => caches.match(request).then((cached) => cached ?? networkErrorResponse(request)))
     );
     return;
   }
@@ -83,7 +97,7 @@ self.addEventListener("fetch", (event) => {
         })
         .catch(() =>
           // Offline: serve the cached root shell — the SPA handles routing
-          caches.match("/").then((cached) => cached ?? Response.error())
+          caches.match("/").then((cached) => cached ?? networkErrorResponse(request))
         )
     );
     return;
@@ -100,7 +114,7 @@ self.addEventListener("fetch", (event) => {
             caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }
           return response;
-        }).catch(() => Response.error())
+        }).catch(() => networkErrorResponse(request))
     )
   );
 });

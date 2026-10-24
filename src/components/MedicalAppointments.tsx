@@ -230,6 +230,7 @@ export default function MedicalAppointments() {
   const [saving, setSaving] = useState(false);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [error, setError] = useState("");
+  const [availabilityError, setAvailabilityError] = useState("");
   const [notice, setNotice] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [candidateLocked, setCandidateLocked] = useState(false);
@@ -266,6 +267,7 @@ export default function MedicalAppointments() {
   useEffect(() => {
     if (!form.doctorUserId || !form.appointmentAt) {
       setDoctorAvailability(null);
+      setAvailabilityError("");
       return;
     }
 
@@ -281,12 +283,12 @@ export default function MedicalAppointments() {
           }),
         });
         const result = await response.json() as AvailabilityResponse;
-        if (response.ok) {
-          setDoctorAvailability(result);
-        }
-      } catch {
-        // Silently fail — don't prevent booking if availability check fails
+        if (!response.ok) throw new Error(result.error ?? "Unable to check doctor availability.");
+        setDoctorAvailability(result);
+        setAvailabilityError("");
+      } catch (availabilityError) {
         setDoctorAvailability(null);
+        setAvailabilityError(availabilityError instanceof Error ? availabilityError.message : "Unable to check doctor availability.");
       } finally {
         setCheckingAvailability(false);
       }
@@ -632,6 +634,9 @@ export default function MedicalAppointments() {
                   <Loader2 size={14} className="animate-spin" aria-hidden="true" />
                   Checking doctor availability…
                 </div>
+              )}
+              {availabilityError && (
+                <p role="alert" className="text-sm text-red-400">{availabilityError}</p>
               )}
               {doctorAvailability && !doctorAvailability.available && (
                 <div className="border border-red-500/30 bg-red-500/10 px-3 py-3 text-sm" style={{ color: "#f87171" }}>

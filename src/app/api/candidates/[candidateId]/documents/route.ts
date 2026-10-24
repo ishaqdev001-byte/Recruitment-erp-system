@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { createDocumentStoragePath, DocumentInputError, MAX_DOCUMENT_SIZE, isDocumentType, isUuid, validateDocumentUpload } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { deleteInterServerFile, uploadInterServerFile } from "@/lib/storage/interserver";
+import { deleteInterServerFile, hasInterServerStorageConfig, uploadInterServerFile } from "@/lib/storage/interserver";
 
 export const runtime = "nodejs";
 
@@ -121,6 +121,11 @@ export async function POST(request: Request, context: RouteContext<"/api/candida
 
     const file = await validateDocumentUpload(formData);
     uploadedStoragePath = createDocumentStoragePath(candidate.company_id, candidate.id, `${candidate.first_name} ${candidate.last_name}`, documentType, file.extension);
+    if (!hasInterServerStorageConfig()) {
+      return privateJson({
+        error: "Document storage is not configured. Set INTERSERVER_STORAGE_HOST, INTERSERVER_STORAGE_USERNAME, INTERSERVER_STORAGE_PASSWORD, and INTERSERVER_STORAGE_BASE_PATH in the server environment.",
+      }, 503);
+    }
     await uploadInterServerFile(uploadedStoragePath, file.buffer);
 
     const { data, error } = await supabase
@@ -160,10 +165,10 @@ export async function POST(request: Request, context: RouteContext<"/api/candida
     }
     if (error instanceof DocumentInputError) return privateJson({ error: error.message }, error.status);
     const message = error instanceof Error ? error.message : "Unknown storage error";
-    if (/InterServer FTP authentication failed|INTERSERVER_STORAGE/i.test(message)) {
+    console.error("Candidate document upload failed", error);
+    if (/InterServer (?:FTP )?authentication failed|InterServer storage configuration|InterServer storage base path|INTERSERVER_STORAGE/i.test(message)) {
       return privateJson({ error: "Document storage is currently unavailable. Verify the InterServer FTP credentials and remote path configuration." }, 503);
     }
-    console.error("Candidate document upload failed", error);
     return privateJson({ error: "Document upload failed." }, 503);
   }
 }

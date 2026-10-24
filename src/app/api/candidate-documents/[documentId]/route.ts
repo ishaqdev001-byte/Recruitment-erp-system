@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createDocumentStoragePath, DocumentInputError, isDocumentType, isUuid, MAX_DOCUMENT_SIZE, safeDownloadName, validateDocumentUpload } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { deleteInterServerFile, downloadInterServerFile, uploadInterServerFile } from "@/lib/storage/interserver";
+import { deleteInterServerFile, downloadInterServerFile, hasInterServerStorageConfig, uploadInterServerFile } from "@/lib/storage/interserver";
 
 export const runtime = "nodejs";
 
@@ -45,6 +45,11 @@ export async function GET(request: Request, context: RouteContext<"/api/candidat
     const { document, supabase } = result;
     const previewable = ["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(document.mime_type);
     if (inline && !previewable) return privateJson({ error: "File preview is unavailable." }, 415);
+    if (!hasInterServerStorageConfig()) {
+      return privateJson({
+        error: "Document storage is not configured. Set INTERSERVER_STORAGE_HOST, INTERSERVER_STORAGE_USERNAME, INTERSERVER_STORAGE_PASSWORD, and INTERSERVER_STORAGE_BASE_PATH in the server environment.",
+      }, 503);
+    }
 
     const content = await downloadInterServerFile(document.storage_path);
     const { error: auditError } = await supabase.rpc("log_candidate_document_access", {
@@ -70,6 +75,10 @@ export async function GET(request: Request, context: RouteContext<"/api/candidat
     });
   } catch (error) {
     console.error("Candidate document retrieval failed", error);
+    const message = error instanceof Error ? error.message : "";
+    if (/InterServer (?:FTP )?authentication failed|InterServer storage configuration|InterServer storage base path|INTERSERVER_STORAGE/i.test(message)) {
+      return privateJson({ error: "Document storage is currently unavailable. Verify the InterServer FTP credentials and remote path configuration." }, 503);
+    }
     return privateJson({ error: "Unable to retrieve document." }, 503);
   }
 }

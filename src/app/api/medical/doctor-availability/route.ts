@@ -1,5 +1,18 @@
+import { createClient } from "@supabase/supabase-js";
+import { isUuid } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+
+const appointmentRoles = new Set(["CEO", "Finance Manager", "General Manager", "Medical Officer"]);
+
+function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+}
+
+type AdminClient = NonNullable<ReturnType<typeof createAdminClient>>;
 
 type AvailabilityCheckRequest = {
   doctorUserId: string;
@@ -33,34 +46,36 @@ export async function POST(request: Request): Promise<NextResponse<AvailabilityR
       );
     }
 
-    const body = (await request.json()) as AvailabilityCheckRequest;
+    const body = await request.json().catch(() => null) as AvailabilityCheckRequest | null;
+    if (!body) {
+      return NextResponse.json({ error: "A valid JSON request body is required." }, { status: 400, headers });
+    }
     const { doctorUserId, appointmentAt } = body;
 
-    if (!doctorUserId || !appointmentAt) {
+    if (typeof doctorUserId !== "string" || typeof appointmentAt !== "string" || !doctorUserId || !appointmentAt) {
       return NextResponse.json(
         { error: "doctorUserId and appointmentAt are required." },
         { status: 400, headers }
       );
     }
 
-    // Validate ISO 8601 format
-    try {
-      new Date(appointmentAt);
-    } catch {
+    if (!isUuid(doctorUserId)) {
+      return NextResponse.json({ error: "doctorUserId must be a valid user ID." }, { status: 400, headers });
+    }
+    const appointmentDate = new Date(appointmentAt);
+    if (Number.isNaN(appointmentDate.getTime())) {
       return NextResponse.json(
         { error: "appointmentAt must be in ISO 8601 format." },
         { status: 400, headers }
       );
     }
 
-    const appointmentDate = new Date(appointmentAt);
     const appointmentDateStr = appointmentDate.toISOString().split("T")[0];
-    const appointmentTimeStr = appointmentDate.toISOString().split("T")[1].substring(0, 8);
 
     // Get user's company membership to verify permission
     const { data: membership, error: membershipError } = await supabase
       .from("company_memberships")
-      .select("company_id")
+      .select("company_id, role_id")
       .eq("user_id", user.id)
       .eq("status", "active")
       .limit(1)
@@ -73,32 +88,69 @@ export async function POST(request: Request): Promise<NextResponse<AvailabilityR
       );
     }
 
-    // Check if user has finance.view permission to check doctor availability
-    const { data: roleData, error: roleError } = await supabase
-      .from("company_memberships")
-      .select("company_roles(permissions)")
-      .eq("user_id", user.id)
-      .eq("company_id", membership.company_id)
-      .single();
-
-    if (roleError) {
+    const canCreateCandidates = await supabase.rpc("current_user_has_company_permission", {
+      requested_company_id: membership.company_id,
+      requested_permission: "candidates.create",
+    });
+    const admin = createAdminClient();
+    if (canCreateCandidates.error) {
       return NextResponse.json(
         { error: "Unable to verify permissions." },
         { status: 403, headers }
       );
     }
 
-    const roleRecord = roleData as unknown as { company_roles: { permissions: Record<string, unknown> } | null };
-    const permissions = roleRecord?.company_roles?.permissions || {};
-    if (!permissions["finance.view"] && !permissions["finance.create"]) {
+    if (!admin) {
       return NextResponse.json(
-        { error: "Insufficient permissions. finance.view or finance.create required." },
+        { error: "Doctor availability requires SUPABASE_SERVICE_ROLE_KEY in the server environment." },
+        { status: 503, headers }
+      );
+    }
+
+    const [{ data: company, error: companyError }, { data: callerRole, error: callerRoleError }] = await Promise.all([
+      admin.from("companies").select("primary_admin_user_id").eq("id", membership.company_id).maybeSingle(),
+      admin.from("company_roles").select("name").eq("id", membership.role_id).eq("company_id", membership.company_id).maybeSingle(),
+    ]);
+    if (companyError || callerRoleError || !company || !callerRole) {
+      return NextResponse.json({ error: "Unable to verify the company role." }, { status: 500, headers });
+    }
+
+    const canBookAppointments = Boolean(canCreateCandidates.data)
+      || company.primary_admin_user_id === user.id
+      || appointmentRoles.has(callerRole.name);
+    if (!canBookAppointments) {
+      return NextResponse.json(
+        { error: "You do not have permission to check appointment availability." },
         { status: 403, headers }
       );
     }
 
+    const { data: doctorMembership, error: doctorMembershipError } = await admin.from("company_memberships")
+      .select("role_id")
+      .eq("company_id", membership.company_id)
+      .eq("user_id", doctorUserId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (doctorMembershipError) {
+      return NextResponse.json({ error: "Unable to verify the assigned doctor." }, { status: 500, headers });
+    }
+    if (!doctorMembership) {
+      return NextResponse.json({ error: "The selected user is not an active doctor in this company." }, { status: 400, headers });
+    }
+    const { data: doctorRole, error: doctorRoleError } = await admin.from("company_roles")
+      .select("name")
+      .eq("id", doctorMembership.role_id)
+      .eq("company_id", membership.company_id)
+      .maybeSingle();
+    if (doctorRoleError) {
+      return NextResponse.json({ error: "Unable to verify the assigned doctor's role." }, { status: 500, headers });
+    }
+    if (!doctorRole || !/doctor|medical officer/i.test(doctorRole.name)) {
+      return NextResponse.json({ error: "The selected user is not an active doctor in this company." }, { status: 400, headers });
+    }
+
     // Check if doctor has offline status for this appointment
-    const { data: offlineStatus, error: offlineError } = await supabase
+    const { data: offlineStatus, error: offlineError } = await admin
       .from("doctor_offline_status")
       .select("*")
       .eq("company_id", membership.company_id)
@@ -156,7 +208,7 @@ export async function POST(request: Request): Promise<NextResponse<AvailabilityR
 
     // Calculate next available time
     const nextAvailableAt = await getNextAvailableTime(
-      supabase,
+      admin,
       membership.company_id,
       doctorUserId,
       appointmentDate
@@ -198,47 +250,36 @@ export async function POST(request: Request): Promise<NextResponse<AvailabilityR
  * Looks ahead up to 30 days for a day when the doctor is not offline all day
  */
 async function getNextAvailableTime(
-  supabase: ReturnType<typeof createSupabaseServerClient> extends Promise<infer T> ? T : never,
+  supabase: AdminClient,
   companyId: string,
   doctorUserId: string,
   fromDate: Date
 ): Promise<Date | null> {
   const maxDaysToCheck = 30;
-  let checkDate = new Date(fromDate);
-  checkDate.setDate(checkDate.getDate() + 1); // Start checking from next day
+  const firstDay = new Date(fromDate);
+  firstDay.setUTCDate(firstDay.getUTCDate() + 1);
+  const lastDay = new Date(firstDay);
+  lastDay.setUTCDate(lastDay.getUTCDate() + maxDaysToCheck - 1);
+  const firstDayStr = firstDay.toISOString().slice(0, 10);
+  const lastDayStr = lastDay.toISOString().slice(0, 10);
 
-  for (let i = 0; i < maxDaysToCheck; i++) {
-    const checkDateStr = checkDate.toISOString().split("T")[0];
+  const { data: offlineDays, error } = await supabase
+    .from("doctor_offline_status")
+    .select("offline_date")
+    .eq("company_id", companyId)
+    .eq("doctor_user_id", doctorUserId)
+    .eq("is_all_day", true)
+    .gte("offline_date", firstDayStr)
+    .lte("offline_date", lastDayStr);
+  if (error) throw error;
 
-    // Check if doctor has all-day offline for this date
-    const { data: allDayOffline, error: offlineError } = await supabase
-      .from("doctor_offline_status")
-      .select("id")
-      .eq("company_id", companyId)
-      .eq("doctor_user_id", doctorUserId)
-      .eq("offline_date", checkDateStr)
-      .eq("is_all_day", true)
-      .limit(1)
-      .maybeSingle();
-
-    if (offlineError) {
-      console.error("Error checking offline status", offlineError);
-      continue;
-    }
-
-    // If no all-day offline, doctor is available on this day
-    if (!allDayOffline) {
-      // Return 8:00 AM on this date
-      const availableDate = new Date(`${checkDateStr}T08:00:00Z`);
-      return availableDate;
-    }
-
-    // Move to next day
-    checkDate.setDate(checkDate.getDate() + 1);
+  const unavailableDays = new Set((offlineDays ?? []).map((day) => day.offline_date));
+  const checkDate = new Date(firstDay);
+  for (let day = 0; day < maxDaysToCheck; day += 1) {
+    const dateStr = checkDate.toISOString().slice(0, 10);
+    if (!unavailableDays.has(dateStr)) return new Date(`${dateStr}T08:00:00Z`);
+    checkDate.setUTCDate(checkDate.getUTCDate() + 1);
   }
 
-  // If no availability found in 30 days, return 30 days from now at 8 AM
-  checkDate.setDate(fromDate.getDate() + maxDaysToCheck);
-  checkDate.setHours(8, 0, 0, 0);
-  return checkDate;
+  return new Date(`${lastDayStr}T08:00:00Z`);
 }

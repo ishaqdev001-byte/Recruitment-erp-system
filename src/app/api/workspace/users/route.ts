@@ -173,11 +173,36 @@ export async function POST(request: Request) {
       }
 
       if (!otherMemberships?.length) {
-        const { error } = await admin.auth.admin.deleteUser(userId);
-        if (error) return NextResponse.json({ error: "Unable to delete the user's account." }, { status: 500, headers: responseHeaders });
+        const { error: disableError } = await admin.from("company_memberships")
+          .update({ status: "disabled" })
+          .eq("company_id", access.companyId)
+          .eq("user_id", userId);
+        if (disableError) {
+          console.error("Company membership disable before account deletion failed", disableError);
+          return NextResponse.json({ error: "Unable to disable the user's company access before deletion." }, { status: 500, headers: responseHeaders });
+        }
+
+        // Keep Auth user references in finance and audit history valid while preventing future sign-ins.
+        const { error: deleteError } = await admin.auth.admin.deleteUser(userId, true);
+        if (deleteError) {
+          console.error("Workspace user soft deletion failed", deleteError);
+          return NextResponse.json({ error: "Unable to deactivate and remove the user's account." }, { status: 500, headers: responseHeaders });
+        }
+
+        const { error: membershipDeleteError } = await admin.from("company_memberships")
+          .delete()
+          .eq("company_id", access.companyId)
+          .eq("user_id", userId);
+        if (membershipDeleteError) {
+          console.error("Company membership removal after account deletion failed", membershipDeleteError);
+          return NextResponse.json({ error: "The account was deactivated, but its company membership could not be removed." }, { status: 500, headers: responseHeaders });
+        }
       } else {
         const { error } = await admin.from("company_memberships").delete().eq("company_id", access.companyId).eq("user_id", userId);
-        if (error) return NextResponse.json({ error: body.action === "revoke-invite" ? "Unable to revoke the company invitation." : "Unable to remove the user from this company." }, { status: 500, headers: responseHeaders });
+        if (error) {
+          console.error("Workspace company membership removal failed", error);
+          return NextResponse.json({ error: body.action === "revoke-invite" ? "Unable to revoke the company invitation." : "Unable to remove the user from this company." }, { status: 500, headers: responseHeaders });
+        }
       }
 
       return NextResponse.json({ success: true }, { headers: responseHeaders });

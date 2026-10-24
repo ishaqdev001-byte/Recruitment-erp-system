@@ -275,7 +275,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
     const prompts: Partial<Record<typeof action, string>> = {
       "set-status": user.status === "disabled" ? `Activate ${user.name}'s company access?` : `Deactivate ${user.name}'s company access?`,
       "revoke-invite": `Revoke the pending invitation for ${user.name}?`,
-      "delete-user": `Remove ${user.name} from this company? Their account is deleted only if they have no other company memberships.`,
+      "delete-user": `Remove ${user.name} from this company? If they have no other company memberships, their account will be deactivated and removed while keeping historical finance records intact.`,
     };
     const prompt = prompts[action];
     if (prompt && !window.confirm(prompt)) return;

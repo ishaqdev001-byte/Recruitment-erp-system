@@ -7,13 +7,13 @@
  *   • Navigation requests  → Network-first, fall back to cached shell.
  */
 
-const CACHE_NAME = "kilax-recruit-v1";
+const CACHE_NAME = "kilax-recruit-v2";
 
 // Resources to pre-cache on install (the app shell)
 const PRECACHE_URLS = [
   "/",
   "/manifest.webmanifest",
-  "/branding/Kilax Smart Copy.png",
+  "/branding/kilax-logo.png",
 ];
 
 // ─── Install ──────────────────────────────────────────────────────────────────

@@ -90,6 +90,10 @@ const workspaceInvitationExpiryMigration = await readFile(
   new URL("../supabase/migrations/202610040018_workspace_invitation_expiry.sql", import.meta.url),
   "utf8",
 );
+const invitedMemberWorkspaceAccessMigration = await readFile(
+  new URL("../supabase/migrations/202610240001_invited_member_workspace_access.sql", import.meta.url),
+  "utf8",
+);
 const companyDriveMigration = await readFile(
   new URL("../supabase/migrations/202610040019_company_drive.sql", import.meta.url),
   "utf8",
@@ -235,6 +239,8 @@ try {
   await database.exec(attendanceHistoryMigration);
   await database.exec(workspaceInvitationExpiryMigration);
   await database.exec(workspaceInvitationExpiryMigration);
+  await database.exec(invitedMemberWorkspaceAccessMigration);
+  await database.exec(invitedMemberWorkspaceAccessMigration);
   await database.exec(companyDriveMigration);
   await database.exec(companyDriveMigration);
   await database.exec(companyDriveMountsMigration);

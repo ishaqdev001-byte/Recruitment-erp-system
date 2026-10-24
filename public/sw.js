@@ -7,13 +7,13 @@
  *   • Navigation requests  → Network-first, fall back to cached shell.
  */
 
-const CACHE_NAME = "kilax-recruit-v2";
+const CACHE_NAME = "kilax-recruit-v3";
 
 // Resources to pre-cache on install (the app shell)
 const PRECACHE_URLS = [
   "/",
   "/manifest.webmanifest",
-  "/branding/kilax-logo.png",
+  "/branding/kilax-icon.svg",
 ];
 
 // ─── Install ──────────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ self.addEventListener("fetch", (event) => {
 
   // API calls — always network-only, never cache
   if (url.pathname.startsWith("/api/")) {
-    event.respondWith(fetch(request));
+    event.respondWith(fetch(request).catch(() => Response.error()));
     return;
   }
 
@@ -64,7 +64,7 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
         }
         return response;
-      }).catch(() => caches.match(request))
+      }).catch(() => caches.match(request).then((cached) => cached ?? Response.error()))
     );
     return;
   }
@@ -100,7 +100,7 @@ self.addEventListener("fetch", (event) => {
             caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }
           return response;
-        })
+        }).catch(() => Response.error())
     )
   );
 });

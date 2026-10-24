@@ -12,9 +12,9 @@
   "lang": "en",
   "icons": [
     {
-      "src": "/branding/kilax-logo.png",
-      "sizes": "any",
-      "type": "image/png",
+      "src": "/branding/kilax-icon.svg",
+      "sizes": "200x200",
+      "type": "image/svg+xml",
       "purpose": "any maskable"
     }
   ],
@@ -24,21 +24,21 @@
       "short_name": "Dashboard",
       "description": "Go to your recruitment dashboard",
       "url": "/dashboard",
-      "icons": [{ "src": "/branding/kilax-logo.png", "sizes": "any" }]
+      "icons": [{ "src": "/branding/kilax-icon.svg", "sizes": "200x200", "type": "image/svg+xml" }]
     },
     {
       "name": "Candidates",
       "short_name": "Candidates",
       "description": "Open the candidate pipeline",
       "url": "/candidates",
-      "icons": [{ "src": "/branding/kilax-logo.png", "sizes": "any" }]
+      "icons": [{ "src": "/branding/kilax-icon.svg", "sizes": "200x200", "type": "image/svg+xml" }]
     },
     {
       "name": "Tasks",
       "short_name": "Tasks",
       "description": "View your tasks",
       "url": "/tasks",
-      "icons": [{ "src": "/branding/kilax-logo.png", "sizes": "any" }]
+      "icons": [{ "src": "/branding/kilax-icon.svg", "sizes": "200x200", "type": "image/svg+xml" }]
     }
   ],
   "categories": ["business", "productivity"],

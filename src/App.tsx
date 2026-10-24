@@ -8,7 +8,7 @@ import type { User } from "@supabase/supabase-js";
 function KilaxLogo({ size = 64 }: { size?: number }) {
   return (
     <img
-      src="/branding/kilax-logo.png"
+      src="/branding/kilax-icon.svg"
       alt="Kilax Smart Recruit"
       width={size}
       height={size}

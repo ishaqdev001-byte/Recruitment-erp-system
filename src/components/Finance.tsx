@@ -1,136 +1,255 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState } from "react"
 
-type FinanceTab = "overview" | "income" | "input" | "expenses" | "payroll";
+type FinanceTab = "overview" | "paycheck"
 
-const incomeRows = [
-  { date: "Aug 20, 2026", description: "Candidate Deposit – Godfrey Kamuhangire", type: "Candidate Deposit", method: "Mobile Money", amount: 1500000, ref: "DEP-20260820-001", recordedBy: "Aisha Khan", status: "Confirmed" },
-  { date: "Aug 19, 2026", description: "Placement Fee – Alice Namukasa (Kuwait)", type: "Placement Fee", method: "Bank Transfer", amount: 3200000, ref: "PL-20260819-003", recordedBy: "Aisha Khan", status: "Confirmed" },
-  { date: "Aug 18, 2026", description: "Recruitment Fee – Suzan Mirembe", type: "Recruitment Fee", method: "Cash", amount: 800000, ref: "RF-20260818-007", recordedBy: "Director Vicent", status: "Confirmed" },
-  { date: "Aug 17, 2026", description: "Final Payment – James Okello", type: "Candidate Payment", method: "Mobile Money", amount: 2100000, ref: "PAY-20260817-011", recordedBy: "Asiimwe david", status: "Confirmed" },
-  { date: "Aug 16, 2026", description: "Client Company Payment – Gulf Manpower Ltd", type: "Client Payment", method: "Bank Transfer", amount: 5000000, ref: "CL-20260816-001", recordedBy: "Aisha Khan", status: "Confirmed" },
-  { date: "Aug 15, 2026", description: "Agent Commission – Referral Fee", type: "Other Income", method: "Cash", amount: 350000, ref: "OTH-20260815-002", recordedBy: "Aisha Khan", status: "Pending" },
-];
+const UGX = (n: number) => `UGX ${n.toLocaleString()}`
 
-const expenseRows = [
-  { date: "Aug 21, 2026", description: "Medical Exam – 8 Candidates", type: "Medical", method: "Cash", amount: 960000, ref: "EXP-20260821-001", recordedBy: "Aisha Khan", status: "Approved" },
-  { date: "Aug 20, 2026", description: "Visa Processing – Saudi Arabia x4", type: "Visa", method: "Bank Transfer", amount: 1200000, ref: "EXP-20260820-002", recordedBy: "Director Vicent", status: "Approved" },
-  { date: "Aug 19, 2026", description: "Office Rent – August 2026", type: "Office", method: "Bank Transfer", amount: 1800000, ref: "EXP-20260819-003", recordedBy: "Aisha Khan", status: "Approved" },
-  { date: "Aug 18, 2026", description: "Transport – Airport Transfers x3", type: "Transport", method: "Cash", amount: 210000, ref: "EXP-20260818-004", recordedBy: "Asiimwe david", status: "Approved" },
-  { date: "Aug 17, 2026", description: "Passport Processing Fees x6", type: "Passport", method: "Cash", amount: 480000, ref: "EXP-20260817-005", recordedBy: "Director Vicent", status: "Approved" },
-  { date: "Aug 16, 2026", description: "Internet & Utilities", type: "Office", method: "Mobile Money", amount: 150000, ref: "EXP-20260816-006", recordedBy: "Aisha Khan", status: "Approved" },
-];
+type FinancePeriod = {
+  start: string | null
+  end: string
+}
 
-const payrollRows = [
-  { employee: "Aisha Khan", role: "Head of TA", amount: 3500000, date: "Aug 25, 2026", method: "Bank Transfer", ref: "PAY-AUG-001", status: "Paid" },
-  { employee: "Director Vicent", role: "Recruitment Director", amount: 4200000, date: "Aug 25, 2026", method: "Bank Transfer", ref: "PAY-AUG-002", status: "Paid" },
-  { employee: "Asiimwe David", role: "Agent", amount: 1800000, date: "Aug 25, 2026", method: "Mobile Money", ref: "PAY-AUG-003", status: "Pending" },
-  { employee: "Fatuma Nakirya", role: "Agent", amount: 1600000, date: "Aug 25, 2026", method: "Mobile Money", ref: "PAY-AUG-004", status: "Processing" },
-  { employee: "Peter Mukasa", role: "Agent – Gulu", amount: 1400000, date: "Aug 25, 2026", method: "Bank Transfer", ref: "PAY-AUG-005", status: "Pending" },
-  { employee: "Grace Acen", role: "Admin Officer", amount: 1200000, date: "Aug 25, 2026", method: "Mobile Money", ref: "PAY-AUG-006", status: "Paid" },
-];
+type FinanceBreakdown = {
+  label: string
+  amount: number
+  color: string
+}
 
-const payrollStatusColor: Record<string, string> = {
-  Paid: "#10b981", Pending: "#f59e0b", Processing: "#6366f1", Failed: "#ef4444"
-};
+type FinanceCurrencyAmount = {
+  currency: string
+  amount: number
+}
 
-const incomeTypeColor: Record<string, string> = {
-  "Candidate Deposit": "#6366f1", "Placement Fee": "#10b981", "Recruitment Fee": "#3b82f6",
-  "Candidate Payment": "#8b5cf6", "Client Payment": "#f59e0b", "Other Income": "#6b7280",
-};
-const expenseTypeColor: Record<string, string> = {
-  Medical: "#10b981", Visa: "#6366f1", Office: "#3b82f6", Transport: "#f59e0b",
-  Passport: "#8b5cf6", Documentation: "#14b8a6", Staff: "#ec4899", Other: "#6b7280",
-};
+type FinanceAccount = {
+  id: string
+  name: string
+  type: string
+  status: string
+  balance: number
+}
 
-const UGX = (n: number) => `UGX ${n.toLocaleString()}`;
+type FinanceActivity = {
+  id: string
+  date: string
+  description: string
+  type: string
+  amount: number
+  direction: "in" | "out"
+  reference: string
+}
 
-const kpiData = [
-  { label: "Total Income", value: "UGX 12,950,000", sub: "Aug 2026", color: "#10b981" },
-  { label: "Total Expenses", value: "UGX 4,800,000", sub: "Aug 2026", color: "#ef4444" },
-  { label: "Net Profit", value: "UGX 8,150,000", sub: "Aug 2026", color: "#f59e0b" },
-  { label: "Outstanding", value: "UGX 3,400,000", sub: "Unpaid balances", color: "#6366f1" },
-  { label: "Deposits", value: "UGX 1,500,000", sub: "This month", color: "#8b5cf6" },
-  { label: "Monthly Revenue", value: "UGX 12,950,000", sub: "+18% vs July", color: "#3b82f6" },
-];
+type PaycheckEmployee = {
+  name: string
+  staff_id: string
+  position: string
+}
 
-const monthlyChart = [
-  { month: "Feb", income: 8.2, expenses: 3.1 },
-  { month: "Mar", income: 9.5, expenses: 3.8 },
-  { month: "Apr", income: 7.8, expenses: 3.4 },
-  { month: "May", income: 11.2, expenses: 4.2 },
-  { month: "Jun", income: 13.4, expenses: 5.1 },
-  { month: "Jul", income: 10.9, expenses: 4.5 },
-  { month: "Aug", income: 12.95, expenses: 4.8 },
-];
-const maxVal = Math.max(...monthlyChart.map((m) => m.income));
+type FinanceTabOption = {
+  id: FinanceTab
+  label: string
+}
+
+type FinanceOverview = {
+  range: string
+  period: FinancePeriod
+  totals: {
+    income: number
+    expenses: number
+    net: number
+    accountBalance: number
+    invoiceDue: number
+    candidateDeposits: number
+    invoicePayments: number
+    otherIncome: number
+    paychecks: number
+    contractorDue: number
+  }
+  accounts: {
+    id: string
+    name: string
+    type: string
+    status: string
+    balance: number
+  }[]
+  requisitionDueByCurrency: FinanceCurrencyAmount[]
+  incomeBreakdown: FinanceBreakdown[]
+  expenseBreakdown: FinanceBreakdown[]
+  monthlyTrend: {
+    month: string
+    income: number
+    expenses: number
+  }[]
+  recentActivity: FinanceActivity[]
+}
+
+type PaycheckRecord = {
+  id: string
+  pay_period: string
+  gross_amount: number
+  benefits_total: number
+  deductions_total: number
+  net_amount: number
+  payment_date: string
+  payment_method: string
+  payment_reference: string
+  employee: PaycheckEmployee
+  payslipUrl: string
+}
+
+type PaycheckPayload = {
+  paychecks?: PaycheckRecord[]
+  error?: string
+}
+
+function donutGradient(items: FinanceBreakdown[]) {
+  const total = items.reduce((sum, item) => sum + item.amount, 0)
+  if (!total) return "conic-gradient(var(--border) 0deg 360deg)"
+  let offset = 0
+  const stops = items
+    .filter((item) => item.amount > 0)
+    .map((item) => {
+      const start = offset
+      offset += (item.amount / total) * 360
+      return `${item.color} ${start}deg ${offset}deg`
+    })
+  return `conic-gradient(${stops.join(", ")})`
+}
 
 export default function Finance() {
-  const [tab, setTab] = useState<FinanceTab>("overview");
-  const [dateRange, setDateRange] = useState("This Month");
-  const [incomeEntries, setIncomeEntries] = useState(incomeRows);
+  const [tab, setTab] = useState<FinanceTab>("overview")
+  const [dateRange, setDateRange] = useState("This Month")
+  const [overview, setOverview] = useState<FinanceOverview | null>(null)
+  const [overviewLoading, setOverviewLoading] = useState(true)
+  const [overviewError, setOverviewError] = useState("")
+  const [paychecks, setPaychecks] = useState<PaycheckRecord[]>([])
+  const [paychecksLoading, setPaychecksLoading] = useState(false)
+  const [paychecksError, setPaychecksError] = useState("")
 
-  const recordCandidateServiceCharge = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const candidate = String(formData.get("candidate")).trim();
-    const amount = Number(formData.get("amount"));
-    const date = String(formData.get("date"));
+  useEffect(() => {
+    let cancelled = false
+    const loadOverview = async () => {
+      setOverviewLoading(true)
+      setOverviewError("")
+      try {
+        const response = await fetch(
+          `/api/finance/overview?range=${encodeURIComponent(dateRange)}`,
+          { cache: "no-store" },
+        )
+        const result = (await response.json()) as FinanceOverview & {
+          error?: string
+        }
+        if (!response.ok)
+          throw new Error(
+            result.error ?? "Unable to load the company finance summary.",
+          )
+        if (!cancelled) setOverview(result)
+      } catch (error) {
+        if (!cancelled)
+          setOverviewError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load the company finance summary.",
+          )
+      } finally {
+        if (!cancelled) setOverviewLoading(false)
+      }
+    }
+    void loadOverview()
+    return () => {
+      cancelled = true
+    }
+  }, [dateRange])
 
-    setIncomeEntries((entries) => [{
-      date: new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
-      description: `Candidate Service Charge – ${candidate}`,
-      type: "Candidate Service Charge",
-      method: String(formData.get("method")),
-      amount,
-      ref: String(formData.get("reference")).trim() || `INC-${Date.now()}`,
-      recordedBy: "Finance team",
-      status: "Confirmed",
-    }, ...entries]);
+  useEffect(() => {
+    if (tab !== "paycheck") return
+    let cancelled = false
+    const loadPaychecks = async () => {
+      setPaychecksLoading(true)
+      setPaychecksError("")
+      try {
+        const response = await fetch("/api/paychecks", { cache: "no-store" })
+        const result = (await response.json()) as PaycheckPayload
+        if (!response.ok)
+          throw new Error(result.error ?? "Unable to load company paychecks.")
+        if (!cancelled) setPaychecks(result.paychecks ?? [])
+      } catch (error) {
+        if (!cancelled)
+          setPaychecksError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load company paychecks.",
+          )
+      } finally {
+        if (!cancelled) setPaychecksLoading(false)
+      }
+    }
+    void loadPaychecks()
+    return () => {
+      cancelled = true
+    }
+  }, [tab])
 
-    form.reset();
-    setTab("income");
-  };
-
-  const tabs: { id: FinanceTab; label: string }[] = [
+  const tabs: FinanceTabOption[] = [
     { id: "overview", label: "Overview" },
-    { id: "income", label: "Income" },
-    { id: "input", label: "Input" },
-    { id: "expenses", label: "Expenses" },
-    { id: "payroll", label: "Payroll" },
-  ];
+    { id: "paycheck", label: "Paycheck" },
+  ]
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="px-6 py-4 border-b flex items-center justify-between shrink-0" style={{ borderColor: "var(--border)" }}>
+      <div
+        className="px-6 py-4 border-b flex items-center justify-between shrink-0"
+        style={{ borderColor: "var(--border)" }}
+      >
         <div>
-          <h1 className="text-xl font-700" style={{ color: "var(--foreground)" }}>Finance</h1>
-          <p className="text-sm mono mt-0.5" style={{ color: "var(--muted-foreground)" }}>Recruitment company financial management</p>
+          <h1
+            className="text-xl font-700"
+            style={{ color: "var(--foreground)" }}
+          >
+            Finance
+          </h1>
+          <p
+            className="text-sm mono mt-0.5"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            Recruitment company financial management
+          </p>
         </div>
         <div className="flex gap-3">
           <select
             value={dateRange}
             onChange={(e) => setDateRange(e.target.value)}
             className="px-3 py-1.5 text-sm rounded border outline-none"
-            style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }}
+            style={{
+              background: "var(--card)",
+              borderColor: "var(--border)",
+              color: "var(--foreground)",
+            }}
           >
-            {["Today", "This Week", "This Month", "This Year", "Custom Range"].map((r) => <option key={r}>{r}</option>)}
+            {["Today", "This Week", "This Month", "This Year", "All Time"].map(
+              (r) => (
+                <option key={r}>{r}</option>
+              ),
+            )}
           </select>
-          <button onClick={() => setTab("input")} className="px-4 py-1.5 text-sm font-600 rounded" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-            + Record Transaction
-          </button>
         </div>
       </div>
 
-      <div className="flex border-b shrink-0" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+      <div
+        className="flex border-b shrink-0"
+        style={{ borderColor: "var(--border)", background: "var(--card)" }}
+      >
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             className="px-5 py-3 text-sm font-600 transition-colors"
             style={{
-              color: tab === t.id ? "var(--primary)" : "var(--muted-foreground)",
-              borderBottom: tab === t.id ? "2px solid var(--primary)" : "2px solid transparent",
+              color:
+                tab === t.id ? "var(--primary)" : "var(--muted-foreground)",
+              borderBottom:
+                tab === t.id
+                  ? "2px solid var(--primary)"
+                  : "2px solid transparent",
             }}
           >
             {t.label}
@@ -139,244 +258,577 @@ export default function Finance() {
       </div>
 
       <div className="flex-1 overflow-auto p-6">
-        {tab === "overview" && (
-          <>
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              {kpiData.map((k) => (
-                <div key={k.label} className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-                  <div className="text-xs font-700 uppercase tracking-widest mb-2" style={{ color: "var(--muted-foreground)" }}>{k.label}</div>
-                  <div className="mono text-xl font-700 mb-1" style={{ color: k.color }}>{k.value}</div>
-                  <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>{k.sub}</div>
+        {tab === "overview" &&
+          (overviewLoading ? (
+            <p
+              className="py-12 text-center text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Loading company finance summary…
+            </p>
+          ) : overviewError ? (
+            <div
+              className="rounded border p-5 text-sm"
+              role="alert"
+              style={{ borderColor: "#ef4444", color: "#ef4444" }}
+            >
+              {overviewError}
+            </div>
+          ) : overview ? (
+            <>
+              <div
+                className="mb-4 text-xs"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Company financial activity ·{" "}
+                {overview.period.start ? `${overview.period.start} – ` : ""}
+                {overview.period.end}
+              </div>
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+                {[
+                  {
+                    label: "Money received",
+                    value: overview.totals.income,
+                    color: "#10b981",
+                  },
+                  {
+                    label: "Money spent",
+                    value: overview.totals.expenses,
+                    color: "#ef4444",
+                  },
+                  {
+                    label: "Net cash flow",
+                    value: overview.totals.net,
+                    color: overview.totals.net >= 0 ? "#10b981" : "#ef4444",
+                  },
+                  {
+                    label: "Current account balance",
+                    value: overview.totals.accountBalance,
+                    color: "#6366f1",
+                  },
+                ].map((card) => (
+                  <div
+                    key={card.label}
+                    className="rounded border p-5"
+                    style={{
+                      background: "var(--card)",
+                      borderColor: "var(--border)",
+                    }}
+                  >
+                    <div
+                      className="text-xs font-700 uppercase tracking-widest mb-2"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {card.label}
+                    </div>
+                    <div
+                      className="mono text-lg font-700"
+                      style={{ color: card.color }}
+                    >
+                      {UGX(card.value)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+                {[
+                  {
+                    label: "Unpaid invoices receivable",
+                    value: UGX(overview.totals.invoiceDue),
+                    detail:
+                      "Outstanding candidate, contractor, and supplier invoices",
+                    color: "#f59e0b",
+                  },
+                  {
+                    label: "Candidate deposits",
+                    value: UGX(overview.totals.candidateDeposits),
+                    detail: "Received in selected period",
+                    color: "#6366f1",
+                  },
+                  {
+                    label: "Contractor charges due",
+                    value: UGX(overview.totals.contractorDue),
+                    detail: "Accrued project contractor charges",
+                    color: "#ec4899",
+                  },
+                  {
+                    label: "Approved requisitions due",
+                    value: overview.requisitionDueByCurrency.length
+                      ? overview.requisitionDueByCurrency
+                          .map(
+                            (item) =>
+                              `${item.currency} ${item.amount.toLocaleString()}`,
+                          )
+                          .join(" · ")
+                      : UGX(0),
+                    detail: "Outstanding approved amounts",
+                    color: "#f97316",
+                  },
+                ].map((card) => (
+                  <div
+                    key={card.label}
+                    className="rounded border p-4"
+                    style={{
+                      background: "var(--card)",
+                      borderColor: "var(--border)",
+                    }}
+                  >
+                    <div
+                      className="text-xs font-700 uppercase tracking-widest mb-2"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {card.label}
+                    </div>
+                    <div
+                      className="mono text-base font-700"
+                      style={{ color: card.color }}
+                    >
+                      {card.value}
+                    </div>
+                    <div
+                      className="text-xs mt-1"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {card.detail}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div
+                className="rounded border p-5 mb-6"
+                style={{
+                  background: "var(--card)",
+                  borderColor: "var(--border)",
+                }}
+              >
+                <h3
+                  className="text-xs font-700 uppercase tracking-widest mb-5"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Income vs expenses · Last 6 months
+                </h3>
+                <div className="flex items-end gap-3 h-48">
+                  {overview.monthlyTrend.map((month) => {
+                    const maximum = Math.max(
+                      1,
+                      ...overview.monthlyTrend.flatMap((item) => [
+                        item.income,
+                        item.expenses,
+                      ]),
+                    )
+                    return (
+                      <div
+                        key={month.month}
+                        className="flex-1 flex flex-col items-center gap-2 min-w-0"
+                      >
+                        <div className="w-full max-w-16 flex gap-1 items-end justify-center h-36">
+                          <div
+                            title={`Income ${UGX(month.income)}`}
+                            className="w-1/2 rounded-t"
+                            style={{
+                              height: `${Math.max(month.income > 0 ? 3 : 0, (month.income / maximum) * 132)}px`,
+                              background: "#10b981",
+                            }}
+                          />
+                          <div
+                            title={`Expenses ${UGX(month.expenses)}`}
+                            className="w-1/2 rounded-t"
+                            style={{
+                              height: `${Math.max(month.expenses > 0 ? 3 : 0, (month.expenses / maximum) * 132)}px`,
+                              background: "#ef4444",
+                            }}
+                          />
+                        </div>
+                        <span
+                          className="mono text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {month.month}
+                        </span>
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
-            </div>
-
-            <div className="rounded border p-6 mb-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-              <h3 className="text-xs font-700 uppercase tracking-widest mb-6" style={{ color: "var(--muted-foreground)" }}>Income vs Expenses (UGX millions)</h3>
-              <div className="flex items-end gap-4 h-40">
-                {monthlyChart.map((m) => (
-                  <div key={m.month} className="flex-1 flex flex-col items-center gap-1">
-                    <div className="w-full flex gap-1 items-end" style={{ height: "120px" }}>
-                      <div className="flex-1 rounded-t" style={{ height: `${(m.income / maxVal) * 120}px`, background: "#10b981" }} />
-                      <div className="flex-1 rounded-t" style={{ height: `${(m.expenses / maxVal) * 120}px`, background: "#ef4444" }} />
+                <div className="flex gap-4 mt-3">
+                  {[
+                    ["#10b981", "Income"],
+                    ["#ef4444", "Expenses"],
+                  ].map(([color, label]) => (
+                    <div key={label} className="flex items-center gap-2">
+                      <div
+                        className="w-3 h-3 rounded-sm"
+                        style={{ background: color }}
+                      />
+                      <span
+                        className="text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {label}
+                      </span>
                     </div>
-                    <span className="mono text-xs" style={{ color: "var(--muted-foreground)" }}>{m.month}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex gap-4 mt-3">
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm" style={{ background: "#10b981" }} /><span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Income</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm" style={{ background: "#ef4444" }} /><span className="text-xs" style={{ color: "var(--muted-foreground)" }}>Expenses</span></div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-                <h3 className="text-xs font-700 uppercase tracking-widest mb-4" style={{ color: "var(--muted-foreground)" }}>Recent Income</h3>
-                {incomeEntries.slice(0, 4).map((r, i) => (
-                  <div key={i} className="flex items-center justify-between py-2.5 border-b" style={{ borderColor: "var(--border)" }}>
-                    <div>
-                      <div className="text-xs font-600 mb-0.5" style={{ color: "var(--foreground)" }}>{r.description}</div>
-                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: incomeTypeColor[r.type] || "#6b7280", background: (incomeTypeColor[r.type] || "#6b7280") + "20" }}>{r.type}</span>
-                    </div>
-                    <span className="mono text-sm font-700" style={{ color: "#10b981" }}>+{UGX(r.amount)}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-                <h3 className="text-xs font-700 uppercase tracking-widest mb-4" style={{ color: "var(--muted-foreground)" }}>Recent Expenses</h3>
-                {expenseRows.slice(0, 4).map((r, i) => (
-                  <div key={i} className="flex items-center justify-between py-2.5 border-b" style={{ borderColor: "var(--border)" }}>
-                    <div>
-                      <div className="text-xs font-600 mb-0.5" style={{ color: "var(--foreground)" }}>{r.description}</div>
-                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: expenseTypeColor[r.type] || "#6b7280", background: (expenseTypeColor[r.type] || "#6b7280") + "20" }}>{r.type}</span>
-                    </div>
-                    <span className="mono text-sm font-700" style={{ color: "#ef4444" }}>-{UGX(r.amount)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-
-        {tab === "income" && (
-          <>
-            <div className="flex justify-end mb-4">
-              <button onClick={() => setTab("input")} className="px-4 py-1.5 text-sm font-600 rounded" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-                + Record Income
-              </button>
-            </div>
-            <div className="rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                    {["Date", "Description", "Type", "Method", "Amount", "Ref", "Recorded By", "Status"].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {incomeEntries.map((r, i) => (
-                    <tr key={i} className="border-b" style={{ borderColor: "var(--border)" }}>
-                      <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{r.date}</td>
-                      <td className="px-4 py-3 text-sm font-600 max-w-xs" style={{ color: "var(--foreground)" }}>{r.description}</td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: incomeTypeColor[r.type] || "#6b7280", background: (incomeTypeColor[r.type] || "#6b7280") + "20" }}>{r.type}</span>
-                      </td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{r.method}</td>
-                      <td className="px-4 py-3 mono font-700" style={{ color: "#10b981" }}>+{UGX(r.amount)}</td>
-                      <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{r.ref}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{r.recordedBy}</td>
-                      <td className="px-4 py-3">
-                        <span className="mono text-xs font-600 px-1.5 py-0.5 rounded"
-                          style={{ color: r.status === "Confirmed" ? "#10b981" : "#f59e0b", background: r.status === "Confirmed" ? "#10b98120" : "#f59e0b20" }}>
-                          {r.status}
-                        </span>
-                      </td>
-                    </tr>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-
-        {tab === "input" && (
-          <div className="max-w-3xl mx-auto">
-            <div className="mb-5">
-              <h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Candidate Service Charge</h2>
-              <p className="text-sm mt-1" style={{ color: "var(--muted-foreground)" }}>Record a candidate service charge as company income.</p>
-            </div>
-            <form onSubmit={recordCandidateServiceCharge} className="rounded border p-6 grid grid-cols-2 gap-4" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-              <label className="text-sm font-600" style={{ color: "var(--foreground)" }}>
-                Income category
-                <input value="Candidate Service Charge" readOnly className="mt-1.5 w-full px-3 py-2 text-sm rounded border" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--muted-foreground)" }} />
-              </label>
-              <label className="text-sm font-600" style={{ color: "var(--foreground)" }}>
-                Candidate name
-                <input name="candidate" required className="mt-1.5 w-full px-3 py-2 text-sm rounded border outline-none" placeholder="Enter candidate name" style={{ background: "var(--background)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-              </label>
-              <label className="text-sm font-600" style={{ color: "var(--foreground)" }}>
-                Amount (UGX)
-                <input name="amount" type="number" min="1" step="1" required className="mt-1.5 w-full px-3 py-2 text-sm rounded border outline-none" placeholder="0" style={{ background: "var(--background)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-              </label>
-              <label className="text-sm font-600" style={{ color: "var(--foreground)" }}>
-                Payment date
-                <input name="date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} className="mt-1.5 w-full px-3 py-2 text-sm rounded border outline-none" style={{ background: "var(--background)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-              </label>
-              <label className="text-sm font-600" style={{ color: "var(--foreground)" }}>
-                Payment method
-                <select name="method" required defaultValue="Mobile Money" className="mt-1.5 w-full px-3 py-2 text-sm rounded border outline-none" style={{ background: "var(--background)", borderColor: "var(--border)", color: "var(--foreground)" }}>
-                  {["Cash", "Bank Transfer", "Mobile Money"].map((method) => <option key={method}>{method}</option>)}
-                </select>
-              </label>
-              <label className="text-sm font-600" style={{ color: "var(--foreground)" }}>
-                Reference number <span className="font-400" style={{ color: "var(--muted-foreground)" }}>(optional)</span>
-                <input name="reference" className="mt-1.5 w-full px-3 py-2 text-sm rounded border outline-none" placeholder="Generated if left blank" style={{ background: "var(--background)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-              </label>
-              <div className="col-span-2 flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setTab("income")} className="px-4 py-2 text-sm font-600 rounded border" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button>
-                <button type="submit" className="px-4 py-2 text-sm font-600 rounded" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>Save income</button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {tab === "expenses" && (
-          <>
-            <div className="flex justify-end mb-4">
-              <button className="px-4 py-1.5 text-sm font-600 rounded" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-                + Record Expense
-              </button>
-            </div>
-            <div className="rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                    {["Date", "Description", "Type", "Method", "Amount", "Ref", "Recorded By", "Status"].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {expenseRows.map((r, i) => (
-                    <tr key={i} className="border-b" style={{ borderColor: "var(--border)" }}>
-                      <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{r.date}</td>
-                      <td className="px-4 py-3 text-sm font-600 max-w-xs" style={{ color: "var(--foreground)" }}>{r.description}</td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: expenseTypeColor[r.type] || "#6b7280", background: (expenseTypeColor[r.type] || "#6b7280") + "20" }}>{r.type}</span>
-                      </td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{r.method}</td>
-                      <td className="px-4 py-3 mono font-700" style={{ color: "#ef4444" }}>-{UGX(r.amount)}</td>
-                      <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{r.ref}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{r.recordedBy}</td>
-                      <td className="px-4 py-3">
-                        <span className="mono text-xs font-600 px-1.5 py-0.5 rounded" style={{ color: "#10b981", background: "#10b98120" }}>
-                          {r.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-
-        {tab === "payroll" && (
-          <>
-            <div className="grid grid-cols-3 gap-4 mb-5">
-              {[
-                { label: "Total Payroll (Aug)", value: "UGX 13,700,000", color: "#6366f1" },
-                { label: "Paid", value: "UGX 8,900,000", color: "#10b981" },
-                { label: "Pending", value: "UGX 4,800,000", color: "#f59e0b" },
-              ].map((k) => (
-                <div key={k.label} className="rounded border p-4" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-                  <div className="mono text-xl font-700 mb-1" style={{ color: k.color }}>{k.value}</div>
-                  <div className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>{k.label}</div>
                 </div>
-              ))}
-            </div>
-            <div className="flex justify-end mb-4">
-              <button className="px-4 py-1.5 text-sm font-600 rounded" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-                + Record Paycheck
-              </button>
-            </div>
-            <div className="rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                    {["Employee", "Role", "Amount", "Pay Date", "Method", "Ref", "Status", ""].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {payrollRows.map((r, i) => (
-                    <tr key={i} className="border-b" style={{ borderColor: "var(--border)" }}>
-                      <td className="px-4 py-3 font-600" style={{ color: "var(--foreground)" }}>{r.employee}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{r.role}</td>
-                      <td className="px-4 py-3 mono font-700" style={{ color: "var(--foreground)" }}>{UGX(r.amount)}</td>
-                      <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{r.date}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{r.method}</td>
-                      <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{r.ref}</td>
-                      <td className="px-4 py-3">
-                        <span className="mono text-xs font-600 px-1.5 py-0.5 rounded"
-                          style={{ color: payrollStatusColor[r.status], background: payrollStatusColor[r.status] + "20" }}>
-                          {r.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <button className="text-xs px-2 py-1 rounded border" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Payslip</button>
-                      </td>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
+                {[
+                  {
+                    title: "Income sources",
+                    entries: overview.incomeBreakdown,
+                  },
+                  {
+                    title: "Spending breakdown",
+                    entries: overview.expenseBreakdown,
+                  },
+                ].map((chart) => (
+                  <div
+                    key={chart.title}
+                    className="rounded border p-5"
+                    style={{
+                      background: "var(--card)",
+                      borderColor: "var(--border)",
+                    }}
+                  >
+                    <h3
+                      className="text-xs font-700 uppercase tracking-widest mb-4"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {chart.title}
+                    </h3>
+                    <div className="flex items-center gap-5">
+                      <div
+                        className="w-28 h-28 rounded-full shrink-0 grid place-items-center"
+                        style={{ background: donutGradient(chart.entries) }}
+                      >
+                        <div
+                          className="w-16 h-16 rounded-full grid place-items-center text-[10px] font-700"
+                          style={{
+                            background: "var(--card)",
+                            color: "var(--muted-foreground)",
+                          }}
+                        >
+                          UGX
+                        </div>
+                      </div>
+                      <div className="space-y-2 min-w-0">
+                        {chart.entries.map((entry) => (
+                          <div
+                            key={entry.label}
+                            className="flex items-center gap-2 text-xs"
+                          >
+                            <span
+                              className="w-2.5 h-2.5 rounded-sm shrink-0"
+                              style={{ background: entry.color }}
+                            />
+                            <span
+                              className="truncate"
+                              style={{ color: "var(--muted-foreground)" }}
+                            >
+                              {entry.label}
+                            </span>
+                            <span
+                              className="mono ml-auto font-600"
+                              style={{ color: "var(--foreground)" }}
+                            >
+                              {UGX(entry.amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div
+                  className="rounded border p-5"
+                  style={{
+                    background: "var(--card)",
+                    borderColor: "var(--border)",
+                  }}
+                >
+                  <h3
+                    className="text-xs font-700 uppercase tracking-widest mb-4"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Account balances
+                  </h3>
+                  {overview.accounts.filter(
+                    (account) => account.status === "active",
+                  ).length ? (
+                    <div className="space-y-3">
+                      {overview.accounts
+                        .filter((account) => account.status === "active")
+                        .slice(0, 5)
+                        .map((account) => {
+                          const maxBalance = Math.max(
+                            1,
+                            ...overview.accounts
+                              .filter((item) => item.status === "active")
+                              .map((item) => Math.abs(item.balance)),
+                          )
+                          return (
+                            <div key={account.id}>
+                              <div className="flex justify-between gap-2 text-xs mb-1">
+                                <span
+                                  className="truncate"
+                                  style={{ color: "var(--muted-foreground)" }}
+                                >
+                                  {account.name}
+                                </span>
+                                <span
+                                  className="mono font-600 shrink-0"
+                                  style={{ color: "var(--foreground)" }}
+                                >
+                                  {UGX(account.balance)}
+                                </span>
+                              </div>
+                              <div
+                                className="h-1.5 rounded-full overflow-hidden"
+                                style={{ background: "var(--secondary)" }}
+                              >
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{
+                                    width: `${(Math.abs(account.balance) / maxBalance) * 100}%`,
+                                    background: "#6366f1",
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          )
+                        })}
+                    </div>
+                  ) : (
+                    <p
+                      className="text-sm"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      No company accounts yet.
+                    </p>
+                  )}
+                  <p
+                    className="text-[11px] mt-3"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    {
+                      overview.accounts.filter(
+                        (account) => account.status === "active",
+                      ).length
+                    }{" "}
+                    active accounts
+                  </p>
+                </div>
+              </div>
+
+              <div
+                className="rounded border p-5"
+                style={{
+                  background: "var(--card)",
+                  borderColor: "var(--border)",
+                }}
+              >
+                <h3
+                  className="text-xs font-700 uppercase tracking-widest mb-4"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Recent company transactions
+                </h3>
+                {overview.recentActivity.length ? (
+                  overview.recentActivity.map((item) => (
+                    <div
+                      key={`${item.type}-${item.id}`}
+                      className="flex items-center justify-between gap-4 py-2.5 border-b last:border-0"
+                      style={{ borderColor: "var(--border)" }}
+                    >
+                      <div className="min-w-0">
+                        <div
+                          className="text-sm font-600 truncate"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {item.description || item.type}
+                        </div>
+                        <div
+                          className="text-xs mt-0.5"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {item.type} ·{" "}
+                          {new Date(item.date).toLocaleDateString()}{" "}
+                          {item.reference ? `· ${item.reference}` : ""}
+                        </div>
+                      </div>
+                      <span
+                        className="mono text-sm font-700 shrink-0"
+                        style={{
+                          color:
+                            item.direction === "in" ? "#10b981" : "#ef4444",
+                        }}
+                      >
+                        {item.direction === "in" ? "+" : "−"}
+                        {UGX(item.amount)}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p
+                    className="text-sm"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    No transactions in this period.
+                  </p>
+                )}
+              </div>
+            </>
+          ) : null)}
+
+        {tab === "paycheck" && (
+          <section aria-label="Company paychecks">
+            <h2
+              className="mb-4 text-lg font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Company paychecks
+            </h2>
+            {paychecksLoading ? (
+              <p
+                className="py-10 text-center text-sm"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Loading paychecks…
+              </p>
+            ) : paychecksError ? (
+              <div
+                role="alert"
+                className="rounded border p-4 text-sm"
+                style={{ borderColor: "#ef4444", color: "#ef4444" }}
+              >
+                {paychecksError}
+              </div>
+            ) : (
+              <div
+                className="overflow-x-auto rounded border"
+                style={{
+                  borderColor: "var(--border)",
+                  background: "var(--card)",
+                }}
+              >
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr
+                      className="border-b text-left"
+                      style={{ borderColor: "var(--border)" }}
+                    >
+                      {[
+                        "Pay period",
+                        "Employee",
+                        "Gross pay",
+                        "Benefits",
+                        "Deductions",
+                        "Net paid",
+                        "Payment date",
+                        "Payslip",
+                      ].map((heading) => (
+                        <th
+                          key={heading}
+                          className="whitespace-nowrap px-4 py-3 text-xs font-700 uppercase tracking-wide"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {heading}
+                        </th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
+                  </thead>
+                  <tbody>
+                    {!paychecks.length && (
+                      <tr>
+                        <td
+                          colSpan={8}
+                          className="px-4 py-10 text-center text-sm"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          No paychecks have been recorded.
+                        </td>
+                      </tr>
+                    )}
+                    {paychecks.map((paycheck) => (
+                      <tr
+                        key={paycheck.id}
+                        className="border-b last:border-0"
+                        style={{ borderColor: "var(--border)" }}
+                      >
+                        <td
+                          className="whitespace-nowrap px-4 py-3"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {new Date(
+                            `${paycheck.pay_period}T00:00:00`,
+                          ).toLocaleDateString("en-GB", {
+                            month: "long",
+                            year: "numeric",
+                          })}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span
+                            className="block font-600"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            {paycheck.employee.name}
+                          </span>
+                          <span
+                            className="text-xs"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            {paycheck.employee.staff_id} ·{" "}
+                            {paycheck.employee.position}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 mono">
+                          {UGX(Number(paycheck.gross_amount))}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-4 py-3 mono"
+                          style={{ color: "#10b981" }}
+                        >
+                          {UGX(Number(paycheck.benefits_total))}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-4 py-3 mono"
+                          style={{ color: "#ef4444" }}
+                        >
+                          {UGX(Number(paycheck.deductions_total))}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-4 py-3 mono font-700"
+                          style={{ color: "var(--primary)" }}
+                        >
+                          {UGX(Number(paycheck.net_amount))}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-4 py-3 text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {new Date(
+                            `${paycheck.payment_date}T00:00:00`,
+                          ).toLocaleDateString("en-GB")}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <a
+                            href={paycheck.payslipUrl}
+                            className="text-xs font-600 underline"
+                            style={{ color: "var(--primary)" }}
+                          >
+                            View payslip
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         )}
       </div>
     </div>
-  );
+  )
 }

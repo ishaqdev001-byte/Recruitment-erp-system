@@ -11,9 +11,9 @@ export const metadata: Metadata = {
     title: "Kilax Smart Recruit",
   },
   icons: {
-    icon: "/branding/Kilax Smart Copy.png",
-    apple: "/branding/Kilax Smart Copy.png",
-    shortcut: "/branding/Kilax Smart Copy.png",
+    icon: "/branding/kilax-logo.png",
+    apple: "/branding/kilax-logo.png",
+    shortcut: "/branding/kilax-logo.png",
   },
   other: {
     "mobile-web-app-capable": "yes",

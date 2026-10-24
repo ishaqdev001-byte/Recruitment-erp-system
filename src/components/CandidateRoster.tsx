@@ -101,11 +101,6 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
       : record.agent_name ? "With Agent" : "Available",
     passportBranch: text("passportBranch"),
     passportStorageLocation: text("passportStorageLocation"),
-    height: text("height"),
-    weight: text("weight"),
-    shirtSize: text("shirtSize"),
-    shoeSize: text("shoeSize"),
-    waistSize: text("waistSize"),
     preferredCities: text("preferredCities"),
     placeOfBirth: record.place_of_birth,
     physicalAddress: text("physicalAddress"),
@@ -231,6 +226,9 @@ function candidateFromInquiry(inquiry: InquiryRecord): Candidate {
 
 export default function CandidateRoster({ page, onNavigate }: { page: "inquiries" | "pipeline"; onNavigate: (view: "candidates") => void }) {
   const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
+  const [canViewFinance, setCanViewFinance] = useState(false);
+  const [canViewActivityLogs, setCanViewActivityLogs] = useState(false);
+  const [permissions, setPermissions] = useState<{ canViewFinance?: boolean; canViewActivityLogs?: boolean; isAgent?: boolean; canViewActivityByRole?: boolean }>({});
   const activePage = page;
   const [inquiries, setInquiries] = useState<InquiryRecord[]>([]);
   const [inquiryPeople, setInquiryPeople] = useState<InquiryPerson[]>([]);
@@ -277,7 +275,12 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Unable to load candidates.");
-        if (!cancelled) setCandidates(payload.candidates as CandidateRecord[]);
+        if (!cancelled) {
+          setCandidates(payload.candidates as CandidateRecord[]);
+          setPermissions(payload.permissions || {});
+          setCanViewFinance(Boolean(payload.permissions?.canViewFinance));
+          setCanViewActivityLogs(Boolean(payload.permissions?.canViewActivityLogs));
+        }
       })
       .catch((requestError: unknown) => {
         if (!cancelled) setError(requestError instanceof Error ? requestError.message : "Unable to load candidates.");
@@ -425,7 +428,8 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
           setStageDocQueue(payload.updated);
         } else {
           setTransitionNotice("Stages updated. You can now record Visa Received when ready.");
-          setTransitionStep("complete");
+          setTransitionStep("visa");
+          setTransitionIds(payload.updated.map((c) => c.id));
         }
       } else if (transitionStep === "visa" && payload.updated?.length) {
         // Show invoices, then open visa doc queue
@@ -433,11 +437,10 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
         setTransitionNotice(`Visa recorded. SMS sent to candidate${payload.updated.length > 1 ? "s" : ""}. Invoice${payload.invoices?.length ? "s" : ""} created.`);
         // Move to ticket step after showing the invoice summary
         setTransitionIds(payload.updated.map((c) => c.id));
-        setTransitionStep("visa"); // stay on visa to show invoice panel
+        setTransitionStep("ticket");
         // trigger visa doc queue
         setStageDocUploaded(false);
         setStageDocQueue(payload.updated);
-        setTransitionIds([]);
       } else if (transitionStep === "ticket" && payload.updated?.length && !payload.rejected?.length) {
         setTransitionNotice("Travel details saved. Reminder SMS messages scheduled automatically.");
         setTransitionStep("complete");
@@ -566,8 +569,12 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
     return <CandidateDetail
       candidate={editingCandidate}
       isNew={isNewCandidate}
+      isAgent={permissions?.isAgent}
       onSave={saveCandidate}
       agentOptions={inquiryPeople.filter((person) => person.role_name.toLocaleLowerCase().includes("agent")).map((person) => person.display_name)}
+      canViewFinance={canViewFinance}
+      canViewActivityLogs={canViewActivityLogs}
+      canViewActivityByRole={permissions?.canViewActivityByRole || false}
       onBack={() => { setEditingCandidate(null); setIsNewCandidate(false); setRegistrationInquiryId(null); }}
     />;
   }
@@ -784,13 +791,44 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
             </div>
             {transitionStep === "project" && <div className="mt-4">
               <label htmlFor="candidate-project-search" className="block text-xs font-600" style={{ color: "var(--foreground)" }}>Search active projects</label>
-              <input id="candidate-project-search" type="search" value={projectSearch} onChange={(event) => { setProjectSearch(event.target.value); setTransitionProjectId(""); }} placeholder="Type a project name or country" className="mt-1 w-full border px-3 py-2 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-              {transitionProjectId ? <p className="mt-2 text-xs font-600 text-emerald-600">Selected: {projects.find((project) => project.id === transitionProjectId)?.project_name}</p> : (
-                <div className="mt-1 divide-y border" style={{ borderColor: "var(--border)" }}>
-                  {projectMatches.map((project) => <button key={project.id} type="button" onClick={() => { setTransitionProjectId(project.id); setProjectSearch(`${project.project_name} · ${project.country}`); }} className="block min-h-10 w-full px-3 py-2 text-left text-xs hover:bg-secondary" style={{ color: "var(--foreground)", borderColor: "var(--border)" }}>{project.project_name} <span style={{ color: "var(--muted-foreground)" }}>· {project.country}</span></button>)}
-                  {projects.length === 0 && <p className="px-3 py-2 text-xs" style={{ color: "var(--muted-foreground)" }}>{projectLoadError || "No active projects are available."}</p>}
-                  {projects.length > 0 && projectMatches.length === 0 && <p className="px-3 py-2 text-xs" style={{ color: "var(--muted-foreground)" }}>No matching active projects.</p>}
+              <input 
+                id="candidate-project-search" 
+                type="search" 
+                value={projectSearch} 
+                onChange={(event) => { 
+                  setProjectSearch(event.target.value); 
+                  if (event.target.value.trim()) setTransitionProjectId(""); 
+                }} 
+                placeholder="Type project name, country, or code…" 
+                className="mt-1 w-full border px-3 py-2 text-sm" 
+                style={{ background: "var(--secondary)", borderColor: projectSearch && !transitionProjectId ? "var(--primary)" : "var(--border)", color: "var(--foreground)" }} 
+                autoComplete="off"
+              />
+              {transitionProjectId && projects.find((p) => p.id === transitionProjectId) ? (
+                <p className="mt-2 text-xs font-600 text-emerald-600">✓ Selected: {projects.find((project) => project.id === transitionProjectId)?.project_name}</p>
+              ) : projectSearch.trim() ? (
+                <div className="mt-1 max-h-48 overflow-y-auto divide-y border" style={{ borderColor: "var(--border)" }}>
+                  {projectMatches.length > 0 ? (
+                    projectMatches.map((project) => (
+                      <button 
+                        key={project.id} 
+                        type="button" 
+                        onClick={() => { 
+                          setTransitionProjectId(project.id); 
+                          setProjectSearch(`${project.project_name} · ${project.country}`); 
+                        }} 
+                        className="block min-h-10 w-full px-3 py-2 text-left text-xs transition-colors hover:opacity-80"
+                        style={{ color: "var(--foreground)", background: "var(--card)", borderColor: "var(--border)" }}>
+                        <div className="font-600">{project.project_name}</div>
+                        <div style={{ color: "var(--muted-foreground)" }} className="text-xs mt-0.5">{project.country}</div>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>No matching projects found</p>
+                  )}
                 </div>
+              ) : (
+                <p className="mt-2 text-xs" style={{ color: "var(--muted-foreground)" }}>Start typing to search {projects.length} active project{projects.length !== 1 ? "s" : ""}</p>
               )}
             </div>}
             {transitionStep === "details" && <div className="mt-4 space-y-3">
@@ -813,26 +851,44 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
                 </p>
                 <div>
                   <label htmlFor="visa-project-search" className="block text-xs font-600" style={{ color: "var(--foreground)" }}>Project</label>
-                  <input id="visa-project-search" type="search" value={projectSearch}
-                    onChange={(e) => { setProjectSearch(e.target.value); setTransitionProjectId(""); }}
-                    placeholder="Type project name or country"
+                  <input 
+                    id="visa-project-search" 
+                    type="search" 
+                    value={projectSearch}
+                    onChange={(e) => { 
+                      setProjectSearch(e.target.value); 
+                      if (e.target.value.trim()) setTransitionProjectId("");
+                    }}
+                    placeholder="Type project name, country, or code…"
                     className="mt-1 w-full border px-3 py-2 text-sm"
-                    style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-                  {transitionProjectId ? (
-                    <p className="mt-2 text-xs font-600 text-emerald-600">Selected: {projects.find((p) => p.id === transitionProjectId)?.project_name}</p>
-                  ) : (
-                    <div className="mt-1 divide-y border" style={{ borderColor: "var(--border)" }}>
-                      {projectMatches.map((p) => (
-                        <button key={p.id} type="button"
-                          onClick={() => { setTransitionProjectId(p.id); setProjectSearch(`${p.project_name} · ${p.country}`); }}
-                          className="block min-h-10 w-full px-3 py-2 text-left text-xs hover:bg-secondary"
-                          style={{ color: "var(--foreground)" }}>
-                          {p.project_name} <span style={{ color: "var(--muted-foreground)" }}>· {p.country}</span>
-                        </button>
-                      ))}
-                      {projects.length === 0 && <p className="px-3 py-2 text-xs" style={{ color: "var(--muted-foreground)" }}>{projectLoadError || "No active projects."}</p>}
-                      {projects.length > 0 && projectMatches.length === 0 && <p className="px-3 py-2 text-xs" style={{ color: "var(--muted-foreground)" }}>No matching projects.</p>}
+                    style={{ background: "var(--secondary)", borderColor: projectSearch && !transitionProjectId ? "var(--primary)" : "var(--border)", color: "var(--foreground)" }}
+                    autoComplete="off"
+                  />
+                  {transitionProjectId && projects.find((p) => p.id === transitionProjectId) ? (
+                    <p className="mt-2 text-xs font-600 text-emerald-600">✓ Selected: {projects.find((p) => p.id === transitionProjectId)?.project_name}</p>
+                  ) : projectSearch.trim() ? (
+                    <div className="mt-1 max-h-48 overflow-y-auto divide-y border" style={{ borderColor: "var(--border)" }}>
+                      {projectMatches.length > 0 ? (
+                        projectMatches.map((p) => (
+                          <button 
+                            key={p.id} 
+                            type="button"
+                            onClick={() => { 
+                              setTransitionProjectId(p.id); 
+                              setProjectSearch(`${p.project_name} · ${p.country}`); 
+                            }}
+                            className="block min-h-10 w-full px-3 py-2 text-left text-xs transition-colors hover:opacity-80"
+                            style={{ color: "var(--foreground)", background: "var(--card)", borderColor: "var(--border)" }}>
+                            <div className="font-600">{p.project_name}</div>
+                            <div style={{ color: "var(--muted-foreground)" }} className="text-xs mt-0.5">{p.country}</div>
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>No matching projects found</p>
+                      )}
                     </div>
+                  ) : (
+                    <p className="mt-2 text-xs" style={{ color: "var(--muted-foreground)" }}>Start typing to search {projects.length} active project{projects.length !== 1 ? "s" : ""}</p>
                   )}
                 </div>
                 {visaInvoices.length > 0 && (
@@ -942,46 +998,98 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
             )}
             {transitionNotice && <p role="status" className="mt-4 text-sm font-600 text-emerald-600">{transitionNotice}</p>}
             {transitionError && <p role="alert" className="mt-3 whitespace-pre-wrap text-sm text-red-500">{transitionError}</p>}
-            <footer className="mt-5 flex flex-wrap justify-end gap-2">
-              <button type="button" onClick={() => { setTransitionIds([]); setSelectedIds([]); }}
-                className="border px-3 py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
-                {transitionStep === "complete" ? "Close" : "Cancel"}
-              </button>
-              {transitionStep === "complete" && (
-                <button type="button"
-                  onClick={() => {
-                    const ids = transitionIds.length ? transitionIds : candidates.filter((c) => c.visa_locked).map((c) => c.id);
-                    if (!ids.length) return;
-                    setTransitionIds(ids);
-                    setTransitionStep("ticket");
-                    setTransitionNotice("");
+            <footer className="mt-5 flex flex-wrap justify-between gap-2">
+              <div className="flex gap-2">
+                {transitionStep !== "project" && transitionStep !== "complete" && (
+                  <button type="button" onClick={() => {
+                    // Go to previous stage
+                    if (transitionStep === "details") setTransitionStep("project");
+                    else if (transitionStep === "visa") setTransitionStep("details");
+                    else if (transitionStep === "ticket") setTransitionStep("visa");
                     setTransitionError("");
-                    setTicketForm({ ticketNumber: "", bookingReference: "", travelDate: "", travelTime: "" });
-                    setConnectingFlights([]);
+                    setTransitionNotice("");
                   }}
-                  className="border px-3 py-2 text-sm font-600"
-                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
-                  Add ticket details
+                    className="border px-3 py-2 text-sm font-600"
+                    style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                    ← Previous Stage
+                  </button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => { setTransitionIds([]); setSelectedIds([]); }}
+                  className="border px-3 py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                  {transitionStep === "complete" ? "Close" : "Cancel"}
                 </button>
-              )}
-              {(transitionStep === "project" || transitionStep === "details" || transitionStep === "visa" || transitionStep === "ticket") && (
-                <button type="button"
-                  disabled={transitionSaving || (
-                    transitionStep === "project" ? !transitionProjectId
-                    : transitionStep === "details" ? !Object.values(stageAnswers).some(Boolean)
-                    : transitionStep === "visa" ? !transitionProjectId
-                    : /* ticket */ !ticketForm.ticketNumber || !ticketForm.bookingReference || !ticketForm.travelDate || !ticketForm.travelTime
-                  )}
-                  onClick={() => void advanceCandidates()}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:opacity-50"
-                  style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-                  <ArrowRight size={15} aria-hidden="true" />
-                  {transitionSaving ? "Saving…"
-                    : transitionStep === "visa" ? "Record visa received"
-                    : transitionStep === "ticket" ? "Save travel details"
-                    : "Advance stage"}
-                </button>
-              )}
+                {transitionStep === "details" && (
+                  <button type="button"
+                    onClick={() => {
+                      // Skip to next stage without requiring document selection
+                      // User can upload documents later via the drawer
+                      setTransitionStep("visa");
+                      setTransitionNotice("You can upload documents later. Moving to next stage.");
+                      setTransitionError("");
+                    }}
+                    className="border px-3 py-2 text-sm font-600"
+                    style={{ borderColor: "var(--primary)", color: "var(--primary)", background: "transparent" }}>
+                    Skip & Next Stage →
+                  </button>
+                )}
+                {transitionStep === "complete" && (
+                  <button type="button"
+                    onClick={() => {
+                      const ids = transitionIds.length ? transitionIds : candidates.filter((c) => c.visa_locked).map((c) => c.id);
+                      if (!ids.length) return;
+                      setTransitionIds(ids);
+                      setTransitionStep("ticket");
+                      setTransitionNotice("");
+                      setTransitionError("");
+                      setTicketForm({ ticketNumber: "", bookingReference: "", travelDate: "", travelTime: "" });
+                      setConnectingFlights([]);
+                    }}
+                    className="border px-3 py-2 text-sm font-600"
+                    style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                    Add ticket details
+                  </button>
+                )}
+                {(transitionStep === "project" || (transitionStep === "details" && Object.values(stageAnswers).some((v) => v !== "")) || transitionStep === "visa" || transitionStep === "ticket") && (
+                  <button type="button"
+                    disabled={transitionSaving || (
+                      transitionStep === "project" ? !transitionProjectId
+                      : transitionStep === "details" ? !Object.values(stageAnswers).some(Boolean)
+                      : transitionStep === "visa" ? !transitionProjectId
+                      : /* ticket */ !ticketForm.ticketNumber || !ticketForm.bookingReference || !ticketForm.travelDate || !ticketForm.travelTime
+                    )}
+                    onClick={() => void advanceCandidates()}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:opacity-50"
+                    style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+                    <ArrowRight size={15} aria-hidden="true" />
+                    {transitionSaving ? "Saving…"
+                      : transitionStep === "visa" ? "Record visa received"
+                      : transitionStep === "ticket" ? "Save travel details"
+                      : "Advance stage"}
+                  </button>
+                )}
+                {transitionStep === "visa" && (
+                  <button type="button"
+                    disabled={transitionSaving || !transitionProjectId}
+                    onClick={() => void advanceCandidates()}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:opacity-50"
+                    style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+                    <ArrowRight size={15} aria-hidden="true" />
+                    {transitionSaving ? "Saving…" : "Record visa received"}
+                  </button>
+                )}
+                {transitionStep === "ticket" && (
+                  <button type="button"
+                    disabled={transitionSaving || !ticketForm.ticketNumber || !ticketForm.bookingReference || !ticketForm.travelDate || !ticketForm.travelTime}
+                    onClick={() => void advanceCandidates()}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:opacity-50"
+                    style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+                    <ArrowRight size={15} aria-hidden="true" />
+                    {transitionSaving ? "Saving…" : "Save travel details"}
+                  </button>
+                )}
+              </div>
             </footer>
           </section>
         </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { BriefcaseBusiness, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { BriefcaseBusiness, Eye, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
 
 type ProjectStatus = "active" | "inactive" | "cancelled";
@@ -22,6 +22,17 @@ type ProjectRecord = {
   ticket_count: number;
 };
 type ContractorRecord = { id: string; company_name: string };
+type VisaCandidateRecord = {
+  id: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  passportNumber: string;
+  visaReceivedDate: string;
+  visaReceivedDateFormatted: string;
+  serviceCharge: number;
+};
 type ProjectForm = {
   projectName: string;
   contractorName: string;
@@ -76,6 +87,10 @@ export default function Projects() {
   const [editingProject, setEditingProject] = useState<ProjectRecord | null>(null);
   const [form, setForm] = useState<ProjectForm>(initialForm);
   const [reloadKey, setReloadKey] = useState(0);
+  const [showVisaCandidates, setShowVisaCandidates] = useState(false);
+  const [selectedProjectForVisa, setSelectedProjectForVisa] = useState<ProjectRecord | null>(null);
+  const [visaCandidates, setVisaCandidates] = useState<VisaCandidateRecord[]>([]);
+  const [visaCandidatesLoading, setVisaCandidatesLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -203,6 +218,31 @@ export default function Projects() {
     }
   };
 
+  const openVisaCandidates = (project: ProjectRecord) => {
+    setSelectedProjectForVisa(project);
+    setShowVisaCandidates(true);
+  };
+
+  useEffect(() => {
+    if (!showVisaCandidates || !selectedProjectForVisa) return;
+    let cancelled = false;
+    const load = async () => {
+      setVisaCandidatesLoading(true);
+      try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(selectedProjectForVisa.id)}/visa-candidates`, { cache: "no-store" });
+        const payload = await response.json() as { candidates?: VisaCandidateRecord[]; error?: string };
+        if (!response.ok) throw new Error(payload.error ?? "Unable to load visa candidates.");
+        if (!cancelled) setVisaCandidates(payload.candidates ?? []);
+      } catch (loadError) {
+        if (!cancelled) console.error("Visa candidates load failed:", loadError);
+      } finally {
+        if (!cancelled) setVisaCandidatesLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [showVisaCandidates, selectedProjectForVisa]);
+
   return (
     <section className="flex h-full min-h-0 flex-col" aria-labelledby="projects-title">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4" style={{ borderColor: "var(--border)" }}>
@@ -241,7 +281,7 @@ export default function Projects() {
                 <td className="whitespace-nowrap px-3 py-3 text-xs font-600" style={{ color: "#17845b" }}>Project: {project.project_name} #{project.id.replace(/-/g, "").slice(-12)}</td>
                 <td className="px-3 py-3 mono" style={{ color: "var(--foreground)" }}>{project.ticket_count}</td>
                 <td className="px-3 py-3"><select aria-label={`Status for ${project.project_name}`} value={project.status} disabled={!permissions.canChangeStatus} onChange={(event) => void updateStatus(project, event.target.value as ProjectStatus)} className="border px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-70" style={fieldStyle}><option value="active">Active</option><option value="inactive">Inactive</option><option value="cancelled">Cancelled</option></select></td>
-                <td className="whitespace-nowrap px-3 py-3"><div className="flex items-center gap-1"><button type="button" aria-label={`Edit ${project.project_name}`} title="Edit project" disabled={!permissions.canEdit} onClick={() => openEditProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "var(--muted-foreground)" }}><Pencil size={15} aria-hidden="true" /></button><button type="button" aria-label={`Delete ${project.project_name}`} title="Delete project" disabled={!permissions.canDelete} onClick={() => void deleteProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "#ef4444" }}><Trash2 size={15} aria-hidden="true" /></button></div></td>
+                <td className="whitespace-nowrap px-3 py-3"><div className="flex items-center gap-1"><button type="button" aria-label={`Edit ${project.project_name}`} title="Edit project" disabled={!permissions.canEdit} onClick={() => openEditProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "var(--muted-foreground)" }}><Pencil size={15} aria-hidden="true" /></button><button type="button" aria-label={`View visa candidates for ${project.project_name}`} title="View visa candidates" onClick={() => openVisaCandidates(project)} className="p-2" style={{ color: "var(--foreground)" }}><Eye size={15} aria-hidden="true" /></button><button type="button" aria-label={`Delete ${project.project_name}`} title="Delete project" disabled={!permissions.canDelete} onClick={() => void deleteProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "#ef4444" }}><Trash2 size={15} aria-hidden="true" /></button></div></td>
               </tr>)}
             </tbody>
           </table>
@@ -269,6 +309,38 @@ export default function Projects() {
           </div>
           <div className="mt-6 flex gap-3"><button type="submit" disabled={saving} className="flex-1 py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save project"}</button><button type="button" onClick={closeForm} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
         </form>
+      </div>}
+
+      {showVisaCandidates && selectedProjectForVisa && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowVisaCandidates(false); }}>
+        <div className="max-h-[90dvh] w-full max-w-4xl overflow-auto border p-6 rounded-lg" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Visa Recipients - {selectedProjectForVisa.project_name}</h2><button type="button" onClick={() => setShowVisaCandidates(false)} aria-label="Close visa candidates modal" className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
+          {visaCandidatesLoading && <div className="py-8 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading visa candidates…</div>}
+          {!visaCandidatesLoading && visaCandidates.length === 0 && <div className="py-8 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No candidates have received visas for this project yet.</div>}
+          {!visaCandidatesLoading && visaCandidates.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-600 text-sm">
+                <thead>
+                  <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                    {["Candidate Name", "Passport Number", "Date Visa Received"].map((heading) => (
+                      <th key={heading} className="whitespace-nowrap px-4 py-3 text-xs font-700 uppercase tracking-wide text-left" style={{ color: "var(--muted-foreground)" }}>
+                        {heading}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visaCandidates.map((candidate) => (
+                    <tr key={candidate.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                      <td className="px-4 py-3 font-600" style={{ color: "var(--foreground)" }}>{candidate.fullName}</td>
+                      <td className="whitespace-nowrap px-4 py-3 font-700 mono" style={{ color: "var(--primary)" }}>{candidate.passportNumber || "—"}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{candidate.visaReceivedDateFormatted}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>}
     </section>
   );

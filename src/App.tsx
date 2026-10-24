@@ -8,7 +8,7 @@ import type { User } from "@supabase/supabase-js";
 function KilaxLogo({ size = 64 }: { size?: number }) {
   return (
     <img
-      src="/branding/Kilax Smart Copy.png"
+      src="/branding/kilax-logo.png"
       alt="Kilax Smart Recruit"
       width={size}
       height={size}
@@ -177,6 +177,8 @@ type CompanyForm = {
   adminPhone: string;
   password: string;
   confirmPassword: string;
+  logoFile?: File;
+  logoPreview?: string;
 };
 
 const emptyCompanyForm: CompanyForm = {
@@ -194,6 +196,8 @@ const emptyCompanyForm: CompanyForm = {
   adminPhone: "",
   password: "",
   confirmPassword: "",
+  logoFile: undefined,
+  logoPreview: undefined,
 };
 
 const formatInitials = (value: string) =>
@@ -203,6 +207,13 @@ const formatInitials = (value: string) =>
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("") || "R";
+
+/** Convert a company name to a URL-safe slug, e.g. "Acme Corp Ltd" → "acme-corp-ltd" */
+const toCompanySlug = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "company";
 
 async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   const supabase = createSupabaseBrowserClient();
@@ -291,6 +302,21 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   };
 }
 
+/** After a successful login, check whether the user must change their password. */
+async function checkMustChangePassword(userId: string): Promise<boolean> {
+  try {
+    const supabase = createSupabaseBrowserClient();
+    const { data } = await supabase
+      .from("profiles")
+      .select("must_change_password")
+      .eq("id", userId)
+      .maybeSingle();
+    return Boolean((data as { must_change_password?: boolean } | null)?.must_change_password);
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -326,6 +352,14 @@ export default function App() {
   const [inviteSaving, setInviteSaving] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
 
+  // Forced first-login password change (set by admin using default-password flow)
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [forcedNewPassword, setForcedNewPassword] = useState("");
+  const [forcedNewPasswordConfirm, setForcedNewPasswordConfirm] = useState("");
+  const [forcedPasswordSaving, setForcedPasswordSaving] = useState(false);
+  const [forcedPasswordError, setForcedPasswordError] = useState("");
+  const [forcedShowPassword, setForcedShowPassword] = useState(false);
+
   useEffect(() => {
     for (const key of ["recruitos.companies", "recruitos.users", "recruitos.session"]) {
       window.localStorage.removeItem(key);
@@ -347,9 +381,18 @@ export default function App() {
       const currentUrl = new URL(window.location.href);
       if (currentUrl.searchParams.get("view") === "communications") setView("communications");
       // Restore active view from the URL path on load / hard refresh.
-      // Supports both /candidates (clean path) and legacy ?v= / ?view= params.
+      // Supports /view, /company-slug/view, and legacy ?v= / ?view= params.
       const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","branches","approvals","requisitions","drive"]);
-      const pathView = currentUrl.pathname.replace(/^\//, ""); // strip leading /
+      // Handle both /view and /company-slug/view path formats
+      const pathParts = currentUrl.pathname.replace(/^\//, "").split("/").filter(Boolean);
+      const pathView = pathParts.length >= 2 ? pathParts[1] : pathParts[0] ?? "";
+      // Also handle auth paths: /login → stay on login, /register → go to register, etc.
+      const authPaths: Record<string, "login" | "register" | "invite" | "reset-password"> = {
+        login: "login", register: "register", invite: "invite", "reset-password": "reset-password", onboarding: "register",
+      };
+      if (pathParts.length === 1 && authPaths[pathParts[0]]) {
+        setAuthView(authPaths[pathParts[0]]);
+      }
       const paramView = currentUrl.searchParams.get("v") ?? currentUrl.searchParams.get("view");
       const detectedView = (validViews.has(pathView) ? pathView : null) ?? (paramView && validViews.has(paramView) ? paramView : null);
       if (detectedView) setView(detectedView as View);
@@ -444,6 +487,8 @@ export default function App() {
             setUsers([workspace.user]);
             setSession(workspace.session);
             setRole(workspace.user.role);
+            const mustChange = await checkMustChangePassword(workspace.user.id);
+            if (!cancelled) setMustChangePassword(mustChange);
           }
         }
       } catch (error) {
@@ -472,7 +517,8 @@ export default function App() {
   // Uses pushState so the browser back button navigates between views.
   useEffect(() => {
     if (!session) return;
-    const targetPath = view === "dashboard" ? "/" : `/${view}`;
+    const slug = toCompanySlug(session.companyName);
+    const targetPath = view === "dashboard" ? `/${slug}` : `/${slug}/${view}`;
 
     // Human-readable view titles for the browser tab
     const viewTitles: Partial<Record<View, string>> = {
@@ -508,29 +554,69 @@ export default function App() {
       drive:                 "Drive",
     };
 
-    const companyLabel = session.companyName ? ` | ${session.companyName}` : "";
     const viewLabel = viewTitles[view] ?? view;
-    document.title = `${viewLabel} — Kilax Smart Recruit${companyLabel}`;
+    document.title = `${viewLabel} — ${session.companyName} | Kilax Smart Recruit`;
 
     if (window.location.pathname !== targetPath) {
-      // Strip legacy ?v= / ?view= params on first navigation
       const url = new URL(window.location.href);
       url.searchParams.delete("v");
       url.searchParams.delete("view");
       url.pathname = targetPath;
-      window.history.pushState({ view }, "", url.toString());
+      window.history.pushState({ view, companySlug: slug }, "", url.toString());
     }
   }, [view, session]);
+
+  // Sync URL when not logged in (auth views get their own paths)
+  useEffect(() => {
+    if (session) return;
+    const authPaths: Record<string, string> = {
+      login: "/login",
+      register: "/register",
+      landing: "/",
+      invite: "/invite",
+      "reset-password": "/reset-password",
+      verify: "/register",
+    };
+    const titles: Record<string, string> = {
+      login: "Sign In — Kilax Smart Recruit",
+      register: "Register Your Company — Kilax Smart Recruit",
+      landing: "Kilax Smart Recruit | Recruitment ERP",
+      invite: "Accept Invitation — Kilax Smart Recruit",
+      "reset-password": "Reset Password — Kilax Smart Recruit",
+      verify: "Account Created — Kilax Smart Recruit",
+    };
+    document.title = titles[authView] ?? "Kilax Smart Recruit | Recruitment ERP";
+    const targetPath = authPaths[authView] ?? "/login";
+    // Don't overwrite special invite/recovery links that have query params
+    const hasSpecialParams = window.location.search.includes("invite=1")
+      || window.location.search.includes("view=reset-password")
+      || window.location.hash.includes("type=");
+    if (!hasSpecialParams && window.location.pathname !== targetPath) {
+      window.history.pushState({ authView }, "", targetPath);
+    }
+  }, [authView, session]);
 
   // Handle browser back / forward buttons
   useEffect(() => {
     const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","branches","approvals","requisitions","drive"]);
+    const authViewSet = new Set<string>(["login","register","invite","reset-password"]);
     const onPopState = (event: PopStateEvent) => {
-      const stateView = (event.state as { view?: string } | null)?.view;
-      const pathView = window.location.pathname.replace(/^\//, "");
+      const state = event.state as { view?: string; authView?: string; companySlug?: string } | null;
+      // Resolve the view from either state or URL path
+      const pathParts = window.location.pathname.replace(/^\//, "").split("/").filter(Boolean);
+      const pathView = pathParts.length >= 2 ? pathParts[1] : pathParts[0] ?? "";
+      const stateView = state?.view;
       const resolved = (stateView && validViews.has(stateView) ? stateView : null)
-        ?? (validViews.has(pathView) ? pathView : "dashboard");
-      setView(resolved as View);
+        ?? (validViews.has(pathView) ? pathView : null);
+      if (resolved) {
+        setView(resolved as View);
+      } else if (pathParts.length === 1 && authViewSet.has(pathParts[0])) {
+        setAuthView(pathParts[0] as "login" | "register" | "invite" | "reset-password");
+      } else if (state?.authView && authViewSet.has(state.authView)) {
+        setAuthView(state.authView as "login" | "register" | "invite" | "reset-password");
+      } else if (!resolved) {
+        setView("dashboard");
+      }
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -576,6 +662,8 @@ export default function App() {
       setUsers([workspace.user]);
       setRole(workspace.user.role);
       setSession(workspace.session);
+      const mustChange = await checkMustChangePassword(workspace.user.id);
+      setMustChangePassword(mustChange);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "Unable to load your company workspace.");
     }
@@ -712,6 +800,37 @@ export default function App() {
       setInviteError(error instanceof Error ? error.message : "Unable to finish your invitation.");
     } finally {
       setInviteSaving(false);
+    }
+  };
+
+  const handleChangeForcedPassword = async (event: FormEvent) => {
+    event.preventDefault();
+    setForcedPasswordError("");
+    if (forcedNewPassword.length < 8) {
+      setForcedPasswordError("Your new password must be at least 8 characters.");
+      return;
+    }
+    if (forcedNewPassword !== forcedNewPasswordConfirm) {
+      setForcedPasswordError("The passwords do not match.");
+      return;
+    }
+
+    setForcedPasswordSaving(true);
+    try {
+      const response = await fetch("/api/workspace/users/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newPassword: forcedNewPassword }),
+      });
+      const result = await response.json() as { error?: string; success?: boolean };
+      if (!response.ok) throw new Error(result.error ?? "Unable to update your password.");
+      setMustChangePassword(false);
+      setForcedNewPassword("");
+      setForcedNewPasswordConfirm("");
+    } catch (error) {
+      setForcedPasswordError(error instanceof Error ? error.message : "Unable to update your password.");
+    } finally {
+      setForcedPasswordSaving(false);
     }
   };
 
@@ -887,6 +1006,71 @@ export default function App() {
           userAvatarUrl={session.userAvatarUrl}
         />
         <OfflineBanner />
+
+        {/* Forced password change overlay (first-login after admin creates user with default password) */}
+        {mustChangePassword && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" style={{ background: "rgba(0,0,0,0.6)" }}>
+            <div className="w-full max-w-md rounded-2xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+              <div className="text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Security required</div>
+              <h2 className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>Change your password</h2>
+              <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>Your administrator set a temporary password for your account. Please change it to a secure password of your choice before continuing.</p>
+
+              <form onSubmit={handleChangeForcedPassword} className="mt-6 space-y-4">
+                <label className="block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                  New password
+                  <div className="relative mt-1">
+                    <input
+                      required
+                      minLength={8}
+                      type={forcedShowPassword ? "text" : "password"}
+                      autoComplete="new-password"
+                      value={forcedNewPassword}
+                      onChange={(e) => setForcedNewPassword(e.target.value)}
+                      className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
+                      style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
+                    />
+                    <button
+                      type="button"
+                      aria-label={forcedShowPassword ? "Hide password" : "Show password"}
+                      onClick={() => setForcedShowPassword(!forcedShowPassword)}
+                      className="absolute inset-y-0 right-0 flex items-center px-3 text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {forcedShowPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </label>
+                <label className="block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                  Confirm new password
+                  <input
+                    required
+                    minLength={8}
+                    type={forcedShowPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    value={forcedNewPasswordConfirm}
+                    onChange={(e) => setForcedNewPasswordConfirm(e.target.value)}
+                    className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                    style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
+                  />
+                </label>
+                {forcedPasswordError && (
+                  <div role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+                    {forcedPasswordError}
+                  </div>
+                )}
+                <button
+                  type="submit"
+                  disabled={forcedPasswordSaving}
+                  className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                >
+                  {forcedPasswordSaving ? "Updating…" : "Update password and continue"}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
         <main className="min-w-0 flex-1 overflow-auto">
           {renderView()}
         </main>
@@ -1271,7 +1455,34 @@ function AuthenticationExperience({
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Logo</label>
-              <div className="rounded border border-dashed px-3 py-2.5 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Upload logo (optional)</div>
+              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded border border-dashed px-3 py-3 transition-colors hover:border-current" style={{ borderColor: companyForm.logoPreview ? "var(--primary)" : "var(--border)", color: "var(--muted-foreground)" }}>
+                {companyForm.logoPreview ? (
+                  <img src={companyForm.logoPreview} alt="Logo preview" className="h-14 w-14 rounded object-contain" />
+                ) : (
+                  <span className="text-sm">Click to upload logo (PNG, JPG, SVG)</span>
+                )}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                  className="sr-only"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const preview = URL.createObjectURL(file);
+                    onCompanyFormChange({ ...companyForm, logoFile: file, logoPreview: preview });
+                  }}
+                />
+              </label>
+              {companyForm.logoPreview && (
+                <button
+                  type="button"
+                  className="mt-1 text-xs"
+                  style={{ color: "var(--muted-foreground)" }}
+                  onClick={() => onCompanyFormChange({ ...companyForm, logoFile: undefined, logoPreview: undefined })}
+                >
+                  Remove
+                </button>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Full Name</label>
@@ -1391,6 +1602,7 @@ function OnboardingWizard({
   onStepChange: (next: number) => void;
   onComplete: () => void;
 }) {
+  const [logoPreview, setLogoPreview] = useState<string | undefined>(company?.logo || undefined);
   const steps = [
     { title: "Company Profile", subtitle: "Complete your company information and registration details." },
     { title: "Recruitment Setup", subtitle: "Configure candidate stages, statuses, and categories." },
@@ -1428,7 +1640,31 @@ function OnboardingWizard({
 
         {currentStep === 0 && (
           <div className="grid gap-4 md:grid-cols-2">
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Logo</label><div className="rounded border border-dashed px-3 py-5 text-sm" style={{ borderColor: "var(--border)" }}>Upload company logo</div></div>
+            <div>
+              <label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Logo</label>
+              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded border border-dashed px-3 py-4 transition-colors hover:border-current" style={{ borderColor: logoPreview ? "var(--primary)" : "var(--border)", color: "var(--muted-foreground)" }}>
+                {logoPreview ? (
+                  <img src={logoPreview} alt="Logo preview" className="h-16 w-16 rounded object-contain" />
+                ) : (
+                  <span className="text-sm">Click to upload company logo</span>
+                )}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                  className="sr-only"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setLogoPreview(URL.createObjectURL(file));
+                  }}
+                />
+              </label>
+              {logoPreview && (
+                <button type="button" className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }} onClick={() => setLogoPreview(undefined)}>
+                  Remove
+                </button>
+              )}
+            </div>
             <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Registration number</label><input defaultValue={company?.registrationNumber ?? ""} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
             <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Address</label><input defaultValue={company?.officeAddress ?? ""} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
             <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Phone</label><input defaultValue={company?.phone ?? ""} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>

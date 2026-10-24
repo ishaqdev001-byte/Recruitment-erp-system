@@ -64,6 +64,9 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [userRoleId, setUserRoleId] = useState("");
+  const [userInviteMode, setUserInviteMode] = useState<"email-link" | "default-password">("email-link");
+  const [userDefaultPassword, setUserDefaultPassword] = useState("");
+  const [userShowPassword, setUserShowPassword] = useState(false);
   const [roleName, setRoleName] = useState("");
   const [roleDescription, setRoleDescription] = useState("");
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
@@ -140,20 +143,41 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
     setError("");
     setNotice("");
     try {
-      const response = await fetch("/api/workspace/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "invite-user", name: userName, email: userEmail, roleId: userRoleId }),
-      });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Unable to invite user.");
-      setShowNewUser(false);
-      setUserName("");
-      setUserEmail("");
-      setNotice("Invitation sent. The user can set their password from the email link.");
+      if (userInviteMode === "default-password") {
+        if (userDefaultPassword.length < 8) {
+          setError("The default password must be at least 8 characters.");
+          setSaving(false);
+          return;
+        }
+        const response = await fetch("/api/workspace/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "create-user-with-password", name: userName, email: userEmail, roleId: userRoleId, password: userDefaultPassword }),
+        });
+        const result = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? "Unable to create user.");
+        setShowNewUser(false);
+        setUserName("");
+        setUserEmail("");
+        setUserDefaultPassword("");
+        setUserInviteMode("email-link");
+        setNotice("User created. They will be asked to set a new password when they first log in.");
+      } else {
+        const response = await fetch("/api/workspace/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "invite-user", name: userName, email: userEmail, roleId: userRoleId }),
+        });
+        const result = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? "Unable to invite user.");
+        setShowNewUser(false);
+        setUserName("");
+        setUserEmail("");
+        setNotice("Invitation sent. The user can set their password from the email link.");
+      }
       setReloadKey((key) => key + 1);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to invite user.");
+      setError(saveError instanceof Error ? saveError.message : "Unable to save user.");
     } finally {
       setSaving(false);
     }
@@ -649,18 +673,100 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
       </div>
 
       {showNewUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) { setShowNewUser(false); setError(""); setUserDefaultPassword(""); setUserInviteMode("email-link"); } }}>
           <form onSubmit={submitUser} className="w-full max-w-md rounded border p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <h2 className="mb-5 text-lg font-700" style={{ color: "var(--foreground)" }}>Invite company user</h2>
-            <div className="space-y-4">
-              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Full name<input required maxLength={200} value={userName} onChange={(event) => setUserName(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
-              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Email address<input required type="email" value={userEmail} onChange={(event) => setUserEmail(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
-              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Role<select required value={userRoleId} onChange={(event) => setUserRoleId(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>{data.roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
+            <div className="mb-5 flex items-start justify-between gap-2">
+              <h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Add company user</h2>
+              <button type="button" onClick={() => { setShowNewUser(false); setError(""); setUserDefaultPassword(""); setUserInviteMode("email-link"); }} className="rounded p-1 text-xs leading-none" style={{ color: "var(--muted-foreground)" }}>✕</button>
             </div>
-            <p className="mt-4 text-xs" style={{ color: "var(--muted-foreground)" }}>An invitation email will let the user set their own password.</p>
-            <div className="mt-6 flex gap-3">
-              <button type="submit" disabled={saving} className="flex-1 rounded py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Sending…" : "Send invitation"}</button>
-              <button type="button" onClick={() => setShowNewUser(false)} className="flex-1 rounded border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button>
+
+            {/* Mode toggle */}
+            <div className="mb-5 flex rounded border overflow-hidden text-xs font-600" style={{ borderColor: "var(--border)" }}>
+              <button
+                type="button"
+                onClick={() => { setUserInviteMode("email-link"); setError(""); }}
+                className="flex-1 px-3 py-2 transition-colors"
+                style={{
+                  background: userInviteMode === "email-link" ? "var(--primary)" : "var(--secondary)",
+                  color: userInviteMode === "email-link" ? "var(--primary-foreground)" : "var(--muted-foreground)",
+                }}
+              >
+                Send invite link
+              </button>
+              <button
+                type="button"
+                onClick={() => { setUserInviteMode("default-password"); setError(""); }}
+                className="flex-1 px-3 py-2 transition-colors"
+                style={{
+                  background: userInviteMode === "default-password" ? "var(--primary)" : "var(--secondary)",
+                  color: userInviteMode === "default-password" ? "var(--primary-foreground)" : "var(--muted-foreground)",
+                }}
+              >
+                Set default password
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Full name
+                <input required maxLength={200} value={userName} onChange={(e) => setUserName(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} />
+              </label>
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Email address
+                <input required type="email" value={userEmail} onChange={(e) => setUserEmail(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} />
+              </label>
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Role
+                <select required value={userRoleId} onChange={(e) => setUserRoleId(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>
+                  {data.roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                </select>
+              </label>
+
+              {userInviteMode === "default-password" && (
+                <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                  Default password
+                  <div className="relative mt-1">
+                    <input
+                      required
+                      minLength={8}
+                      type={userShowPassword ? "text" : "password"}
+                      autoComplete="new-password"
+                      value={userDefaultPassword}
+                      onChange={(e) => setUserDefaultPassword(e.target.value)}
+                      className="w-full rounded border px-3 py-2 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
+                      style={fieldStyle}
+                      placeholder="Min. 8 characters"
+                    />
+                    <button
+                      type="button"
+                      aria-label={userShowPassword ? "Hide password" : "Show password"}
+                      onClick={() => setUserShowPassword((v) => !v)}
+                      className="absolute inset-y-0 right-0 flex items-center px-3 text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {userShowPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </label>
+              )}
+            </div>
+
+            <p className="mt-4 text-xs" style={{ color: "var(--muted-foreground)" }}>
+              {userInviteMode === "email-link"
+                ? "An invitation email will be sent. The user sets their own password from the link."
+                : "The user is created immediately and must change this password when they first log in."}
+            </p>
+
+            {error && <div role="alert" className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">{error}</div>}
+
+            <div className="mt-5 flex gap-3">
+              <button type="submit" disabled={saving} className="flex-1 rounded py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+                {saving ? "Saving…" : userInviteMode === "email-link" ? "Send invitation" : "Create user"}
+              </button>
+              <button type="button" onClick={() => { setShowNewUser(false); setError(""); setUserDefaultPassword(""); setUserInviteMode("email-link"); }} className="flex-1 rounded border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
+                Cancel
+              </button>
             </div>
           </form>
         </div>

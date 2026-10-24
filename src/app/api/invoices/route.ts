@@ -31,22 +31,41 @@ export async function POST(request: Request) {
     const description = typeof body?.description === "string" ? body.description.trim() : "";
     const amount = Number(body?.amount);
     const dueDate = typeof body?.dueDate === "string" ? body.dueDate : "";
-    if (!body || !["contractor", "supplier", "candidate"].includes(String(recipientType))
+    if (!body || !["contractor", "supplier", "candidate", "agent"].includes(String(recipientType))
       || !/^[0-9a-f-]{36}$/i.test(recipientId) || !description || description.length > 2000
       || !Number.isFinite(amount) || amount <= 0 || amount > 999999999999.99
       || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate) || Number.isNaN(Date.parse(`${dueDate}T00:00:00Z`))) {
       return NextResponse.json({ error: "Enter a recipient, description, positive amount, and valid due date." }, { status: 400, headers: responseHeaders });
     }
 
-    const { data: recipients, error: recipientError } = await access.supabase.rpc("list_invoice_recipients", { requested_company_id: access.companyId });
-    const recipient = (recipients ?? []).find((item: { recipient_type: string; recipient_id: string }) => item.recipient_type === recipientType && item.recipient_id === recipientId);
-    if (recipientError || !recipient) return NextResponse.json({ error: "Select a valid recipient from this company." }, { status: 400, headers: responseHeaders });
+    let recipientName: string | null = null;
+
+    // Handle different recipient types
+    if (recipientType === "agent") {
+      // For agents, fetch from profiles using user_id
+      const { data: agentProfile, error: agentError } = await access.supabase
+        .from("profiles")
+        .select("first_name, last_name")
+        .eq("id", recipientId)
+        .maybeSingle();
+      
+      if (agentError || !agentProfile) {
+        return NextResponse.json({ error: "Select a valid agent from this company." }, { status: 400, headers: responseHeaders });
+      }
+      recipientName = `${agentProfile.first_name || ""} ${agentProfile.last_name || ""}`.trim() || "Agent";
+    } else {
+      // For other types, use existing RPC
+      const { data: recipients, error: recipientError } = await access.supabase.rpc("list_invoice_recipients", { requested_company_id: access.companyId });
+      const recipient = (recipients ?? []).find((item: { recipient_type: string; recipient_id: string }) => item.recipient_type === recipientType && item.recipient_id === recipientId);
+      if (recipientError || !recipient) return NextResponse.json({ error: "Select a valid recipient from this company." }, { status: 400, headers: responseHeaders });
+      recipientName = recipient.recipient_name;
+    }
 
     const { data: invoice, error } = await access.supabase.from("invoices").insert({
       company_id: access.companyId,
       recipient_type: recipientType,
       recipient_id: recipientId,
-      recipient_name: recipient.recipient_name,
+      recipient_name: recipientName,
       description,
       amount,
       due_date: dueDate,

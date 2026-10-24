@@ -395,6 +395,77 @@ export async function POST(request: Request) {
       return NextResponse.json({ user: { id: userId, name, email, phone, branch, roleId, status: "invited" } }, { status: 201, headers: responseHeaders });
     }
 
+    // ── create-user-with-password ─────────────────────────────────────────────
+    // Creates a confirmed workspace user with a temporary password set by the admin.
+    // The user will be forced to change this password on their first login.
+    if (body.action === "create-user-with-password") {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+      const phone = typeof body.phone === "string" ? body.phone.trim() : "";
+      const branch = typeof body.branch === "string" ? body.branch.trim() : "";
+      const roleId = typeof body.roleId === "string" ? body.roleId : "";
+      const password = typeof body.password === "string" ? body.password : "";
+      if (!name || name.length > 200 || !/^\S+@\S+\.\S+$/.test(email) || !roleId || phone.length > 100 || branch.length > 200) {
+        return NextResponse.json({ error: "Enter a valid name, email, role, phone, and branch." }, { status: 400, headers: responseHeaders });
+      }
+      if (password.length < 8) {
+        return NextResponse.json({ error: "The default password must be at least 8 characters." }, { status: 400, headers: responseHeaders });
+      }
+
+      const { data: role, error: roleError } = await admin.from("company_roles").select("id, name").eq("id", roleId).eq("company_id", access.companyId).maybeSingle();
+      if (roleError || !role) return NextResponse.json({ error: "Selected role does not belong to this company." }, { status: 400, headers: responseHeaders });
+      if (role.name === "Company Owner / Primary Administrator" || role.name === "Primary Administrator") {
+        return NextResponse.json({ error: "The primary administrator role is reserved for the protected company user." }, { status: 400, headers: responseHeaders });
+      }
+
+      // Check for an existing user with this email
+      const { data: existingUsers } = await admin.auth.admin.listUsers({ perPage: 1000 });
+      const existing = existingUsers?.users.find((u) => u.email?.toLowerCase() === email);
+      if (existing) {
+        return NextResponse.json({ error: "A user with this email address already exists." }, { status: 409, headers: responseHeaders });
+      }
+
+      // Create the auth user with email_confirm = true (no invite email sent)
+      const { data: createdUser, error: createError } = await admin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { full_name: name },
+      });
+      if (createError || !createdUser.user) {
+        return NextResponse.json({ error: createError?.message ?? "Unable to create the user account." }, { status: 400, headers: responseHeaders });
+      }
+
+      const userId = createdUser.user.id;
+
+      // Upsert profile, set must_change_password = true
+      const { error: profileError } = await admin.from("profiles").upsert({
+        id: userId,
+        display_name: name,
+        phone,
+        branch,
+        must_change_password: true,
+      });
+      if (profileError) {
+        await admin.auth.admin.deleteUser(userId);
+        return NextResponse.json({ error: "User was created but their profile could not be saved." }, { status: 500, headers: responseHeaders });
+      }
+
+      // Insert company membership
+      const { error: membershipError } = await admin.from("company_memberships").insert({
+        company_id: access.companyId,
+        user_id: userId,
+        role_id: roleId,
+        status: "active",
+      });
+      if (membershipError) {
+        await admin.auth.admin.deleteUser(userId);
+        return NextResponse.json({ error: "User was created but could not be assigned to the company role." }, { status: 500, headers: responseHeaders });
+      }
+
+      return NextResponse.json({ user: { id: userId, name, email, phone, branch, roleId, status: "active" } }, { status: 201, headers: responseHeaders });
+    }
+
     return NextResponse.json({ error: "Unsupported user management action." }, { status: 400, headers: responseHeaders });
   } catch (error) {
     console.error("Workspace user management update failed", error);

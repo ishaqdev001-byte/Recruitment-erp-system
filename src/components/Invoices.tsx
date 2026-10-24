@@ -1,5 +1,32 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
+import InvoiceGeneratorModal from "./InvoiceGeneratorModal";
+
+type Recipient = { type: "contractor" | "supplier" | "candidate"; id: string; name: string };
+type Agent = { id: string; name: string; phone?: string };
+type CompanyInfo = {
+  name?: string;
+  email?: string;
+  phone?: string;
+  office_address?: string;
+  city?: string;
+  country?: string;
+  registration_number?: string;
+  website?: string;
+  logo?: string;
+};
+type PaymentInfo = {
+  id: string;
+  payment_method: string;
+  bank_name: string;
+  account_name: string;
+  account_number: string;
+  swift_code: string;
+  currency: string;
+  payment_reference: string;
+  is_default: boolean;
+  is_active: boolean;
+};
 
 const invoices = [
   { id: 1, ref: "INV-2026-001", employer: "Gulf Manpower Ltd", candidate: "Alice Namukasa", description: "Placement Fee — Cook", amount: 3200000, issued: "Aug 10, 2026", due: "Aug 24, 2026", paid: 0, status: "Overdue" },
@@ -20,6 +47,78 @@ export default function Invoices() {
   const [selected, setSelected] = useState<typeof invoices[0] | null>(null);
   const [statusFilter, setStatusFilter] = useState("All");
   const [showNew, setShowNew] = useState(false);
+  const [showGenerator, setShowGenerator] = useState(false);
+  const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [company, setCompany] = useState<CompanyInfo>({});
+  const [paymentMethods, setPaymentMethods] = useState<PaymentInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    loadInvoiceData();
+  }, []);
+
+  const loadInvoiceData = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [recipientsRes, paymentRes] = await Promise.all([
+        fetch("/api/invoice-recipients", { cache: "no-store" }),
+        fetch("/api/finance/payment-info", { cache: "no-store" }),
+      ]);
+
+      if (!recipientsRes.ok || !paymentRes.ok) {
+        throw new Error("Failed to load invoice data.");
+      }
+
+      const recipientsData = await recipientsRes.json() as { recipients?: Recipient[]; agents?: Agent[]; company?: CompanyInfo & { logo?: string } };
+      const paymentData = await paymentRes.json() as { paymentMethods?: PaymentInfo[]; company?: CompanyInfo & { logo_url?: string } };
+
+      setRecipients(recipientsData.recipients ?? []);
+      setAgents(recipientsData.agents ?? []);
+      setPaymentMethods(paymentData.paymentMethods ?? []);
+      
+      // Merge company data from both endpoints, preferring payment endpoint and using logo
+      const mergedCompany = {
+        ...(recipientsData.company ?? {}),
+        ...(paymentData.company ?? {}),
+        logo: paymentData.company?.logo_url || recipientsData.company?.logo || "",
+      };
+      setCompany(mergedCompany);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load invoice data.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGenerateInvoice = async (invoiceData: any, preview: any) => {
+    try {
+      const response = await fetch("/api/invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipientType: invoiceData.recipientType,
+          recipientId: invoiceData.recipientId,
+          description: invoiceData.description,
+          amount: invoiceData.amount,
+          dueDate: invoiceData.dueDate,
+        }),
+      });
+
+      if (!response.ok) {
+        const result = await response.json() as { error?: string };
+        throw new Error(result.error ?? "Failed to create invoice.");
+      }
+
+      setShowGenerator(false);
+      // Refresh invoices list (in a real app, you'd update the local state or re-fetch)
+      alert("Invoice created successfully!");
+    } catch (err) {
+      throw err;
+    }
+  };
 
   const filtered = invoices.filter(i => statusFilter === "All" || i.status === statusFilter);
 
@@ -38,7 +137,7 @@ export default function Invoices() {
             <h1 className="text-xl font-700" style={{ color: "var(--foreground)" }}>Invoices</h1>
             <p className="text-sm mono mt-0.5" style={{ color: "var(--muted-foreground)" }}>Employer billing and invoice tracking</p>
           </div>
-          <button onClick={() => setShowNew(true)} className="px-4 py-1.5 text-sm font-600 rounded" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+          <button onClick={() => setShowGenerator(true)} className="px-4 py-1.5 text-sm font-600 rounded" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
             + New Invoice
           </button>
         </div>
@@ -175,6 +274,16 @@ export default function Invoices() {
           </div>
         </div>
       )}
+
+      <InvoiceGeneratorModal
+        isOpen={showGenerator}
+        onClose={() => setShowGenerator(false)}
+        recipients={recipients}
+        agents={agents}
+        company={company}
+        paymentMethods={paymentMethods}
+        onGenerate={handleGenerateInvoice}
+      />
     </div>
   );
 }

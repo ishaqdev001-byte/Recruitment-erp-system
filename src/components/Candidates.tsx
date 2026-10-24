@@ -30,12 +30,7 @@ export interface Candidate {
   passportStatus: string;
   passportBranch: string;
   passportStorageLocation: string;
-  // Physical
-  height: string;
-  weight: string;
-  shirtSize: string;
-  shoeSize: string;
-  waistSize: string;
+  // Preferred Locations
   preferredCities: string;
   // Residence
   placeOfBirth: string;
@@ -103,6 +98,8 @@ export default function Candidates() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [canViewFinance, setCanViewFinance] = useState(false);
+  const [canViewActivityLogs, setCanViewActivityLogs] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawerCandidate, setDrawerCandidate] = useState<Candidate | null>(null);
@@ -131,8 +128,7 @@ export default function Candidates() {
           otherNames: "", phone: "", secondaryPhone: "", otherPhone: "", dob: "", age: 0,
           gender: "", maritalStatus: "", religion: "", abroadStatus: "", abroadExperience: "",
           source: "", agent: "", mediaChannel: [], nin: "", passportNumber: "", passportIssue: "",
-          passportExpiry: "", passportStatus: "Available", passportBranch: "", passportStorageLocation: "", height: "", weight: "", shirtSize: "", shoeSize: "",
-          waistSize: "", preferredCities: "", placeOfBirth: "", physicalAddress: "", district: "",
+          passportExpiry: "", passportStatus: "Available", passportBranch: "", passportStorageLocation: "", preferredCities: "", placeOfBirth: "", physicalAddress: "", district: "",
           county: "", subCounty: "", parish: "", fatherName: "", fatherPhone: "", fatherStatus: "",
           motherName: "", motherPhone: "", motherStatus: "", kinFirstName: "", kinLastName: "",
           kinPhone: "", kinRelationship: "", emergencyFirstName: "", emergencyLastName: "",
@@ -140,6 +136,8 @@ export default function Candidates() {
           assignedContracts: "", stage: "", travelStatus: "", visaStatus: "", acceptance: "",
           contracts: "", contractManager: "", branch: "", verification: "", photo: "",
         })));
+        setCanViewFinance(Boolean(payload.permissions?.canViewFinance));
+        setCanViewActivityLogs(Boolean(payload.permissions?.canViewActivityLogs));
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoadError(error instanceof Error ? error.message : "Unable to load candidates.");
@@ -165,7 +163,7 @@ export default function Candidates() {
     dob: "", age: 0, gender: "", maritalStatus: "", religion: "", abroadStatus: "", abroadExperience: "",
     source: "", agent: "", mediaChannel: [],
     nin: "", passportNumber: "", passportIssue: "", passportExpiry: "", passportStatus: "Available", passportBranch: "", passportStorageLocation: "",
-    height: "", weight: "", shirtSize: "", shoeSize: "", waistSize: "", preferredCities: "",
+    preferredCities: "",
     placeOfBirth: "", physicalAddress: "", district: "", county: "", subCounty: "", parish: "",
     fatherName: "", fatherPhone: "", fatherStatus: "", motherName: "", motherPhone: "", motherStatus: "",
     kinFirstName: "", kinLastName: "", kinPhone: "", kinRelationship: "",
@@ -198,6 +196,8 @@ export default function Candidates() {
         isNew={isNew}
         onSave={handleSave}
         onBack={() => { setEditingId(null); setIsNew(false); }}
+        canViewFinance={canViewFinance}
+        canViewActivityLogs={canViewActivityLogs}
       />
     );
   }

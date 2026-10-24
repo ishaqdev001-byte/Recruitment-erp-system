@@ -11,6 +11,7 @@ type AccountTransaction = { id: string; account_id: string; account_name: string
 type Expense = { id: string; account_id: string; account_name: string; expense_type: string; description: string; paid_to: string; amount: number; payment_method: string; reference: string; paid_at: string };
 type AccountsPayload = { accounts?: Account[]; transactions?: AccountTransaction[]; expenses?: Expense[]; totals?: { accountCount: number; totalBalance: number }; permissions?: { canCreate: boolean; canManageAccounts: boolean; canAdministerAccounts: boolean }; error?: string };
 type AccountAction = "deposit" | "withdrawal" | "expense" | null;
+type AccountsSection = "accounts" | "other-income" | "payment-info";
 
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 const methods = ["Cash", "Bank transfer", "Mobile money", "Cheque", "Other"];
@@ -20,7 +21,7 @@ const money = (amount: number) => `UGX ${Number(amount || 0).toLocaleString("en-
 const newReference = (kind: string) => `${kind}-${Date.now().toString(36).toUpperCase()}`;
 
 export default function AccountsWorkspace() {
-  const [activeSection, setActiveSection] = useState<"accounts" | "other-income">("accounts");
+  const [activeSection, setActiveSection] = useState<AccountsSection>("accounts");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transactions, setTransactions] = useState<AccountTransaction[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);

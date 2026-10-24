@@ -6,9 +6,13 @@ import { SearchableSelect } from "./SearchableSelect";
 interface Props {
   candidate: Candidate;
   isNew: boolean;
+  isAgent?: boolean; // Whether user is an agent registering a candidate
   onSave: (c: Candidate) => void | Promise<void>;
   onBack: () => void;
   agentOptions?: string[];
+  canViewFinance?: boolean;
+  canViewActivityLogs?: boolean;
+  canViewActivityByRole?: boolean; // Chairman, GM, Supervisor visibility
 }
 
 function Field({
@@ -106,23 +110,18 @@ function SectionHeader({ title }: { title: string }) {
   );
 }
 
-const tabs = ["Personal", "Passport & Docs", "Residence", "Parents & Kin", "Job Info", "Education & Skills", "Finance", "AI Tools", "Activity"] as const;
-type Tab = typeof tabs[number];
+const allTabs = ["Personal", "Passport & Docs", "Residence", "Parents & Kin", "Job Info", "Education & Skills", "Finance", "AI Tools", "Activity"] as const;
+type Tab = typeof allTabs[number];
 
-const paymentHistory = [
-  { date: "Aug 20, 2026", type: "Deposit", method: "Mobile Money", amount: 1500000, ref: "DEP-001", by: "Aisha Khan", status: "Deposit Received" },
-];
-
-const activityLog = [
-  { time: "Aug 26, 2026 09:14", user: "Aisha Khan", action: "Viewed candidate profile" },
-  { time: "Aug 20, 2026 11:32", user: "Aisha Khan", action: "Recorded payment — UGX 1,500,000" },
-  { time: "Aug 15, 2026 14:10", user: "Director Vicent", action: "Updated stage to Registration" },
-  { time: "Aug 11, 2026 09:00", user: "Director Vicent", action: "Created candidate profile" },
-];
-
-export default function CandidateDetail({ candidate, isNew, onSave, onBack, agentOptions = [] }: Props) {
+export default function CandidateDetail({ candidate, isNew, isAgent = false, onSave, onBack, agentOptions = [], canViewFinance = false, canViewActivityLogs = false, canViewActivityByRole = false }: Props) {
+  // Agents registering candidates only see: Personal, Job Info, Parents & Kin (for next of kin)
+  // Staff completing registration see all tabs based on permissions
+  const agentRegisteringTabs = ["Personal", "Job Info", "Parents & Kin"] as const;
+  const staffViewTabs = ["Personal", "Passport & Docs", "Residence", "Parents & Kin", "Job Info", "Education & Skills", ...(canViewFinance ? ["Finance"] : []), "AI Tools", ...(canViewActivityLogs || canViewActivityByRole ? ["Activity"] : [])] as const;
+  const availableTabs = (isAgent && isNew ? agentRegisteringTabs : staffViewTabs) as unknown as Tab[];
+  
   const [form, setForm] = useState<Candidate>({ ...candidate });
-  const [activeTab, setActiveTab] = useState<Tab>("Personal");
+  const [activeTab, setActiveTab] = useState<Tab>(availableTabs[0]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
@@ -159,7 +158,7 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack, agen
 
       {/* Tabs */}
       <div className="flex border-b shrink-0" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-        {tabs.map((t) => (
+        {availableTabs.map((t) => (
           <button
             key={t}
             onClick={() => setActiveTab(t)}
@@ -178,41 +177,50 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack, agen
       <div className="flex-1 overflow-auto p-6">
         {activeTab === "Personal" && (
           <div className="responsive-grid-4 grid grid-cols-4 gap-4">
-            <Field label="File Number" value={form.fileNumber} onChange={(v) => set("fileNumber", v)} required />
+            {isAgent && isNew && (
+              <div className="col-span-full mb-4 p-4 rounded border" style={{ background: "#fef08a40", borderColor: "#fbbf2440" }}>
+                <p className="text-sm" style={{ color: "var(--foreground)" }}>
+                  <strong>Note:</strong> Additional fields will be completed by company staff after initial registration.
+                </p>
+              </div>
+            )}
+            {!(isAgent && isNew) && <Field label="File Number" value={form.fileNumber} onChange={(v) => set("fileNumber", v)} required />}
             <Field label="First Name" value={form.firstName} onChange={(v) => set("firstName", v)} required />
             <Field label="Last Name" value={form.lastName} onChange={(v) => set("lastName", v)} required />
-            <Field label="Other Names" value={form.otherNames} onChange={(v) => set("otherNames", v)} />
-            <SelectField label="Marital Status" value={form.maritalStatus} onChange={(v) => set("maritalStatus", v)}
-              options={["Single", "Married", "Divorced", "Widowed"]} />
+            {!(isAgent && isNew) && <Field label="Other Names" value={form.otherNames} onChange={(v) => set("otherNames", v)} />}
+            {!(isAgent && isNew) && <SelectField label="Marital Status" value={form.maritalStatus} onChange={(v) => set("maritalStatus", v)}
+              options={["Single", "Married", "Divorced", "Widowed"]} />}
 
             <Field label="Date of Birth" value={form.dob} onChange={(v) => set("dob", v)} type="date" />
-            <Field label="Age" value={String(form.age)} onChange={(v) => set("age", Number(v))} type="number" />
+            {!(isAgent && isNew) && <Field label="Age" value={String(form.age)} onChange={(v) => set("age", Number(v))} type="number" />}
             <Field label="Phone" value={form.phone} onChange={(v) => set("phone", v)} required />
-            <Field label="Secondary Phone" value={form.secondaryPhone} onChange={(v) => set("secondaryPhone", v)} />
+            {!(isAgent && isNew) && <Field label="Secondary Phone" value={form.secondaryPhone} onChange={(v) => set("secondaryPhone", v)} />}
 
-            <Field label="Other Phone" value={form.otherPhone} onChange={(v) => set("otherPhone", v)} />
-            <SelectField label="Gender" value={form.gender} onChange={(v) => set("gender", v)} required
-              options={["Male", "Female"]} />
-            <SelectField label="Religion" value={form.religion} onChange={(v) => set("religion", v)} required
-              options={["Christian", "Muslim", "Hindu", "Other"]} />
-            <Field label="Nationality" value={form.nationality ?? ""} onChange={(v) => set("nationality", v)} />
+            {!(isAgent && isNew) && <Field label="Other Phone" value={form.otherPhone} onChange={(v) => set("otherPhone", v)} />}
+            {!(isAgent && isNew) && <SelectField label="Gender" value={form.gender} onChange={(v) => set("gender", v)} required
+              options={["Male", "Female"]} />}
+            {!(isAgent && isNew) && <SelectField label="Religion" value={form.religion} onChange={(v) => set("religion", v)} required
+              options={["Christian", "Muslim", "Hindu", "Other"]} />}
+            {!(isAgent && isNew) && <Field label="Nationality" value={form.nationality ?? ""} onChange={(v) => set("nationality", v)} />}
 
-            <SelectField label="Abroad Status" value={form.abroadStatus} onChange={(v) => set("abroadStatus", v)} required
-              options={["Yes", "No"]} />
-            <SelectField label="Abroad Experience" value={form.abroadExperience} onChange={(v) => set("abroadExperience", v)} required
-              options={["None", "Certificate", "1 Year", "2 Years", "3 Years", "5+ Years"]} />
-            <SelectField label="Source" value={form.source} onChange={(v) => set("source", v)} required
-              options={["Walk-in", "Referred By Friend", "Agent Referral", "Radio", "Television Advert", "Sign Post", "Social Media", "Newspaper", "Online"]} />
-            <div />
+            {!(isAgent && isNew) && <SelectField label="Abroad Status" value={form.abroadStatus} onChange={(v) => set("abroadStatus", v)} required
+              options={["Yes", "No"]} />}
+            {!(isAgent && isNew) && <SelectField label="Abroad Experience" value={form.abroadExperience} onChange={(v) => set("abroadExperience", v)} required
+              options={["None", "Certificate", "1 Year", "2 Years", "3 Years", "5+ Years"]} />}
+            {!(isAgent && isNew) && <SelectField label="Source" value={form.source} onChange={(v) => set("source", v)} required
+              options={["Walk-in", "Referred By Friend", "Agent Referral", "Radio", "Television Advert", "Sign Post", "Social Media", "Newspaper", "Online"]} />}
+            {!(isAgent && isNew) && <div />}
 
-            <div className="col-span-2">
+            {!(isAgent && isNew) && <div className="col-span-2">
               <label className="text-xs font-600 block mb-1" style={{ color: "var(--muted-foreground)" }}>Agent<span style={{ color: "#ef4444" }}> *</span></label>
               <SearchableSelect required ariaLabel="Search agent" value={form.agent} onChange={(value) => set("agent", value)} options={[...new Set([...agentOptions, ...(form.agent ? [form.agent] : [])])].map((name) => ({ value: name, label: name }))} placeholder="Type an agent name" />
-            </div>
-            <div className="col-span-2">
+            </div>}
+            {!(isAgent && isNew) && <div className="col-span-2">
               <MultiField label="Media Channel" value={form.mediaChannel} onChange={(v) => set("mediaChannel", v)} required
                 options={["Facebook", "Instagram", "Twitter", "WhatsApp", "Newspaper", "Radio", "TV", "Others"]} />
-            </div>
+            </div>}
+            
+            {isAgent && isNew && <Field label="Passport Number" value={form.passportNumber} onChange={(v) => set("passportNumber", v)} />}
           </div>
         )}
 
@@ -229,13 +237,8 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack, agen
               <Field label="Storage Location" value={form.passportStorageLocation} onChange={(v) => set("passportStorageLocation", v)} placeholder="e.g. Locker A-3" required={Boolean(form.passportNumber.trim())} />
             </>}
 
-            <SectionHeader title="Physical Attributes" />
-            <Field label="Height (cm)" value={form.height} onChange={(v) => set("height", v)} placeholder="0" />
-            <Field label="Weight (kg)" value={form.weight} onChange={(v) => set("weight", v)} placeholder="0" />
-            <Field label="Shirt Size" value={form.shirtSize} onChange={(v) => set("shirtSize", v)} />
-            <Field label="Shoe Size" value={form.shoeSize} onChange={(v) => set("shoeSize", v)} />
-            <Field label="Waist Size" value={form.waistSize} onChange={(v) => set("waistSize", v)} />
-            <div className="col-span-3">
+            <SectionHeader title="Preferred Locations" />
+            <div className="col-span-4">
               <Field label="Preferred Cities" value={form.preferredCities} onChange={(v) => set("preferredCities", v)}
                 placeholder="Type or select cities" />
             </div>
@@ -261,29 +264,33 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack, agen
 
         {activeTab === "Parents & Kin" && (
           <div className="responsive-grid-4 grid grid-cols-4 gap-4">
-            <SectionHeader title="Parents Information" />
-            <Field label="Father Name" value={form.fatherName} onChange={(v) => set("fatherName", v)} />
-            <Field label="Father Phone" value={form.fatherPhone} onChange={(v) => set("fatherPhone", v)} />
-            <SelectField label="Father Status" value={form.fatherStatus} onChange={(v) => set("fatherStatus", v)}
-              options={["Alive", "Deceased", "Unknown"]} />
-            <Field label="Mother Name" value={form.motherName} onChange={(v) => set("motherName", v)} />
-            <Field label="Mother Phone" value={form.motherPhone} onChange={(v) => set("motherPhone", v)} />
-            <SelectField label="Mother Status" value={form.motherStatus} onChange={(v) => set("motherStatus", v)}
-              options={["Alive", "Deceased", "Unknown"]} />
-            <div className="col-span-2" />
+            {!(isAgent && isNew) && <>
+              <SectionHeader title="Parents Information" />
+              <Field label="Father Name" value={form.fatherName} onChange={(v) => set("fatherName", v)} />
+              <Field label="Father Phone" value={form.fatherPhone} onChange={(v) => set("fatherPhone", v)} />
+              <SelectField label="Father Status" value={form.fatherStatus} onChange={(v) => set("fatherStatus", v)}
+                options={["Alive", "Deceased", "Unknown"]} />
+              <Field label="Mother Name" value={form.motherName} onChange={(v) => set("motherName", v)} />
+              <Field label="Mother Phone" value={form.motherPhone} onChange={(v) => set("motherPhone", v)} />
+              <SelectField label="Mother Status" value={form.motherStatus} onChange={(v) => set("motherStatus", v)}
+                options={["Alive", "Deceased", "Unknown"]} />
+              <div className="col-span-2" />
+            </>}
 
-            <SectionHeader title="First Next of Kin (Mandatory)" />
+            <SectionHeader title={isAgent && isNew ? "Next of Kin Information (Mandatory)" : "First Next of Kin (Mandatory)"} />
             <Field label="First Name" value={form.kinFirstName} onChange={(v) => set("kinFirstName", v)} required />
             <Field label="Last Name" value={form.kinLastName} onChange={(v) => set("kinLastName", v)} required />
             <Field label="Phone" value={form.kinPhone} onChange={(v) => set("kinPhone", v)} required />
             <Field label="Relationship" value={form.kinRelationship} onChange={(v) => set("kinRelationship", v)} required
               placeholder="e.g. Wife, Brother, Parent" />
 
-            <SectionHeader title="Emergency Contact (Optional)" />
-            <Field label="First Name" value={form.emergencyFirstName} onChange={(v) => set("emergencyFirstName", v)} />
-            <Field label="Last Name" value={form.emergencyLastName} onChange={(v) => set("emergencyLastName", v)} />
-            <Field label="Phone" value={form.emergencyPhone} onChange={(v) => set("emergencyPhone", v)} />
-            <Field label="Relationship" value={form.emergencyRelationship} onChange={(v) => set("emergencyRelationship", v)} />
+            {!(isAgent && isNew) && <>
+              <SectionHeader title="Emergency Contact (Optional)" />
+              <Field label="First Name" value={form.emergencyFirstName} onChange={(v) => set("emergencyFirstName", v)} />
+              <Field label="Last Name" value={form.emergencyLastName} onChange={(v) => set("emergencyLastName", v)} />
+              <Field label="Phone" value={form.emergencyPhone} onChange={(v) => set("emergencyPhone", v)} />
+              <Field label="Relationship" value={form.emergencyRelationship} onChange={(v) => set("emergencyRelationship", v)} />
+            </>}
           </div>
         )}
 
@@ -316,7 +323,7 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack, agen
           </div>
         )}
 
-        {activeTab === "Finance" && (
+        {activeTab === "Finance" && canViewFinance && (
           <div>
             <div className="grid grid-cols-4 gap-4 mb-6">
               {[
@@ -343,17 +350,7 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack, agen
                   ))}
                 </tr></thead>
                 <tbody>
-                  {paymentHistory.map((p, i) => (
-                    <tr key={i} className="border-b" style={{ borderColor: "var(--border)" }}>
-                      <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{p.date}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "var(--foreground)" }}>{p.type}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{p.method}</td>
-                      <td className="px-4 py-3 mono font-700" style={{ color: "#10b981" }}>+UGX {p.amount.toLocaleString()}</td>
-                      <td className="px-4 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{p.ref}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{p.by}</td>
-                      <td className="px-4 py-3"><span className="mono text-xs font-600 px-1.5 py-0.5 rounded" style={{ color: "#8b5cf6", background: "#8b5cf620" }}>{p.status}</span></td>
-                    </tr>
-                  ))}
+                  {/* Payment history would be populated from candidate data */}
                 </tbody>
               </table>
             </div>
@@ -383,22 +380,11 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack, agen
           </div>
         )}
 
-        {activeTab === "Activity" && (
+        {activeTab === "Activity" && (canViewActivityLogs || canViewActivityByRole) && (
           <div className="max-w-2xl">
             <h3 className="text-xs font-700 uppercase tracking-widest mb-4" style={{ color: "var(--muted-foreground)" }}>Activity History</h3>
             <div className="space-y-0">
-              {activityLog.map((a, i) => (
-                <div key={i} className="flex gap-4 pb-4">
-                  <div className="flex flex-col items-center">
-                    <div className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ background: "var(--primary)" }} />
-                    {i < activityLog.length - 1 && <div className="w-px flex-1 mt-1" style={{ background: "var(--border)" }} />}
-                  </div>
-                  <div className="pb-2">
-                    <div className="text-sm" style={{ color: "var(--foreground)" }}>{a.action}</div>
-                    <div className="text-xs mono mt-0.5" style={{ color: "var(--muted-foreground)" }}>{a.user} · {a.time}</div>
-                  </div>
-                </div>
-              ))}
+              {/* Activity log would be populated from candidate data */}
             </div>
           </div>
         )}
@@ -438,7 +424,7 @@ export default function CandidateDetail({ candidate, isNew, onSave, onBack, agen
         style={{ borderColor: "var(--border)", background: "var(--card)" }}
       >
         <div className="flex gap-2">
-          {tabs.map((t, i) => (
+          {availableTabs.map((t, i) => (
             <div key={t} className="w-2 h-2 rounded-full" style={{ background: activeTab === t ? "var(--primary)" : "var(--border)" }} />
           ))}
         </div>

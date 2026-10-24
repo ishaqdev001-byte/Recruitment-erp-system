@@ -59,6 +59,27 @@ type BookingForm = {
   phone: string;
   incomeTypeId: string;
   appointmentAt: string;
+  doctorUserId: string;
+};
+
+type DoctorOption = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+};
+
+type AvailabilityResponse = {
+  available: boolean;
+  reason?: string;
+  nextAvailableAt?: string;
+  offlineDetails?: {
+    isAllDay: boolean;
+    offlineStartTime?: string;
+    offlineEndTime?: string;
+    offlineReason?: string;
+  };
+  error?: string;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -88,6 +109,7 @@ function defaultApptDate() {
 const emptyForm = (): BookingForm => ({
   candidateId: "", firstName: "", lastName: "", dateOfBirth: "",
   passportNumber: "", phone: "", incomeTypeId: "", appointmentAt: defaultApptDate(),
+  doctorUserId: "",
 });
 
 // ─── Candidate search combobox ────────────────────────────────────────────────
@@ -201,15 +223,18 @@ function CandidateSearch({ onSelect }: { onSelect: (candidate: CandidateResult) 
 export default function MedicalAppointments() {
   const [incomeTypes, setIncomeTypes] = useState<IncomeType[]>([]);
   const [appointments, setAppointments] = useState<MedicalAppointment[]>([]);
+  const [doctors, setDoctors] = useState<DoctorOption[]>([]);
   const [canBookAppointments, setCanBookAppointments] = useState(false);
   const [canViewAppointments, setCanViewAppointments] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [candidateLocked, setCandidateLocked] = useState(false);
   const [form, setForm] = useState<BookingForm>(emptyForm());
+  const [doctorAvailability, setDoctorAvailability] = useState<AvailabilityResponse | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -222,6 +247,13 @@ export default function MedicalAppointments() {
       setAppointments(result.appointments ?? []);
       setCanBookAppointments(Boolean(result.permissions?.canBookAppointments));
       setCanViewAppointments(Boolean(result.permissions?.canViewAppointments));
+      
+      // Load doctors
+      const doctorsResponse = await fetch("/api/users/doctors", { cache: "no-store" });
+      if (doctorsResponse.ok) {
+        const doctorsData = await doctorsResponse.json() as { doctors?: DoctorOption[] };
+        setDoctors(doctorsData.doctors ?? []);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load medical appointments.");
     } finally {
@@ -230,6 +262,43 @@ export default function MedicalAppointments() {
   };
 
   useEffect(() => { void load(); }, []);
+
+  // Check doctor availability when doctor or appointment time changes
+  useEffect(() => {
+    if (!form.doctorUserId || !form.appointmentAt) {
+      setDoctorAvailability(null);
+      return;
+    }
+
+    const checkAvailability = async () => {
+      setCheckingAvailability(true);
+      try {
+        const response = await fetch("/api/medical/doctor-availability", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            doctorUserId: form.doctorUserId,
+            appointmentAt: new Date(form.appointmentAt).toISOString(),
+          }),
+        });
+        const result = await response.json() as AvailabilityResponse;
+        if (response.ok) {
+          setDoctorAvailability(result);
+        }
+      } catch {
+        // Silently fail — don't prevent booking if availability check fails
+        setDoctorAvailability(null);
+      } finally {
+        setCheckingAvailability(false);
+      }
+    };
+
+    const debounceTimer = setTimeout(() => {
+      void checkAvailability();
+    }, 500);
+
+    return () => clearTimeout(debounceTimer);
+  }, [form.doctorUserId, form.appointmentAt]);
 
   const age = calcAge(form.dateOfBirth);
   const selectedType = incomeTypes.find((t) => t.id === form.incomeTypeId) ?? null;
@@ -262,6 +331,13 @@ export default function MedicalAppointments() {
 
   const bookAppointment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    
+    // Check if doctor is available before submitting
+    if (doctorAvailability && !doctorAvailability.available) {
+      setError("Cannot book: selected doctor is unavailable during this time.");
+      return;
+    }
+
     setSaving(true);
     setError("");
     setNotice("");
@@ -276,6 +352,7 @@ export default function MedicalAppointments() {
       setShowForm(false);
       setForm(emptyForm());
       setCandidateLocked(false);
+      setDoctorAvailability(null);
       if (result.warning) {
         setNotice(`Appointment booked. Note: ${result.warning}`);
       } else {
@@ -508,6 +585,23 @@ export default function MedicalAppointments() {
                 </select>
               </label>
 
+              {/* Doctor selection */}
+              <label className={labelClass} style={{ color: "var(--muted-foreground)" }}>
+                Doctor
+                <select
+                  required
+                  value={form.doctorUserId}
+                  onChange={(e) => setForm((f) => ({ ...f, doctorUserId: e.target.value }))}
+                  className={inputClass}
+                  style={fieldStyle}
+                >
+                  <option value="">Select a doctor…</option>
+                  {doctors.map((d) => (
+                    <option key={d.id} value={d.id}>{d.firstName} {d.lastName} ({d.email})</option>
+                  ))}
+                </select>
+              </label>
+
               {/* Fee & account summary */}
               {selectedType && (
                 <div className="grid grid-cols-2 gap-y-2 border-y py-3 text-sm" style={{ borderColor: "var(--border)" }}>
@@ -533,6 +627,39 @@ export default function MedicalAppointments() {
                 />
               </label>
 
+              {/* Doctor availability alert */}
+              {checkingAvailability && (
+                <div className="flex items-center gap-2 border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm" style={{ color: "#0ea5e9" }}>
+                  <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                  Checking doctor availability…
+                </div>
+              )}
+              {doctorAvailability && !doctorAvailability.available && (
+                <div className="border border-red-500/30 bg-red-500/10 px-3 py-3 text-sm" style={{ color: "#f87171" }}>
+                  <p className="font-600 mb-1">Doctor unavailable</p>
+                  <p className="mb-2">{doctorAvailability.reason}</p>
+                  {doctorAvailability.offlineDetails?.isAllDay ? (
+                    <p className="text-xs">Doctor is unavailable all day on this date.</p>
+                  ) : (
+                    <p className="text-xs">
+                      Doctor unavailable {doctorAvailability.offlineDetails?.offlineStartTime}–{doctorAvailability.offlineDetails?.offlineEndTime}. 
+                      {doctorAvailability.offlineDetails?.offlineReason && ` Reason: ${doctorAvailability.offlineDetails.offlineReason}.`}
+                    </p>
+                  )}
+                  {doctorAvailability.nextAvailableAt && (
+                    <p className="mt-2 text-xs font-600">
+                      Next available: {new Date(doctorAvailability.nextAvailableAt).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              )}
+              {doctorAvailability && doctorAvailability.available && (
+                <div className="flex items-center gap-2 border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm" style={{ color: "#10b981" }}>
+                  <CheckCircle2 size={14} aria-hidden="true" />
+                  Doctor is available at this time
+                </div>
+              )}
+
               <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>
                 Booking records the fee as an income credit in Finance → Payments &amp; Deposits automatically.
               </p>
@@ -550,7 +677,7 @@ export default function MedicalAppointments() {
               </button>
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || (doctorAvailability !== null && !doctorAvailability.available)}
                 className="px-5 py-2.5 text-sm font-600 disabled:opacity-50"
                 style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
               >

@@ -14,6 +14,19 @@ type AgentRecord = {
 
 type RoleRecord = { id: string; name: string };
 type CandidateRecord = { id: string; first_name: string; last_name: string; agent_name: string; details: Record<string, unknown> | null };
+type AgentCandidateRecord = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  phone: string;
+  fileNumber: string;
+  position: string;
+  visaStatus: string;
+  passportNumber: string;
+  visaReceivedDate: string | null;
+  createdAt: string;
+};
 type AgentPayload = { users: AgentRecord[]; roles: RoleRecord[]; error?: string };
 
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
@@ -36,10 +49,12 @@ export default function Agents() {
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [roles, setRoles] = useState<RoleRecord[]>([]);
   const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
+  const [agentCandidates, setAgentCandidates] = useState<AgentCandidateRecord[]>([]);
   const [search, setSearch] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [agentCandidatesLoading, setAgentCandidatesLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -73,6 +88,30 @@ export default function Agents() {
     void load();
     return () => { cancelled = true; };
   }, [reloadKey]);
+
+  // Load agent candidates when agent is selected
+  useEffect(() => {
+    if (!selectedAgentId) {
+      setAgentCandidates([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      setAgentCandidatesLoading(true);
+      try {
+        const response = await fetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/candidates`, { cache: "no-store" });
+        const payload = await response.json() as { candidates?: AgentCandidateRecord[]; error?: string };
+        if (!response.ok) throw new Error(payload.error ?? "Unable to load agent candidates.");
+        if (!cancelled) setAgentCandidates(payload.candidates ?? []);
+      } catch (loadError) {
+        if (!cancelled) console.error("Agent candidates load failed:", loadError);
+      } finally {
+        if (!cancelled) setAgentCandidatesLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [selectedAgentId]);
 
   const activeCount = agents.filter((agent) => agent.status === "active").length;
   const inactiveCount = agents.filter((agent) => agent.status === "disabled").length;
@@ -175,6 +214,56 @@ export default function Agents() {
               </div>)}
             </div>
             <div className="border-t px-5 py-3 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>{selectedMetrics.assigned.length} candidates assigned by matching their saved agent name to this profile.</div>
+          </section>
+
+          <section className="border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+            <div className="border-b px-5 py-4" style={{ borderColor: "var(--border)" }}>
+              <h2 className="text-sm font-700" style={{ color: "var(--foreground)" }}>Assigned candidates</h2>
+              <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>Detailed list of all candidates assigned to this agent with visa status</p>
+            </div>
+            {agentCandidatesLoading && (
+              <div className="px-5 py-8 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading candidates…</div>
+            )}
+            {!agentCandidatesLoading && agentCandidates.length === 0 && (
+              <div className="px-5 py-8 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No candidates assigned to this agent.</div>
+            )}
+            {!agentCandidatesLoading && agentCandidates.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-600 text-sm">
+                  <thead>
+                    <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                      {["Candidate Name", "File Number", "Phone", "Position", "Passport Number", "Visa Status", "Visa Received Date"].map((heading) => (
+                        <th key={heading} className="whitespace-nowrap px-4 py-3 text-xs font-700 uppercase tracking-wide text-left" style={{ color: "var(--muted-foreground)" }}>
+                          {heading}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {agentCandidates.map((candidate) => (
+                      <tr key={candidate.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                        <td className="px-4 py-3 font-600" style={{ color: "var(--foreground)" }}>{candidate.fullName}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{candidate.fileNumber}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-xs" style={{ color: "var(--foreground)" }}>{candidate.phone || "—"}</td>
+                        <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{candidate.position || "—"}</td>
+                        <td className="whitespace-nowrap px-4 py-3 font-700 mono" style={{ color: "var(--primary)" }}>{candidate.passportNumber || "—"}</td>
+                        <td className="px-4 py-3 text-xs">
+                          <span className="whitespace-nowrap px-2 py-1 rounded text-xs font-600" style={{
+                            color: candidate.visaStatus === "Received" ? "#10b981" : candidate.visaStatus === "Rejected" ? "#ef4444" : "#f59e0b",
+                            background: candidate.visaStatus === "Received" ? "#10b98120" : candidate.visaStatus === "Rejected" ? "#ef444420" : "#f59e0b20",
+                          }}>
+                            {candidate.visaStatus || "—"}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                          {candidate.visaReceivedDate ? new Date(candidate.visaReceivedDate).toLocaleDateString() : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </div>
       </section>

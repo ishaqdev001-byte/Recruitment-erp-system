@@ -95,7 +95,7 @@ const agentSupplierViews = new Set<View>(["agents", "suppliers"]);
 const workforceViews = new Set<View>(["human-resources", "attendance", "leave"]);
 const candidateViews = new Set<View>(["candidates", "candidate-inquiries", "medical-appointments", "medical-management"]);
 
-export default function Sidebar({ active, onNavigate, role, userName, companyName, companyLogo, mobileOpen, onLogout, branchName, isMainBranchUser }: { active: View; onNavigate: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void; branchName?: string; isMainBranchUser?: boolean }) {
+export default function Sidebar({ active, onNavigate, onPrefetch, role, userName, companyName, companyLogo, mobileOpen, onLogout, branchName, isMainBranchUser }: { active: View; onNavigate: (v: View) => void; onPrefetch: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void; branchName?: string; isMainBranchUser?: boolean }) {
   const [openGroups, setOpenGroups] = useState({ agents: agentSupplierViews.has(active), finance: financeViews.has(active), employers: employerViews.has(active), workforce: workforceViews.has(active), candidates: candidateViews.has(active) });
 
   useEffect(() => {
@@ -141,7 +141,7 @@ export default function Sidebar({ active, onNavigate, role, userName, companyNam
             const Icon = item.icon;
             const isActive = active === item.id;
             return (
-              <button key={item.id} onClick={() => onNavigate(item.id)}
+              <button key={item.id} onClick={() => onNavigate(item.id)} onMouseEnter={() => onPrefetch(item.id)} onFocus={() => onPrefetch(item.id)}
                 className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded text-xs font-600 transition-all duration-150 text-left"
                 style={{
                   background: isActive ? "var(--secondary)" : "transparent",
@@ -179,7 +179,7 @@ export default function Sidebar({ active, onNavigate, role, userName, companyNam
                     const CIcon = child.icon;
                     const isActive = active === child.id;
                     return (
-                      <button key={child.id} onClick={() => onNavigate(child.id)}
+                      <button key={child.id} onClick={() => onNavigate(child.id)} onMouseEnter={() => onPrefetch(child.id)} onFocus={() => onPrefetch(child.id)}
                         className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs font-600 transition-all duration-150 text-left"
                         style={{
                           background: isActive ? "var(--secondary)" : "transparent",

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import dynamic from "next/dynamic";
 import { Eye, EyeOff } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 
@@ -31,37 +32,81 @@ function KilaxWordmark() {
     </div>
   );
 }
-import Sidebar from "./components/Sidebar";
-import TopBar from "./components/TopBar";
-import Dashboard from "./components/LiveDashboard";
-import Candidates from "./components/CandidateRoster";
-import UsersRoles from "./components/UsersRoles";
-import Agents from "./components/Agents";
-import Finance from "./components/Finance";
-import Invoices from "./components/InvoiceWorkspace";
-import Payments from "./components/Payments";
-import Paychecks from "./components/Paychecks";
-import AccountsWorkspace from "./components/AccountsWorkspace";
-import Suppliers from "./components/Suppliers";
-import Contractors from "./components/Employers";
-import Projects from "./components/Projects";
-import PassportCustody from "./components/PassportCustodyWorkspace";
-import Attendance from "./components/Attendance";
-import LeaveManagement from "./components/LeaveManagement";
-import HumanResources from "./components/HumanResources";
-import MedicalAppointments from "./components/MedicalAppointments";
-import MedicalManagement from "./components/MedicalManagement";
-import Branches from "./components/Branches";
-import BranchApprovals from "./components/BranchApprovals";
-import Requisitions from "./components/RequisitionsWorkspace";
-import CompanyDrive from "./components/CompanyDrive";
-import Tasks from "./components/TaskWorkspace";
-import Communications from "./components/Communications";
-import AIAssistant from "./components/AIAssistant";
-import DepartmentsSettings from "./components/settings/DepartmentsSettings";
-import CurrenciesSettings from "./components/settings/CurrenciesSettings";
-import ServiceProvidersSettings from "./components/settings/ServiceProvidersSettings";
 import { createSupabaseBrowserClient } from "./lib/supabase/browser";
+
+const PageLoading = () => (
+  <div className="p-6 text-sm" style={{ color: "var(--muted-foreground)" }} aria-busy="true">
+    Loading page…
+  </div>
+);
+const Sidebar = dynamic(() => import("./components/Sidebar"), { loading: PageLoading });
+const TopBar = dynamic(() => import("./components/TopBar"), { loading: PageLoading });
+const Dashboard = dynamic(() => import("./components/LiveDashboard"), { loading: PageLoading });
+const Candidates = dynamic(() => import("./components/CandidateRoster"), { loading: PageLoading });
+const UsersRoles = dynamic(() => import("./components/UsersRoles"), { loading: PageLoading });
+const Agents = dynamic(() => import("./components/Agents"), { loading: PageLoading });
+const Finance = dynamic(() => import("./components/Finance"), { loading: PageLoading });
+const Invoices = dynamic(() => import("./components/InvoiceWorkspace"), { loading: PageLoading });
+const Payments = dynamic(() => import("./components/Payments"), { loading: PageLoading });
+const Paychecks = dynamic(() => import("./components/Paychecks"), { loading: PageLoading });
+const AccountsWorkspace = dynamic(() => import("./components/AccountsWorkspace"), { loading: PageLoading });
+const Suppliers = dynamic(() => import("./components/Suppliers"), { loading: PageLoading });
+const Contractors = dynamic(() => import("./components/Employers"), { loading: PageLoading });
+const Projects = dynamic(() => import("./components/Projects"), { loading: PageLoading });
+const PassportCustody = dynamic(() => import("./components/PassportCustodyWorkspace"), { loading: PageLoading });
+const Attendance = dynamic(() => import("./components/Attendance"), { loading: PageLoading });
+const LeaveManagement = dynamic(() => import("./components/LeaveManagement"), { loading: PageLoading });
+const HumanResources = dynamic(() => import("./components/HumanResources"), { loading: PageLoading });
+const MedicalAppointments = dynamic(() => import("./components/MedicalAppointments"), { loading: PageLoading });
+const MedicalManagement = dynamic(() => import("./components/MedicalManagement"), { loading: PageLoading });
+const Branches = dynamic(() => import("./components/Branches"), { loading: PageLoading });
+const BranchApprovals = dynamic(() => import("./components/BranchApprovals"), { loading: PageLoading });
+const Requisitions = dynamic(() => import("./components/RequisitionsWorkspace"), { loading: PageLoading });
+const CompanyDrive = dynamic(() => import("./components/CompanyDrive"), { loading: PageLoading });
+const Tasks = dynamic(() => import("./components/TaskWorkspace"), { loading: PageLoading });
+const Communications = dynamic(() => import("./components/Communications"), { loading: PageLoading });
+const AIAssistant = dynamic(() => import("./components/AIAssistant"), { loading: PageLoading });
+const DepartmentsSettings = dynamic(() => import("./components/settings/DepartmentsSettings"), { loading: PageLoading });
+const CurrenciesSettings = dynamic(() => import("./components/settings/CurrenciesSettings"), { loading: PageLoading });
+const ServiceProvidersSettings = dynamic(() => import("./components/settings/ServiceProvidersSettings"), { loading: PageLoading });
+
+const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
+  dashboard: () => import("./components/LiveDashboard"),
+  candidates: () => import("./components/CandidateRoster"),
+  "candidate-inquiries": () => import("./components/CandidateRoster"),
+  agents: () => import("./components/Agents"),
+  suppliers: () => import("./components/Suppliers"),
+  finance: () => import("./components/Finance"),
+  accounts: () => import("./components/AccountsWorkspace"),
+  invoices: () => import("./components/InvoiceWorkspace"),
+  payments: () => import("./components/Payments"),
+  paychecks: () => import("./components/Paychecks"),
+  contractors: () => import("./components/Employers"),
+  projects: () => import("./components/Projects"),
+  attendance: () => import("./components/Attendance"),
+  leave: () => import("./components/LeaveManagement"),
+  "human-resources": () => import("./components/HumanResources"),
+  "medical-appointments": () => import("./components/MedicalAppointments"),
+  "medical-management": () => import("./components/MedicalManagement"),
+  branches: () => import("./components/Branches"),
+  approvals: () => import("./components/BranchApprovals"),
+  requisitions: () => import("./components/RequisitionsWorkspace"),
+  tasks: () => import("./components/TaskWorkspace"),
+  communications: () => import("./components/Communications"),
+  ai: () => import("./components/AIAssistant"),
+  passport: () => import("./components/PassportCustodyWorkspace"),
+  documents: () => import("./components/CompanyDrive"),
+  users: () => import("./components/UsersRoles"),
+  settings: () => Promise.all([
+    import("./components/settings/DepartmentsSettings"),
+    import("./components/settings/CurrenciesSettings"),
+    import("./components/settings/ServiceProvidersSettings"),
+  ]),
+};
+
+function preloadView(view: View) {
+  void viewPreloaders[view]?.();
+}
 
 export type View =
   | "dashboard"
@@ -506,6 +551,25 @@ export default function App() {
     void restoreSession();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    const preloadCommonViews = () => {
+      for (const commonView of ["dashboard", "candidates", "tasks", "finance"] as const) {
+        preloadView(commonView);
+      }
+    };
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      const idleId = idleWindow.requestIdleCallback(preloadCommonViews, { timeout: 2500 });
+      return () => idleWindow.cancelIdleCallback?.(idleId);
+    }
+    const timeoutId = window.setTimeout(preloadCommonViews, 1200);
+    return () => window.clearTimeout(timeoutId);
+  }, [session]);
 
   useEffect(() => {
     if (preferencesReady) {
@@ -979,7 +1043,8 @@ export default function App() {
       )}
       <Sidebar
         active={view}
-        onNavigate={(nextView) => { setView(nextView); setMobileNavOpen(false); }}
+        onNavigate={(nextView) => { preloadView(nextView); setView(nextView); setMobileNavOpen(false); }}
+        onPrefetch={preloadView}
         mobileOpen={mobileNavOpen}
         onClose={() => setMobileNavOpen(false)}
         role={activeUser?.role ?? role}
@@ -993,7 +1058,7 @@ export default function App() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <TopBar
           onMenuClick={() => setMobileNavOpen(true)}
-          onNavigate={setView}
+          onNavigate={(nextView) => { preloadView(nextView); setView(nextView); }}
           role={activeUser?.role ?? role}
           theme={theme}
           onThemeChange={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}

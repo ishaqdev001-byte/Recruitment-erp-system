@@ -250,10 +250,9 @@ export default function MedicalAppointments() {
       
       // Load doctors
       const doctorsResponse = await fetch("/api/users/doctors", { cache: "no-store" });
-      if (doctorsResponse.ok) {
-        const doctorsData = await doctorsResponse.json() as { doctors?: DoctorOption[] };
-        setDoctors(doctorsData.doctors ?? []);
-      }
+      const doctorsData = await doctorsResponse.json() as { doctors?: DoctorOption[]; error?: string };
+      if (!doctorsResponse.ok) throw new Error(doctorsData.error ?? "Unable to load doctors.");
+      setDoctors(doctorsData.doctors ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load medical appointments.");
     } finally {

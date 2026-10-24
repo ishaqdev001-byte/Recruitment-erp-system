@@ -18,6 +18,7 @@ type TaskRecord = {
   sms_reminder_enabled: boolean;
   is_completed: boolean;
   is_starred: boolean;
+  created_at: string;
 };
 type TaskList = { id: string; name: string; position: number };
 type Member = { id: string; name: string };
@@ -191,11 +192,22 @@ export default function TaskWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const payload = await response.json() as { error?: string };
+      const payload = await response.json() as { task?: TaskRecord; error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Unable to save this task.");
+      if (!payload.task) throw new Error("The saved task was not returned by the server.");
+      const savedTask = payload.task;
+      setTasks((current) => {
+        const updated = editingId
+          ? current.map((task) => task.id === savedTask.id ? savedTask : task)
+          : [...current, savedTask];
+        return updated.sort((a, b) =>
+          Number(b.is_starred) - Number(a.is_starred)
+          || (a.due_at ? Date.parse(a.due_at) : Infinity) - (b.due_at ? Date.parse(b.due_at) : Infinity)
+          || Date.parse(b.created_at) - Date.parse(a.created_at)
+        );
+      });
       setShowTaskForm(false);
       window.dispatchEvent(new Event("task-reminders-changed"));
-      setReloadKey((key) => key + 1);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save this task.");
     } finally {

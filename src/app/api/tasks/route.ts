@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { dispatchDueTaskReminders, getTaskAccess, hasTaskPermission } from "@/lib/server/tasks";
+import { getTaskAccess, hasTaskPermission } from "@/lib/server/tasks";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
@@ -10,56 +10,49 @@ export async function GET() {
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
     if (!await hasTaskPermission(access, "tasks.view")) return NextResponse.json({ error: "Task access is not set up. Apply supabase/migrations/202610040025_google_tasks.sql, or ask an administrator to grant tasks.view." }, { status: 403, headers });
 
-    const canCreate = await hasTaskPermission(access, "tasks.create");
-    const canSendSms = await access.supabase.rpc("current_user_has_company_permission", {
-      requested_company_id: access.companyId,
-      requested_permission: "communications.sms.send",
-    }).then((result) => !result.error && Boolean(result.data));
-    let { data: lists, error: listError } = await access.supabase.from("task_lists")
-      .select("id, name, position, created_at")
-      .eq("company_id", access.companyId)
-      .order("position")
-      .order("name");
-    if (listError) throw listError;
-    if (!lists?.length && canCreate) {
-      await access.supabase.from("task_lists").insert({
-        company_id: access.companyId,
-        name: "My Tasks",
-        created_by: access.userId,
-      });
-      const result = await access.supabase.from("task_lists")
-        .select("id, name, position, created_at")
-        .eq("company_id", access.companyId)
-        .order("position")
-        .order("name");
-      lists = result.data;
-      listError = result.error;
-      if (listError) throw listError;
-    }
-
-    await dispatchDueTaskReminders(access);
-    const [{ data: tasks, error: taskError }, { data: memberships, error: membershipError }] = await Promise.all([
+    const [
+      canCreate,
+      canEdit,
+      canDelete,
+      canSendSmsResult,
+      { data: lists, error: listError },
+      { data: tasks, error: taskError },
+      { data: memberships, error: membershipError },
+    ] = await Promise.all([
+      hasTaskPermission(access, "tasks.create"),
+      hasTaskPermission(access, "tasks.edit"),
+      hasTaskPermission(access, "tasks.delete"),
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "communications.sms.send",
+      }),
+      access.supabase.from("task_lists").select("id, name, position, created_at")
+        .eq("company_id", access.companyId).order("position").order("name"),
       access.supabase.from("tasks").select("*").eq("company_id", access.companyId)
         .order("is_starred", { ascending: false }).order("due_at", { ascending: true, nullsFirst: false }).order("created_at", { ascending: false }),
       access.supabase.from("company_memberships").select("user_id").eq("company_id", access.companyId).eq("status", "active"),
     ]);
-    if (taskError || membershipError) throw taskError ?? membershipError;
+    if (listError || taskError || membershipError) throw listError ?? taskError ?? membershipError;
+    let taskLists = lists ?? [];
+    if (!taskLists.length && canCreate) {
+      const { data: newList, error: createListError } = await access.supabase.from("task_lists")
+        .insert({ company_id: access.companyId, name: "My Tasks", created_by: access.userId })
+        .select("id, name, position, created_at")
+        .single();
+      if (createListError || !newList) throw createListError ?? new Error("Unable to create the default task list.");
+      taskLists = [newList];
+    }
     const memberIds = (memberships ?? []).map((member) => member.user_id);
     const { data: profiles, error: profileError } = memberIds.length
       ? await access.supabase.from("profiles").select("id, display_name").in("id", memberIds)
       : { data: [], error: null };
     if (profileError) throw profileError;
     const profileNames = new Map((profiles ?? []).map((profile) => [profile.id, profile.display_name]));
-    const [canEdit, canDelete] = await Promise.all([
-      hasTaskPermission(access, "tasks.edit"),
-      hasTaskPermission(access, "tasks.delete"),
-    ]);
-
     return NextResponse.json({
       tasks: tasks ?? [],
-      lists: lists ?? [],
+      lists: taskLists,
       members: memberIds.map((id) => ({ id, name: profileNames.get(id) || `Staff ${id.slice(0, 8)}` })),
-      permissions: { canCreate, canEdit, canDelete, canSendSms },
+      permissions: { canCreate, canEdit, canDelete, canSendSms: !canSendSmsResult.error && Boolean(canSendSmsResult.data) },
     }, { headers });
   } catch (error) {
     console.error("Task list request failed", error);
@@ -71,7 +64,6 @@ export async function POST(request: Request) {
   try {
     const access = await getTaskAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
-    if (!await hasTaskPermission(access, "tasks.create")) return NextResponse.json({ error: "You do not have permission to create tasks. Apply the Google Tasks migration if task permissions have not been configured." }, { status: 403, headers });
 
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     const title = typeof body?.title === "string" ? body.title.trim() : "";
@@ -93,23 +85,36 @@ export async function POST(request: Request) {
       || !["none", "daily", "weekly", "monthly", "yearly"].includes(String(recurrence))) {
       return NextResponse.json({ error: "Enter a task title and valid task details." }, { status: 400, headers });
     }
-    if (smsReminderEnabled && (!reminderAt || !await access.supabase.rpc("current_user_has_company_permission", {
-      requested_company_id: access.companyId,
-      requested_permission: "communications.sms.send",
-    }).then((result) => !result.error && Boolean(result.data)))) {
+
+    const [canCreate, smsPermission] = await Promise.all([
+      hasTaskPermission(access, "tasks.create"),
+      smsReminderEnabled && reminderAt
+        ? access.supabase.rpc("current_user_has_company_permission", {
+          requested_company_id: access.companyId,
+          requested_permission: "communications.sms.send",
+        })
+        : Promise.resolve(null),
+    ]);
+    if (!canCreate) return NextResponse.json({ error: "You do not have permission to create tasks. Apply the Google Tasks migration if task permissions have not been configured." }, { status: 403, headers });
+    if (smsReminderEnabled && (!reminderAt || !smsPermission || smsPermission.error || !smsPermission.data)) {
       return NextResponse.json({ error: "SMS reminders require a scheduled reminder and the communications.sms.send permission." }, { status: 403, headers });
     }
-    if (assignedTo) {
-      const { data: member } = await access.supabase.from("company_memberships").select("user_id")
-        .eq("company_id", access.companyId).eq("user_id", assignedTo).eq("status", "active").maybeSingle();
-      if (!member) return NextResponse.json({ error: "Choose an active member of this company." }, { status: 400, headers });
+
+    const memberLookup = assignedTo
+      ? access.supabase.from("company_memberships").select("user_id")
+        .eq("company_id", access.companyId).eq("user_id", assignedTo).eq("status", "active").maybeSingle()
+      : Promise.resolve(null);
+    const parentLookup = parentTaskId
+      ? access.supabase.from("tasks").select("id, list_id, parent_task_id")
+        .eq("company_id", access.companyId).eq("id", parentTaskId).maybeSingle()
+      : Promise.resolve(null);
+    const [memberResult, parentResult] = await Promise.all([memberLookup, parentLookup]);
+    if (memberResult?.error || parentResult?.error) throw memberResult?.error ?? parentResult?.error;
+    if (assignedTo && !memberResult?.data) return NextResponse.json({ error: "Choose an active member of this company." }, { status: 400, headers });
+    if (parentTaskId && (!parentResult?.data || parentResult.data.list_id !== listId)) {
+      return NextResponse.json({ error: "Choose a parent task in the selected list." }, { status: 400, headers });
     }
-    if (parentTaskId) {
-      const { data: parent } = await access.supabase.from("tasks").select("id, list_id, parent_task_id")
-        .eq("company_id", access.companyId).eq("id", parentTaskId).maybeSingle();
-      if (!parent || parent.list_id !== listId) return NextResponse.json({ error: "Choose a parent task in the selected list." }, { status: 400, headers });
-      if (parent.parent_task_id) return NextResponse.json({ error: "Subtasks can only be nested one level deep." }, { status: 400, headers });
-    }
+    if (parentResult?.data?.parent_task_id) return NextResponse.json({ error: "Subtasks can only be nested one level deep." }, { status: 400, headers });
 
     const { data: task, error } = await access.supabase.from("tasks").insert({
       company_id: access.companyId,

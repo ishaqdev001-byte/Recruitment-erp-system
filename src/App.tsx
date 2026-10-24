@@ -572,6 +572,53 @@ export default function App() {
   }, [session]);
 
   useEffect(() => {
+    const main = document.querySelector("main");
+    if (!main) return;
+
+    if (!("IntersectionObserver" in window)) return;
+
+    const observed = new WeakSet<Element>();
+    const revealObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        entry.target.setAttribute("data-scroll-reveal", "visible");
+        revealObserver.unobserve(entry.target);
+      }
+    }, { threshold: 0.01, rootMargin: "0px 0px -24px 0px" });
+
+    const revealContent = () => {
+      main.querySelectorAll(
+        "h1, h2, section, article, table, [role='tabpanel'], .grid > *, [class*='overflow-y-auto'] > *",
+      ).forEach((element) => {
+        if (observed.has(element)) return;
+        observed.add(element);
+        element.setAttribute("data-scroll-reveal", "pending");
+        revealObserver.observe(element);
+      });
+    };
+
+    revealContent();
+    const contentObserver = new MutationObserver(revealContent);
+    contentObserver.observe(main, { childList: true, subtree: true });
+
+    return () => {
+      contentObserver.disconnect();
+      revealObserver.disconnect();
+    };
+  }, [session, view]);
+
+  useEffect(() => {
+    const main = document.querySelector("main");
+    if (!main) return;
+    main.scrollTo({ top: 0, behavior: "smooth" });
+    main.querySelectorAll<HTMLElement>("*").forEach((element) => {
+      if (element.scrollHeight > element.clientHeight + 1 && getComputedStyle(element).overflowY !== "visible") {
+        element.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    });
+  }, [session, view]);
+
+  useEffect(() => {
     if (preferencesReady) {
       window.localStorage.setItem("kilax.workspace-preferences", JSON.stringify({ role, theme, density }));
     }

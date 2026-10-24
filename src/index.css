@@ -72,6 +72,12 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  min-height: 100%;
+  scroll-behavior: smooth;
+}
+
 body {
   font-family: 'DM Sans', sans-serif;
   background-color: var(--background);
@@ -119,6 +125,38 @@ body {
 
 .app-sidebar-open {
   transform: translateX(0);
+}
+
+.app-shell {
+  min-width: 0;
+}
+
+.app-shell main {
+  min-width: 0;
+  min-height: 0;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+}
+
+.app-shell main > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app-shell main :where(input, select, textarea) {
+  max-width: 100%;
+}
+
+[data-scroll-reveal='pending'] {
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 420ms ease, transform 420ms ease;
+}
+
+[data-scroll-reveal='visible'] {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 @media (min-width: 1024px) {
@@ -172,6 +210,22 @@ body {
   }
 }
 
+@media (min-width: 640px) and (max-width: 1023px) {
+  .app-shell main {
+    padding-inline: 0;
+  }
+
+  .grid-cols-6 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .grid-cols-4,
+  .grid-cols-3,
+  .responsive-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 639px) {
   .grid-cols-6,
   .grid-cols-4,
@@ -207,5 +261,28 @@ body {
   .fixed .w-80 {
     width: calc(100vw - 2rem);
     max-width: calc(100vw - 2rem);
+  }
+
+  .app-shell main {
+    scrollbar-gutter: auto;
+  }
+
+  .app-shell main :where(button, input, select, textarea) {
+    scroll-margin: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html,
+  body,
+  .app-shell main {
+    scroll-behavior: auto;
+  }
+
+  [data-scroll-reveal='pending'],
+  [data-scroll-reveal='visible'] {
+    opacity: 1;
+    transform: none;
+    transition: none;
   }
 }

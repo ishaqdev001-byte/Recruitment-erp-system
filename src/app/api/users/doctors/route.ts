@@ -32,18 +32,45 @@ export async function GET() {
       return NextResponse.json({ error: "No active company membership" }, { status: 403, headers });
     }
 
-    // Query users with doctor role in this company
-    // Using raw query since contains might not work as expected
+    // Query company_memberships for users with doctor or medical officer role in this company
+    // Join with company_roles to filter by role names
+    const { data: memberships, error: membershipsFetchError } = await supabase
+      .from("company_memberships")
+      .select(`
+        user_id,
+        company_roles(name)
+      `)
+      .eq("company_id", membership.company_id)
+      .eq("status", "active");
+
+    if (membershipsFetchError) {
+      console.error("Error fetching company memberships:", membershipsFetchError);
+      return NextResponse.json({ error: "Failed to fetch doctors" }, { status: 500, headers });
+    }
+
+    // Filter for doctor/medical officer roles and get their user IDs
+    const doctorUserIds = (memberships || [])
+      .filter((m: any) => {
+        const roleName = m.company_roles?.name || "";
+        return roleName.toLowerCase().includes("doctor") || roleName.toLowerCase().includes("medical officer");
+      })
+      .map((m: any) => m.user_id);
+
+    if (doctorUserIds.length === 0) {
+      return NextResponse.json({ doctors: [] }, { headers });
+    }
+
+    // Get user details from company_users table
     const { data: doctors, error: doctorsError } = await supabase
       .from("company_users")
       .select("user_id, first_name, last_name, email")
       .eq("company_id", membership.company_id)
       .eq("is_active", true)
-      .contains("roles", ["doctor"])
+      .in("user_id", doctorUserIds)
       .order("first_name");
 
     if (doctorsError) {
-      console.error("Error fetching doctors:", doctorsError);
+      console.error("Error fetching doctor details:", doctorsError);
       return NextResponse.json({ error: "Failed to fetch doctors" }, { status: 500, headers });
     }
 

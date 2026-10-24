@@ -72,16 +72,41 @@ async function notifyUsersWithPermission(
   // Find all active members with the required permission via role_permissions
   const { data: permUsers, error } = await admin
     .from("role_permissions")
-    .select("company_roles!inner(company_memberships!inner(user_id, status))")
+    .select("company_id, company_roles(company_id, company_memberships(user_id, status))")
     .eq("company_id", companyId)
     .eq("permission_code", permissionCode);
 
-  if (error || !permUsers) return;
+  if (error || !permUsers || permUsers.length === 0) return;
 
   const userIds = new Set<string>();
-  for (const row of permUsers as unknown as Array<{ company_roles: { company_memberships: Array<{ user_id: string; status: string }> } }>) {
-    for (const m of row.company_roles?.company_memberships ?? []) {
-      if (m.status === "active") userIds.add(m.user_id);
+  
+  for (const row of permUsers) {
+    // Handle different possible response structures
+    const roles = (row as any).company_roles;
+    if (!roles) continue;
+    
+    // If roles is an array of roles
+    if (Array.isArray(roles)) {
+      for (const role of roles) {
+        const memberships = role?.company_memberships;
+        if (Array.isArray(memberships)) {
+          for (const m of memberships) {
+            if (m?.status === "active" && m?.user_id) {
+              userIds.add(m.user_id);
+            }
+          }
+        }
+      }
+    } else if (typeof roles === "object") {
+      // If roles is a single object
+      const memberships = roles.company_memberships;
+      if (Array.isArray(memberships)) {
+        for (const m of memberships) {
+          if (m?.status === "active" && m?.user_id) {
+            userIds.add(m.user_id);
+          }
+        }
+      }
     }
   }
 
@@ -126,22 +151,28 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unable to load requisitions. Apply migration 202610180001_requisitions.sql if setup is incomplete." }, { status: 500, headers: responseHeaders });
     }
 
-    // Check permissions
-    const [canCreate, canReview, canVerify, canAuthorize] = await Promise.all([
+    // Check permissions with error handling
+    const permissionResults = await Promise.allSettled([
       access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.create" }),
       access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.review" }),
       access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.verify" }),
       access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.authorize" }),
     ]);
 
+    const getPermissionResult = (result: PromiseSettledResult<any>): boolean => {
+      if (result.status === "rejected") return false;
+      if (result.value?.error) return false;
+      return Boolean(result.value?.data ?? false);
+    };
+
     return NextResponse.json({
-      requisitions: requisitions ?? [],
+      requisitions: Array.isArray(requisitions) ? requisitions : [],
       currentUserId: access.userId,
       permissions: {
-        canCreate: Boolean(canCreate.data),
-        canReview: Boolean(canReview.data),
-        canVerify: Boolean(canVerify.data),
-        canAuthorize: Boolean(canAuthorize.data),
+        canCreate: getPermissionResult(permissionResults[0]),
+        canReview: getPermissionResult(permissionResults[1]),
+        canVerify: getPermissionResult(permissionResults[2]),
+        canAuthorize: getPermissionResult(permissionResults[3]),
       },
     }, { headers: responseHeaders });
   } catch (err) {

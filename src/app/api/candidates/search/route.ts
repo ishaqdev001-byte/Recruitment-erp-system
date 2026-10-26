@@ -23,12 +23,19 @@ export async function GET(request: Request) {
 
     const { data: membership, error: membershipError } = await supabase
       .from("company_memberships")
-      .select("company_id")
+      .select("company_id, branch_id")
       .eq("user_id", user.id)
       .eq("status", "active")
       .limit(1)
       .maybeSingle();
     if (membershipError || !membership) return NextResponse.json({ error: "Active company membership not found." }, { status: 403, headers });
+
+    const { data: isMainBranch, error: branchError } = await supabase.rpc("current_user_is_main_branch_user", {
+      requested_company_id: membership.company_id,
+    });
+    if (branchError || (!isMainBranch && !membership.branch_id)) {
+      return NextResponse.json({ error: "Unable to verify your company branch." }, { status: 503, headers });
+    }
 
     const { data: canView } = await supabase.rpc("current_user_has_company_permission", {
       requested_company_id: membership.company_id,
@@ -56,6 +63,7 @@ export async function GET(request: Request) {
       .eq("company_id", membership.company_id)
       .order("first_name")
       .limit(limit);
+    if (!isMainBranch) query = query.eq("branch_id", membership.branch_id);
 
     if (q) {
       // ilike search across name and file number

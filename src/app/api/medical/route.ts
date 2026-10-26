@@ -7,16 +7,6 @@ export const runtime = "nodejs";
 
 const headers = { "Cache-Control": "private, no-store" };
 
-// ─── Roles allowed to view / manage medical examinations ─────────────────────
-const MEDICAL_MANAGER_ROLES = new Set([
-  "Company Owner / Primary Administrator",
-  "General Manager",
-  "CEO",
-  "Administrator",
-  "Medical Officer",
-  "Doctor",
-]);
-
 function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -165,9 +155,6 @@ async function getAccess() {
     .eq("id", membership.company_id)
     .maybeSingle();
 
-  const roleName = (role?.name as string) ?? "";
-  const isOwner = company?.primary_admin_user_id === user.id;
-
   // Check explicit permissions via RPC
   const [canView, canUpdate] = await Promise.all([
     supabase.rpc("current_user_has_company_permission", {
@@ -180,8 +167,10 @@ async function getAccess() {
     }),
   ]);
 
-  const canViewMedical = isOwner || MEDICAL_MANAGER_ROLES.has(roleName) || Boolean(canView.data);
-  const canUpdateMedical = isOwner || roleName === "Doctor" || roleName === "Medical Officer" || MEDICAL_MANAGER_ROLES.has(roleName) || Boolean(canUpdate.data);
+  if (canView.error || canUpdate.error) return { error: "Unable to verify medical permissions.", status: 503 as const };
+
+  const canViewMedical = Boolean(canView.data);
+  const canUpdateMedical = Boolean(canUpdate.data);
 
   if (!canViewMedical) return { error: "You do not have access to the medical examination queue.", status: 403 as const };
 
@@ -202,7 +191,7 @@ async function getAccess() {
     supabase,
     companyId: membership.company_id,
     userId: user.id,
-    roleName,
+    roleName: (role?.name as string) ?? "",
     companyName: company?.name ?? "Kilax Smart Recruit",
     canViewMedical,
     canUpdateMedical,

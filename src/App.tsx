@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import dynamic from "next/dynamic";
 import { Eye, EyeOff } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
+import { createSupabaseBrowserClient } from "./lib/supabase/browser";
+import { canAccessView, isMedicalOnlyUser } from "./lib/permissionToViewMap";
 
 /** Kilax Smart Recruit logo — shown on all pre-auth screens. */
 function KilaxLogo({ size = 64 }: { size?: number }) {
@@ -32,7 +34,6 @@ function KilaxWordmark() {
     </div>
   );
 }
-import { createSupabaseBrowserClient } from "./lib/supabase/browser";
 
 const PageLoading = () => (
   <div className="p-6 text-sm" style={{ color: "var(--muted-foreground)" }} aria-busy="true">
@@ -59,6 +60,7 @@ const LeaveManagement = dynamic(() => import("./components/LeaveManagement"), { 
 const HumanResources = dynamic(() => import("./components/HumanResources"), { loading: PageLoading });
 const MedicalAppointments = dynamic(() => import("./components/MedicalAppointments"), { loading: PageLoading });
 const MedicalManagement = dynamic(() => import("./components/MedicalManagement"), { loading: PageLoading });
+const HospitalManagement = dynamic(() => import("./components/HospitalManagement"), { loading: PageLoading });
 const Branches = dynamic(() => import("./components/Branches"), { loading: PageLoading });
 const BranchApprovals = dynamic(() => import("./components/BranchApprovals"), { loading: PageLoading });
 const Requisitions = dynamic(() => import("./components/RequisitionsWorkspace"), { loading: PageLoading });
@@ -88,6 +90,7 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
   "human-resources": () => import("./components/HumanResources"),
   "medical-appointments": () => import("./components/MedicalAppointments"),
   "medical-management": () => import("./components/MedicalManagement"),
+  "hospital-management": () => import("./components/HospitalManagement"),
   branches: () => import("./components/Branches"),
   approvals: () => import("./components/BranchApprovals"),
   requisitions: () => import("./components/RequisitionsWorkspace"),
@@ -139,6 +142,7 @@ export type View =
   | "human-resources"
   | "medical-appointments"
   | "medical-management"
+  | "hospital-management"
   | "branches"
   | "approvals"
   | "requisitions"
@@ -205,6 +209,7 @@ type Session = {
   branchId: string | null;
   branchName: string;
   isMainBranchUser: boolean;
+  permissions: string[];
 };
 
 type CompanyForm = {
@@ -260,11 +265,39 @@ const toCompanySlug = (name: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "company";
 
+/**
+ * Determines the default landing view for a user based on their permissions.
+ * Prioritizes views in order of common use: candidates → finance → users → dashboard.
+ */
+function getDefaultViewByPermissions(permissions: string[], roleName?: string): View {
+  if (isMedicalOnlyUser(permissions)) {
+    return "medical-management";
+  }
+  // Try candidates views first
+  if (permissions.some((p) => p.startsWith("candidates."))) {
+    return "candidates";
+  }
+  // Then finance views
+  if (permissions.some((p) => p.startsWith("finance."))) {
+    return "finance";
+  }
+  // Then user/role management
+  if (permissions.includes("users.view")) {
+    return "users";
+  }
+  // Then tasks
+  if (permissions.includes("tasks.view")) {
+    return "tasks";
+  }
+  // Default to dashboard
+  return "dashboard";
+}
+
 async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   const supabase = createSupabaseBrowserClient();
   let membershipQuery = supabase
     .from("company_memberships")
-    .select("company_id, company:companies!inner(id, name, status, logo_url, registration_number, country, city, office_address, phone, email, website), role:company_roles!inner(name)")
+    .select("company_id, company:companies!inner(id, name, status, logo_url, registration_number, country, city, office_address, phone, email, website), role:company_roles!inner(id, name)")
     .eq("user_id", user.id)
     .eq("status", "active");
   if (targetCompanyId) membershipQuery = membershipQuery.eq("company_id", targetCompanyId);
@@ -275,9 +308,18 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
   const companyValue = membership.company as unknown as { id: string; name: string; status: string; logo_url: string; registration_number: string; country: string; city: string; office_address: string; phone: string; email: string; website: string } | { id: string; name: string; status: string; logo_url: string; registration_number: string; country: string; city: string; office_address: string; phone: string; email: string; website: string }[];
   const companyRecord = Array.isArray(companyValue) ? companyValue[0] : companyValue;
-  const roleValue = membership.role as unknown as { name: string } | { name: string }[];
+  const roleValue = membership.role as unknown as { id: string; name: string } | { id: string; name: string }[];
   const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue;
   if (!companyRecord || !roleRecord) throw new Error("Your company membership is incomplete.");
+
+  // Load the user's role permissions from the database
+  const { data: rolePerms, error: permsError } = await supabase
+    .from("role_permissions")
+    .select("permission_code")
+    .eq("role_id", roleRecord.id)
+    .eq("company_id", companyRecord.id);
+  if (permsError) throw new Error("Unable to load your permissions.");
+  const permissions = (rolePerms ?? []).map((rp) => rp.permission_code);
 
   const knownRoles: WorkspaceRole[] = [
     "Chairman", "General Manager", "CEO",
@@ -343,6 +385,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
       branchId: membershipBranch?.branch_id ?? null,
       branchName,
       isMainBranchUser,
+      permissions,
     } satisfies Session,
   };
 }
@@ -406,9 +449,10 @@ export default function App() {
   const [forcedShowPassword, setForcedShowPassword] = useState(false);
 
   const handleNavigate = useCallback((nextView: View) => {
+    if (session && !canAccessView(nextView, session.permissions)) return;
     preloadView(nextView);
     setView(nextView);
-  }, []);
+  }, [session]);
   const handleSidebarNavigate = useCallback((nextView: View) => {
     handleNavigate(nextView);
     setMobileNavOpen(false);
@@ -436,7 +480,7 @@ export default function App() {
       if (currentUrl.searchParams.get("view") === "communications") setView("communications");
       // Restore active view from the URL path on load / hard refresh.
       // Supports /view, /company-slug/view, and legacy ?v= / ?view= params.
-      const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","branches","approvals","requisitions","drive"]);
+      const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
       // Handle both /view and /company-slug/view path formats
       const pathParts = currentUrl.pathname.replace(/^\//, "").split("/").filter(Boolean);
       const pathView = pathParts.length >= 2 ? pathParts[1] : pathParts[0] ?? "";
@@ -633,6 +677,82 @@ export default function App() {
     }
   }, [density, preferencesReady, role, theme]);
 
+  // Set default view based on permissions on first session load
+  useEffect(() => {
+    if (!session || view !== "dashboard") return; // Only set if currently on dashboard
+    const defaultView = getDefaultViewByPermissions(session.permissions, session.role);
+    if (defaultView !== "dashboard") {
+      setView(defaultView);
+    }
+  }, [session?.companyId]); // Only trigger on session change (new company/login)
+
+  useEffect(() => {
+    if (session && !canAccessView(view, session.permissions)) {
+      setView(getDefaultViewByPermissions(session.permissions, session.role));
+    }
+  }, [session, view]);
+
+  // Periodically refresh user permissions (every 5 minutes)
+  // This ensures that if an admin changes role permissions while the user is logged in,
+  // the changes will be reflected in the UI without requiring a logout/login
+  useEffect(() => {
+    if (!session) return;
+
+    const refreshPermissions = async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) return;
+
+        const { data: membership } = await supabase
+          .from("company_memberships")
+          .select("role_id, role:company_roles(id, name)")
+          .eq("user_id", user.id)
+          .eq("company_id", session.companyId)
+          .eq("status", "active")
+          .limit(1)
+          .maybeSingle();
+
+        if (!membership) return;
+
+        const roleValue = membership.role as unknown as { id: string; name: string } | { id: string; name: string }[];
+        const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue;
+        if (!roleRecord) return;
+
+        // Fetch fresh permissions from the database
+        const { data: rolePerms, error: permsError } = await supabase
+          .from("role_permissions")
+          .select("permission_code")
+          .eq("role_id", roleRecord.id)
+          .eq("company_id", session.companyId);
+
+        if (permsError || !rolePerms) return;
+
+        const newPermissions = rolePerms.map((rp) => rp.permission_code);
+
+        // Only update session if permissions actually changed
+        const oldPermissions = new Set(session.permissions);
+        const hasChanges = newPermissions.length !== oldPermissions.size ||
+          newPermissions.some((p) => !oldPermissions.has(p));
+
+        if (hasChanges) {
+          console.log("[Permission Refresh] Detected permission changes, updating session");
+          setSession((current) => current ? { ...current, permissions: newPermissions } : current);
+        }
+      } catch (error) {
+        // Silently fail - this is a background refresh, no need to notify user of errors
+        console.debug("[Permission Refresh] Error refreshing permissions:", error);
+      }
+    };
+
+    // Refresh immediately on mount
+    void refreshPermissions();
+
+    // Then refresh every 5 minutes
+    const interval = setInterval(refreshPermissions, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [session?.companyId]);
+
   // Keep URL path and document title in sync with the active view.
   // Uses pushState so the browser back button navigates between views.
   useEffect(() => {
@@ -668,6 +788,7 @@ export default function App() {
       "human-resources":     "My HR Profile",
       "medical-appointments":"Medical Appointments",
       "medical-management":  "Medical Examinations",
+      "hospital-management": "Hospital Management",
       requisitions:          "Requisitions",
       branches:              "Branches",
       approvals:             "Approvals",
@@ -718,7 +839,7 @@ export default function App() {
 
   // Handle browser back / forward buttons
   useEffect(() => {
-    const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","branches","approvals","requisitions","drive"]);
+    const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
     const authViewSet = new Set<string>(["login","register","invite","reset-password"]);
     const onPopState = (event: PopStateEvent) => {
       const state = event.state as { view?: string; authView?: string; companySlug?: string } | null;
@@ -969,13 +1090,18 @@ export default function App() {
   };
 
   const renderView = () => {
+    // Guard: Check if the current view is allowed for this user's permissions
+    if (session && !canAccessView(view, session.permissions)) {
+      return <PageLoading />;
+    }
+
     switch (view) {
       case "dashboard":
-        return <Dashboard role={activeUser?.role ?? role} onNavigate={setView} />;
+        return <Dashboard role={activeUser?.role ?? role} onNavigate={handleNavigate} />;
       case "candidates":
-        return <Candidates page="pipeline" onNavigate={setView} />;
+        return <Candidates page="pipeline" onNavigate={handleNavigate} />;
       case "candidate-inquiries":
-        return <Candidates page="inquiries" onNavigate={setView} />;
+        return <Candidates page="inquiries" onNavigate={handleNavigate} />;
       case "documents":
         return <CompanyDrive companyName={session?.companyName ?? ""} />;
       case "users":
@@ -989,7 +1115,7 @@ export default function App() {
       case "invoices":
         return <Invoices />;
       case "payments":
-        return <Payments onOpenInvoices={() => setView("invoices")} />;
+        return <Payments onOpenInvoices={() => handleNavigate("invoices")} />;
       case "paychecks":
         return <Paychecks />;
       case "suppliers":
@@ -1003,10 +1129,13 @@ export default function App() {
       case "leave":
         return <LeaveManagement />;
       case "human-resources":
+        return <HumanResources isOwner={session?.role === "Chairman"} />;
       case "medical-appointments":
         return <MedicalAppointments />;
       case "medical-management":
         return <MedicalManagement />;
+      case "hospital-management":
+        return <HospitalManagement />;
       case "branches":
         return <Branches />;
       case "approvals":
@@ -1020,7 +1149,7 @@ export default function App() {
       case "ai":
         return <AIAssistant />;
       case "passport":
-        return <PassportCustody companyName={session?.companyName ?? ""} onRegisterCandidate={() => setView("candidates")} />;
+        return <PassportCustody companyName={session?.companyName ?? ""} onRegisterCandidate={() => handleNavigate("candidates")} />;
       case "settings":
         return <SettingsPage company={activeCompany} user={activeUser} />;
       default:
@@ -1029,7 +1158,17 @@ export default function App() {
   };
 
   if (authLoading && !session) {
-    return <div className="min-h-screen" style={{ background: "var(--background)" }} aria-busy="true" />;
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--background)" }} aria-busy="true">
+        <div className="text-center">
+          <div className="flex justify-center mb-4">
+            <div className="w-12 h-12 border-3 border-transparent border-t-blue-600 border-r-blue-600 rounded-full animate-spin"></div>
+          </div>
+          <p className="text-sm font-600" style={{ color: "var(--foreground)" }}>Loading your workspace…</p>
+          <p className="text-xs mt-2" style={{ color: "var(--muted-foreground)" }}>Please wait while we set up your session</p>
+        </div>
+      </div>
+    );
   }
 
   if (!session) {
@@ -1109,6 +1248,7 @@ export default function App() {
         companyLogo={session.companyLogo}
         branchName={session.branchName}
         isMainBranchUser={session.isMainBranchUser}
+        permissions={session.permissions}
         onLogout={handleLogout}
       />
       <div className="flex-1 flex flex-col overflow-hidden">

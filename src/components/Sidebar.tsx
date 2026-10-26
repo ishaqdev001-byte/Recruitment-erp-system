@@ -27,6 +27,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { View, WorkspaceRole } from "../App";
+import { canAccessView } from "../lib/permissionToViewMap";
 
 type NavItem =
   | { type: "item"; id: View; label: string; icon: LucideIcon }
@@ -95,7 +96,7 @@ const agentSupplierViews = new Set<View>(["agents", "suppliers"]);
 const workforceViews = new Set<View>(["human-resources", "attendance", "leave"]);
 const candidateViews = new Set<View>(["candidates", "candidate-inquiries", "medical-appointments", "medical-management"]);
 
-export default function Sidebar({ active, onNavigate, onPrefetch, role, userName, companyName, companyLogo, mobileOpen, onLogout, branchName, isMainBranchUser }: { active: View; onNavigate: (v: View) => void; onPrefetch: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void; branchName?: string; isMainBranchUser?: boolean }) {
+export default function Sidebar({ active, onNavigate, onPrefetch, role, userName, companyName, companyLogo, mobileOpen, onLogout, branchName, isMainBranchUser, permissions }: { active: View; onNavigate: (v: View) => void; onPrefetch: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void; branchName?: string; isMainBranchUser?: boolean; permissions?: string[] }) {
   const [openGroups, setOpenGroups] = useState({ agents: agentSupplierViews.has(active), finance: financeViews.has(active), employers: employerViews.has(active), workforce: workforceViews.has(active), candidates: candidateViews.has(active) });
 
   useEffect(() => {
@@ -137,7 +138,11 @@ export default function Sidebar({ active, onNavigate, onPrefetch, role, userName
 
       <nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto">
         {nav.map((item, idx) => {
+          // Check if this item is accessible based on permissions
           if (item.type === "item") {
+            if (permissions && !canAccessView(item.id, permissions)) {
+              return null; // Skip this nav item
+            }
             const Icon = item.icon;
             const isActive = active === item.id;
             return (
@@ -154,9 +159,18 @@ export default function Sidebar({ active, onNavigate, onPrefetch, role, userName
             );
           }
 
-          // Group
+          // Group — filter children based on permissions
           const Icon = item.icon;
           const groupViews = item.id === "finance" ? financeViews : item.id === "employers" ? employerViews : item.id === "workforce" ? workforceViews : item.id === "candidates" ? candidateViews : agentSupplierViews;
+
+          // Filter children based on permissions
+          const allowedChildren = permissions ? item.children.filter((child) => canAccessView(child.id, permissions)) : item.children;
+
+          // Skip group entirely if no children are accessible
+          if (allowedChildren.length === 0) {
+            return null;
+          }
+
           const isGroupActive = groupViews.has(active);
           const groupOpen = openGroups[item.id];
           return (
@@ -175,7 +189,7 @@ export default function Sidebar({ active, onNavigate, onPrefetch, role, userName
               </button>
               {groupOpen && (
                 <div className="ml-3 mt-0.5 space-y-0.5 border-l pl-2.5" style={{ borderColor: "var(--border)" }}>
-                  {item.children.map((child) => {
+                  {allowedChildren.map((child) => {
                     const CIcon = child.icon;
                     const isActive = active === child.id;
                     return (

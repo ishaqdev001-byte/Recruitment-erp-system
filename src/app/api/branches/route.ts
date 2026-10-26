@@ -60,15 +60,19 @@ async function getAccess() {
     // Pre-migration fallback: no branch_id means they're on the main branch
     isMainBranch = membership.branch_id == null;
   }
+  if (!isMainBranch && !membership.branch_id) {
+    return { error: "Your account must be assigned to a branch.", status: 403 as const };
+  }
 
   return {
     admin,
     supabase,
     companyId: membership.company_id,
     userId: user.id,
+    branchId: membership.branch_id,
     roleName,
     isMainBranch,
-    canManageBranches,
+    canManageBranches: canManageBranches && isMainBranch,
     companyName: companyResult.data?.name ?? "",
   };
 }
@@ -81,10 +85,12 @@ export async function GET() {
     const access = await getAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
 
-    const { data: branches, error: branchError } = await access.admin
+    let branchesQuery = access.admin
       .from("company_branches")
       .select("id, company_id, name, code, is_main_branch, address, phone, manager_user_id, status, created_at")
-      .eq("company_id", access.companyId)
+      .eq("company_id", access.companyId);
+    if (!access.isMainBranch && access.branchId) branchesQuery = branchesQuery.eq("id", access.branchId);
+    const { data: branches, error: branchError } = await branchesQuery
       .order("is_main_branch", { ascending: false })
       .order("name");
 
@@ -94,11 +100,17 @@ export async function GET() {
     }
 
     // Get member counts per branch
-    const { data: memberships } = await access.admin
+    let membershipsQuery = access.admin
       .from("company_memberships")
       .select("branch_id, user_id")
       .eq("company_id", access.companyId)
       .eq("status", "active");
+    if (!access.isMainBranch && access.branchId) membershipsQuery = membershipsQuery.eq("branch_id", access.branchId);
+    const { data: memberships, error: membershipsError } = await membershipsQuery;
+    if (membershipsError) {
+      console.error("Branch member counts failed", membershipsError);
+      return NextResponse.json({ error: "Unable to load branch member counts." }, { status: 500, headers });
+    }
 
     const memberCounts = new Map<string, number>();
     for (const m of memberships ?? []) {

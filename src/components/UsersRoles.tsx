@@ -24,7 +24,7 @@ type StaffRecord = {
   transportAccountId: string;
 };
 type StaffIdSettings = { prefix: string; nextSequence: number; canChangeSequence: boolean };
-type WorkspaceData = { users: UserRecord[]; roles: RoleRecord[]; permissions: PermissionRecord[]; rolePermissions: RolePermissionRecord[]; canManageRoles: boolean };
+type WorkspaceData = { users: UserRecord[]; roles: RoleRecord[]; permissions: PermissionRecord[]; rolePermissions: RolePermissionRecord[]; canManageRoles: boolean; branches?: BranchOption[] };
 type BranchOption = { id: string; name: string; code: string; isMainBranch: boolean };
 
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
@@ -64,6 +64,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [userRoleId, setUserRoleId] = useState("");
+  const [userBranchId, setUserBranchId] = useState("");
   const [userInviteMode, setUserInviteMode] = useState<"email-link" | "default-password">("email-link");
   const [userDefaultPassword, setUserDefaultPassword] = useState("");
   const [userShowPassword, setUserShowPassword] = useState(false);
@@ -83,24 +84,31 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
     const load = async () => {
       setLoading(true);
       setError("");
+      console.log("[useEffect] Loading workspace users and roles, reloadKey:", reloadKey);
       try {
-        const [response, branchRes] = await Promise.all([
-          fetch("/api/workspace/users", { cache: "no-store" }),
-          fetch("/api/branches", { cache: "no-store" }),
-        ]);
+        const response = await fetch("/api/workspace/users", { cache: "no-store" });
         const result = await response.json() as WorkspaceData & { error?: string };
         if (!response.ok) throw new Error(result.error ?? "Unable to load users and roles.");
         if (!cancelled) {
+          console.log("[useEffect] Received data from API:", {
+            rolesCount: result.roles?.length,
+            rolePermissionsCount: result.rolePermissions?.length,
+            rolePermissions: result.rolePermissions,
+          });
           setData({ users: result.users ?? [], roles: result.roles ?? [], permissions: result.permissions ?? [], rolePermissions: result.rolePermissions ?? [], canManageRoles: Boolean(result.canManageRoles) });
           setSelectedRoleId((current) => current || result.roles[0]?.id || "");
           setUserRoleId((current) => current || result.roles[0]?.id || "");
         }
-        if (branchRes.ok) {
-          const branchData = await branchRes.json() as { branches?: BranchOption[] };
-          if (!cancelled) setBranches(branchData.branches ?? []);
+        if (!cancelled) {
+          const availableBranches = result.branches ?? [];
+          setBranches(availableBranches);
+          setUserBranchId((current) => current || availableBranches.find((branch) => branch.isMainBranch)?.id || availableBranches[0]?.id || "");
         }
       } catch (loadError) {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load users and roles.");
+        if (!cancelled) {
+          console.error("[useEffect] Load error:", loadError);
+          setError(loadError instanceof Error ? loadError.message : "Unable to load users and roles.");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -152,7 +160,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
         const response = await fetch("/api/workspace/users", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "create-user-with-password", name: userName, email: userEmail, roleId: userRoleId, password: userDefaultPassword }),
+          body: JSON.stringify({ action: "create-user-with-password", name: userName, email: userEmail, roleId: userRoleId, branchId: userBranchId, password: userDefaultPassword }),
         });
         const result = await response.json() as { error?: string };
         if (!response.ok) throw new Error(result.error ?? "Unable to create user.");
@@ -166,7 +174,7 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
         const response = await fetch("/api/workspace/users", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "invite-user", name: userName, email: userEmail, roleId: userRoleId }),
+          body: JSON.stringify({ action: "invite-user", name: userName, email: userEmail, roleId: userRoleId, branchId: userBranchId }),
         });
         const result = await response.json() as { error?: string };
         if (!response.ok) throw new Error(result.error ?? "Unable to invite user.");
@@ -210,12 +218,15 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
   };
 
   const openEditRole = (role: RoleRecord) => {
+    const permsForRole = data.rolePermissions.filter((rp) => rp.role_id === role.id).map((rp) => rp.permission_code);
+    console.log(`[openEditRole] Opening role "${role.name}" (${role.id})`);
+    console.log(`[openEditRole] Total rolePermissions in data:`, data.rolePermissions.length);
+    console.log(`[openEditRole] RolePermissions for this role:`, data.rolePermissions.filter((rp) => rp.role_id === role.id));
+    console.log(`[openEditRole] Permissions loaded from data:`, permsForRole);
     setEditingRole(role);
     setRoleEditName(role.name);
     setRoleEditDescription(role.description);
-    setRoleEditPermissions(
-      data.rolePermissions.filter((rp) => rp.role_id === role.id).map((rp) => rp.permission_code)
-    );
+    setRoleEditPermissions(permsForRole);
     setError("");
     setShowEditRole(true);
   };
@@ -227,6 +238,16 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
     setError("");
     setNotice("");
     try {
+      console.log("[submitEditRole] Sending update for role:", editingRole.id);
+      console.log("[submitEditRole] Current permissions in state:", roleEditPermissions);
+      console.log("[submitEditRole] Payload being sent:", {
+        action: "update-role",
+        roleId: editingRole.id,
+        name: roleEditName,
+        description: roleEditDescription,
+        permissions: roleEditPermissions,
+      });
+      
       const response = await fetch("/api/workspace/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -238,13 +259,24 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
           permissions: roleEditPermissions,
         }),
       });
+      
       const result = await response.json() as { role?: RoleRecord; permissions?: string[]; error?: string };
+      console.log("[submitEditRole] Response status:", response.status);
+      console.log("[submitEditRole] Response body:", result);
+      
       if (!response.ok) throw new Error(result.error ?? "Unable to update role.");
+      
+      console.log("[submitEditRole] Role saved successfully, closing modal");
       setShowEditRole(false);
       setEditingRole(null);
       setNotice(`"${result.role?.name ?? roleEditName}" updated.`);
-      setReloadKey((key) => key + 1);
+      console.log("[submitEditRole] Triggering data reload...");
+      setReloadKey((key) => {
+        console.log("[submitEditRole] Reload key incremented:", key, "→", key + 1);
+        return key + 1;
+      });
     } catch (saveError) {
+      console.error("[submitEditRole] Error:", saveError);
       setError(saveError instanceof Error ? saveError.message : "Unable to update role.");
     } finally {
       setSaving(false);
@@ -720,6 +752,13 @@ export default function UsersRoles({ companyId, currentUserId }: { companyId: st
                 Role
                 <select required value={userRoleId} onChange={(e) => setUserRoleId(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>
                   {data.roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                </select>
+              </label>
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Branch
+                <select required value={userBranchId} onChange={(e) => setUserBranchId(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>
+                  <option value="" disabled>Select a branch</option>
+                  {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
                 </select>
               </label>
 

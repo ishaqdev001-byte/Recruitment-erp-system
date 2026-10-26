@@ -23,12 +23,18 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
 
   const { data: membership, error: membershipError } = await supabase
     .from("company_memberships")
-    .select("company_id")
+    .select("company_id, branch_id")
     .eq("user_id", user.id)
     .eq("status", "active")
     .limit(1)
     .maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
+
+  const { data: isMainBranch, error: branchError } = await supabase.rpc("current_user_is_main_branch_user", {
+    requested_company_id: membership.company_id,
+  });
+  if (branchError) return { error: "Unable to verify your company branch.", status: 503 as const };
+  if (!isMainBranch && !membership.branch_id) return { error: "Your account must be assigned to a branch.", status: 403 as const };
 
   const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
     requested_company_id: membership.company_id,
@@ -37,12 +43,19 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
   if (permissionError || !allowed) return { error: "You do not have permission to manage company users.", status: 403 as const };
 
   // Also check if this user can manage roles (roles.manage permission)
-  const { data: canManageRoles } = await supabase.rpc("current_user_has_company_permission", {
+  const { data: canManageRoles, error: rolePermissionError } = await supabase.rpc("current_user_has_company_permission", {
     requested_company_id: membership.company_id,
     requested_permission: "roles.manage",
   });
+  if (rolePermissionError) return { error: "Unable to verify role-management permission.", status: 503 as const };
 
-  return { companyId: membership.company_id, userId: user.id, canManageRoles: Boolean(canManageRoles) };
+  return {
+    companyId: membership.company_id,
+    userId: user.id,
+    branchId: membership.branch_id,
+    isMainBranch: Boolean(isMainBranch),
+    canManageRoles: Boolean(canManageRoles) && Boolean(isMainBranch),
+  };
 }
 
 export async function GET() {
@@ -53,14 +66,26 @@ export async function GET() {
     const admin = createAdminClient();
     if (!admin) return NextResponse.json({ error: "Set SUPABASE_SERVICE_ROLE_KEY in .env.local and restart the Next.js server to enable user management." }, { status: 503, headers: responseHeaders });
 
-    const [rolesResult, membershipsResult, permissionsResult, companyResult] = await Promise.all([
+    let membershipsQuery = admin.from("company_memberships")
+      .select("user_id, status, role_id, branch_id, role:company_roles(name)")
+      .eq("company_id", access.companyId)
+      .order("created_at");
+    if (!access.isMainBranch && access.branchId) membershipsQuery = membershipsQuery.eq("branch_id", access.branchId);
+    let branchesQuery = admin.from("company_branches")
+      .select("id, name, code, is_main_branch")
+      .eq("company_id", access.companyId)
+      .eq("status", "active");
+    if (!access.isMainBranch && access.branchId) branchesQuery = branchesQuery.eq("id", access.branchId);
+
+    const [rolesResult, membershipsResult, permissionsResult, companyResult, branchesResult] = await Promise.all([
       admin.from("company_roles").select("id, name, description, is_system_default, created_at").eq("company_id", access.companyId).order("name"),
-      admin.from("company_memberships").select("user_id, status, role_id, branch_id, role:company_roles(name)").eq("company_id", access.companyId).order("created_at"),
+      membershipsQuery,
       admin.from("permissions").select("code, description").order("code"),
       admin.from("companies").select("primary_admin_user_id").eq("id", access.companyId).single(),
+      branchesQuery.order("is_main_branch", { ascending: false }).order("name"),
     ]);
-    if (rolesResult.error || membershipsResult.error || permissionsResult.error || companyResult.error) {
-      console.error("Workspace user management query failed", rolesResult.error ?? membershipsResult.error ?? permissionsResult.error ?? companyResult.error);
+    if (rolesResult.error || membershipsResult.error || permissionsResult.error || companyResult.error || branchesResult.error) {
+      console.error("Workspace user management query failed", rolesResult.error ?? membershipsResult.error ?? permissionsResult.error ?? companyResult.error ?? branchesResult.error);
       return NextResponse.json({ error: "Unable to load company users and roles." }, { status: 500, headers: responseHeaders });
     }
 
@@ -104,6 +129,12 @@ export async function GET() {
       permissions: permissionsResult.data ?? [],
       rolePermissions: rolePermissions ?? [],
       canManageRoles: access.canManageRoles,
+      branches: (branchesResult.data ?? []).map((branch) => ({
+        id: branch.id,
+        name: branch.name,
+        code: branch.code,
+        isMainBranch: branch.is_main_branch,
+      })),
     }, { headers: responseHeaders });
   } catch (error) {
     console.error("Workspace users request failed", error);
@@ -128,11 +159,14 @@ export async function POST(request: Request) {
 
       const { data: membership, error: membershipError } = await admin
         .from("company_memberships")
-        .select("user_id, status, role_id, role:company_roles(name)")
+        .select("user_id, status, role_id, branch_id, role:company_roles(name)")
         .eq("company_id", access.companyId)
         .eq("user_id", userId)
         .maybeSingle();
       if (membershipError || !membership) return NextResponse.json({ error: "User is not a member of this company." }, { status: 404, headers: responseHeaders });
+      if (!access.isMainBranch && membership.branch_id !== access.branchId) {
+        return NextResponse.json({ error: "You can only manage users assigned to your branch." }, { status: 403, headers: responseHeaders });
+      }
       const { data: company, error: companyError } = await admin.from("companies").select("primary_admin_user_id").eq("id", access.companyId).single();
       if (companyError) return NextResponse.json({ error: "Unable to verify protected company users." }, { status: 500, headers: responseHeaders });
       const targetRole = membership.role as unknown as { name: string } | { name: string }[] | null;
@@ -209,6 +243,7 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "create-role") {
+      if (!access.canManageRoles) return NextResponse.json({ error: "Only main-branch users with role-management permission can manage company roles." }, { status: 403, headers: responseHeaders });
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const description = typeof body.description === "string" ? body.description.trim() : "";
       const requestedPermissions = Array.isArray(body.permissions) ? body.permissions.filter((value): value is string => typeof value === "string") : [];
@@ -231,15 +266,20 @@ export async function POST(request: Request) {
       }
 
       if (requestedPermissions.length) {
-        const { error } = await admin.from("role_permissions").insert(requestedPermissions.map((permission_code) => ({
+        const permissionsToInsert = requestedPermissions.map((permission_code) => ({
           role_id: role.id,
           company_id: access.companyId,
           permission_code,
-        })));
+        }));
+        console.log(`[create-role] Inserting ${permissionsToInsert.length} permissions for new role ${role.id}:`, permissionsToInsert);
+        const { error } = await admin.from("role_permissions").insert(permissionsToInsert);
         if (error) {
+          console.error(`[create-role] Failed to insert permissions for role ${role.id}:`, error);
           await admin.from("company_roles").delete().eq("id", role.id).eq("company_id", access.companyId);
           return NextResponse.json({ error: "Unable to save role permissions." }, { status: 500, headers: responseHeaders });
         }
+      } else {
+        console.log(`[create-role] No permissions requested for new role ${role.id}`);
       }
 
       return NextResponse.json({ role }, { status: 201, headers: responseHeaders });
@@ -298,17 +338,25 @@ export async function POST(request: Request) {
         .delete()
         .eq("role_id", roleId)
         .eq("company_id", access.companyId);
-      if (deletePermsError) return NextResponse.json({ error: "Unable to update role permissions." }, { status: 500, headers: responseHeaders });
+      if (deletePermsError) {
+        console.error(`[update-role] Failed to delete old permissions for role ${roleId}:`, deletePermsError);
+        return NextResponse.json({ error: "Unable to update role permissions." }, { status: 500, headers: responseHeaders });
+      }
 
       if (requestedPermissions.length) {
-        const { error: insertPermsError } = await admin.from("role_permissions").insert(
-          requestedPermissions.map((permission_code) => ({
-            role_id: roleId,
-            company_id: access.companyId,
-            permission_code,
-          }))
-        );
-        if (insertPermsError) return NextResponse.json({ error: "Role details saved but permissions could not be updated." }, { status: 500, headers: responseHeaders });
+        const permissionsToInsert = requestedPermissions.map((permission_code) => ({
+          role_id: roleId,
+          company_id: access.companyId,
+          permission_code,
+        }));
+        console.log(`[update-role] Inserting ${permissionsToInsert.length} permissions for role ${roleId}:`, permissionsToInsert);
+        const { error: insertPermsError } = await admin.from("role_permissions").insert(permissionsToInsert);
+        if (insertPermsError) {
+          console.error(`[update-role] Failed to insert permissions for role ${roleId}:`, insertPermsError);
+          return NextResponse.json({ error: "Role details saved but permissions could not be updated." }, { status: 500, headers: responseHeaders });
+        }
+      } else {
+        console.log(`[update-role] No permissions requested for role ${roleId} - old permissions cleared`);
       }
 
       return NextResponse.json({ role: updatedRole, permissions: requestedPermissions }, { headers: responseHeaders });
@@ -362,8 +410,15 @@ export async function POST(request: Request) {
       const phone = typeof body.phone === "string" ? body.phone.trim() : "";
       const branch = typeof body.branch === "string" ? body.branch.trim() : "";
       const roleId = typeof body.roleId === "string" ? body.roleId : "";
-      if (!name || name.length > 200 || !/^\S+@\S+\.\S+$/.test(email) || !roleId || phone.length > 100 || branch.length > 200) {
+      const branchId = typeof body.branchId === "string" ? body.branchId : "";
+      if (!name || name.length > 200 || !/^\S+@\S+\.\S+$/.test(email) || !roleId || !branchId || phone.length > 100 || branch.length > 200) {
         return NextResponse.json({ error: "Enter a valid name, email, role, phone, and branch." }, { status: 400, headers: responseHeaders });
+      }
+      const { data: targetBranch, error: targetBranchError } = await admin.from("company_branches").select("id")
+        .eq("id", branchId).eq("company_id", access.companyId).maybeSingle();
+      if (targetBranchError) return NextResponse.json({ error: "Unable to verify the selected branch." }, { status: 500, headers: responseHeaders });
+      if (!targetBranch || (!access.isMainBranch && branchId !== access.branchId)) {
+        return NextResponse.json({ error: "Select a branch you are authorized to assign." }, { status: 403, headers: responseHeaders });
       }
 
       const { data: role, error: roleError } = await admin.from("company_roles").select("id, name").eq("id", roleId).eq("company_id", access.companyId).maybeSingle();
@@ -400,6 +455,7 @@ export async function POST(request: Request) {
         company_id: access.companyId,
         user_id: userId,
         role_id: roleId,
+        branch_id: branchId,
         status: "active",
       });
       if (membershipError) {
@@ -429,9 +485,16 @@ export async function POST(request: Request) {
       const phone = typeof body.phone === "string" ? body.phone.trim() : "";
       const branch = typeof body.branch === "string" ? body.branch.trim() : "";
       const roleId = typeof body.roleId === "string" ? body.roleId : "";
+      const branchId = typeof body.branchId === "string" ? body.branchId : "";
       const password = typeof body.password === "string" ? body.password : "";
-      if (!name || name.length > 200 || !/^\S+@\S+\.\S+$/.test(email) || !roleId || phone.length > 100 || branch.length > 200) {
+      if (!name || name.length > 200 || !/^\S+@\S+\.\S+$/.test(email) || !roleId || !branchId || phone.length > 100 || branch.length > 200) {
         return NextResponse.json({ error: "Enter a valid name, email, role, phone, and branch." }, { status: 400, headers: responseHeaders });
+      }
+      const { data: targetBranch, error: targetBranchError } = await admin.from("company_branches").select("id")
+        .eq("id", branchId).eq("company_id", access.companyId).maybeSingle();
+      if (targetBranchError) return NextResponse.json({ error: "Unable to verify the selected branch." }, { status: 500, headers: responseHeaders });
+      if (!targetBranch || (!access.isMainBranch && branchId !== access.branchId)) {
+        return NextResponse.json({ error: "Select a branch you are authorized to assign." }, { status: 403, headers: responseHeaders });
       }
       if (password.length < 8) {
         return NextResponse.json({ error: "The default password must be at least 8 characters." }, { status: 400, headers: responseHeaders });
@@ -481,6 +544,7 @@ export async function POST(request: Request) {
         company_id: access.companyId,
         user_id: userId,
         role_id: roleId,
+        branch_id: branchId,
         status: "active",
       });
       if (membershipError) {

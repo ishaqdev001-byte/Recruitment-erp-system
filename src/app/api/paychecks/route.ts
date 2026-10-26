@@ -24,16 +24,26 @@ async function getPayrollAccess(permission: "finance.view" | "finance.create") {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
   const { data: membership, error: membershipError } = await supabase.from("company_memberships")
-    .select("company_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
+    .select("company_id, branch_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
   const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
     requested_company_id: membership.company_id,
     requested_permission: permission,
   });
   if (permissionError || !allowed) return { error: `You do not have permission to ${permission === "finance.view" ? "view" : "record"} payroll.`, status: 403 as const };
+  const { data: isMainBranch, error: branchError } = await supabase.rpc("current_user_is_main_branch_user", {
+    requested_company_id: membership.company_id,
+  });
+  if (branchError || (!isMainBranch && !membership.branch_id)) return { error: "Unable to verify your company branch.", status: 503 as const };
   const admin = createAdminClient();
   if (!admin) return { error: "Payroll requires SUPABASE_SERVICE_ROLE_KEY in the server environment.", status: 503 as const };
-  return { admin, companyId: membership.company_id, userId: user.id };
+  return {
+    admin,
+    companyId: membership.company_id,
+    userId: user.id,
+    branchId: membership.branch_id,
+    isMainBranch: Boolean(isMainBranch),
+  };
 }
 
 function parseLines(value: unknown): PayLine[] | null {
@@ -173,11 +183,24 @@ export async function GET() {
   try {
     const access = await getPayrollAccess("finance.view");
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
+    const paychecksQuery = access.admin.from("company_staff_paychecks")
+      .select("id, staff_member_id, pay_period, base_salary, earnings, benefits, deductions, gross_amount, benefits_total, deductions_total, net_amount, payment_date, payment_method, payment_reference, created_at")
+      .eq("company_id", access.companyId).order("pay_period", { ascending: false }).order("payment_date", { ascending: false });
+    const staffQuery = access.admin.from("company_staff_members")
+      .select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined")
+      .eq("company_id", access.companyId).order("name");
+    const accountsQuery = access.admin.from("company_accounts")
+      .select("id, name, account_type, account_number")
+      .eq("company_id", access.companyId).eq("status", "active").order("name");
+    if (!access.isMainBranch) {
+      paychecksQuery.eq("branch_id", access.branchId!);
+      staffQuery.eq("branch_id", access.branchId!);
+      accountsQuery.eq("branch_id", access.branchId!);
+    }
     const [{ data: paychecks, error: paychecksError }, { data: staff, error: staffError }, { data: accounts, error: accountsError }] = await Promise.all([
-      access.admin.from("company_staff_paychecks").select("id, staff_member_id, pay_period, base_salary, earnings, benefits, deductions, gross_amount, benefits_total, deductions_total, net_amount, payment_date, payment_method, payment_reference, created_at")
-        .eq("company_id", access.companyId).order("pay_period", { ascending: false }).order("payment_date", { ascending: false }),
-      access.admin.from("company_staff_members").select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined").eq("company_id", access.companyId).order("name"),
-      access.admin.from("company_accounts").select("id, name, account_type, account_number").eq("company_id", access.companyId).eq("status", "active").order("name"),
+      paychecksQuery,
+      staffQuery,
+      accountsQuery,
     ]);
     if (paychecksError || staffError || accountsError) throw paychecksError ?? staffError ?? accountsError;
     const [{ data: company, error: companyError }, { data: allowed, error: createPermissionError }] = await Promise.all([
@@ -219,10 +242,16 @@ export async function POST(request: Request) {
       || !earnings || !submittedBenefits || !submittedDeductions) {
       return NextResponse.json({ error: "Enter a valid employee, month, salary, payment method, and payroll items." }, { status: 400, headers });
     }
+    let employeeQuery = access.admin.from("company_staff_members").select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined").eq("id", staffMemberId).eq("company_id", access.companyId);
+    let accountQuery = access.admin.from("company_accounts").select("id").eq("id", accountId).eq("company_id", access.companyId).eq("status", "active");
+    if (!access.isMainBranch) {
+      employeeQuery = employeeQuery.eq("branch_id", access.branchId!);
+      accountQuery = accountQuery.eq("branch_id", access.branchId!);
+    }
     const [{ data: employee, error: employeeError }, { data: company, error: companyError }, { data: account, error: accountError }] = await Promise.all([
-      access.admin.from("company_staff_members").select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined").eq("id", staffMemberId).eq("company_id", access.companyId).maybeSingle(),
+      employeeQuery.maybeSingle(),
       access.admin.from("companies").select("name, logo_url, registration_number, phone, email, office_address").eq("id", access.companyId).maybeSingle(),
-      access.admin.from("company_accounts").select("id").eq("id", accountId).eq("company_id", access.companyId).eq("status", "active").maybeSingle(),
+      accountQuery.maybeSingle(),
     ]);
     if (accountError) throw accountError;
     if (!account) return NextResponse.json({ error: "Select an active company account for payroll." }, { status: 400, headers });
@@ -291,6 +320,7 @@ export async function POST(request: Request) {
     const { data: paycheck, error } = await access.admin.from("company_staff_paychecks").insert({
       id: paycheckId,
       company_id: access.companyId,
+      branch_id: access.branchId,
       staff_member_id: employee.id,
       pay_period: payPeriod,
       base_salary: salary,

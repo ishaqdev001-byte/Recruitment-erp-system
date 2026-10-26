@@ -60,6 +60,23 @@ type BookingForm = {
   incomeTypeId: string;
   appointmentAt: string;
   doctorUserId: string;
+  hospitalId: string;
+  totalFeeAmount: number;
+  doctorFeeAmount: number;
+  remarks: string;
+  receivedByName: string;
+  bookedByName: string;
+};
+
+type Hospital = {
+  id: string;
+  name: string;
+  contact_phone?: string;
+  contact_email?: string;
+  address?: string;
+  city?: string;
+  country?: string;
+  is_active: boolean;
 };
 
 type DoctorOption = {
@@ -109,7 +126,8 @@ function defaultApptDate() {
 const emptyForm = (): BookingForm => ({
   candidateId: "", firstName: "", lastName: "", dateOfBirth: "",
   passportNumber: "", phone: "", incomeTypeId: "", appointmentAt: defaultApptDate(),
-  doctorUserId: "",
+  doctorUserId: "", hospitalId: "", totalFeeAmount: 0, doctorFeeAmount: 0,
+  remarks: "", receivedByName: "", bookedByName: "",
 });
 
 // ─── Candidate search combobox ────────────────────────────────────────────────
@@ -224,6 +242,7 @@ export default function MedicalAppointments() {
   const [incomeTypes, setIncomeTypes] = useState<IncomeType[]>([]);
   const [appointments, setAppointments] = useState<MedicalAppointment[]>([]);
   const [doctors, setDoctors] = useState<DoctorOption[]>([]);
+  const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [canBookAppointments, setCanBookAppointments] = useState(false);
   const [canViewAppointments, setCanViewAppointments] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -254,6 +273,12 @@ export default function MedicalAppointments() {
       const doctorsData = await doctorsResponse.json() as { doctors?: DoctorOption[]; error?: string };
       if (!doctorsResponse.ok) throw new Error(doctorsData.error ?? "Unable to load doctors.");
       setDoctors(doctorsData.doctors ?? []);
+
+      // Load hospitals
+      const hospitalsResponse = await fetch("/api/medical/hospitals", { cache: "no-store" });
+      const hospitalsData = await hospitalsResponse.json() as { hospitals?: Hospital[]; error?: string };
+      if (!hospitalsResponse.ok) throw new Error(hospitalsData.error ?? "Unable to load hospitals.");
+      setHospitals((hospitalsData.hospitals ?? []).filter((h) => h.is_active));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load medical appointments.");
     } finally {
@@ -333,6 +358,17 @@ export default function MedicalAppointments() {
   const bookAppointment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     
+    // Validate required fields
+    if (!form.hospitalId || form.totalFeeAmount <= 0) {
+      setError("Please select a hospital and enter the total fee amount.");
+      return;
+    }
+
+    if (form.doctorFeeAmount < 0 || form.doctorFeeAmount > form.totalFeeAmount) {
+      setError("Doctor fee must be between 0 and total fee.");
+      return;
+    }
+
     // Check if doctor is available before submitting
     if (doctorAvailability && !doctorAvailability.available) {
       setError("Cannot book: selected doctor is unavailable during this time.");
@@ -343,12 +379,16 @@ export default function MedicalAppointments() {
     setError("");
     setNotice("");
     try {
-      const response = await fetch("/api/finance/other-income", {
+      const response = await fetch("/api/medical/book-appointment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "book-medical-appointment", ...form }),
+        body: JSON.stringify({
+          ...form,
+          totalFeeAmount: Number(form.totalFeeAmount),
+          doctorFeeAmount: Number(form.doctorFeeAmount),
+        }),
       });
-      const result = await response.json() as { warning?: string; error?: string };
+      const result = await response.json() as { appointment?: unknown; warning?: string; error?: string };
       if (!response.ok) throw new Error(result.error ?? "Unable to book appointment.");
       setShowForm(false);
       setForm(emptyForm());
@@ -357,7 +397,7 @@ export default function MedicalAppointments() {
       if (result.warning) {
         setNotice(`Appointment booked. Note: ${result.warning}`);
       } else {
-        setNotice("Medical appointment booked and income recorded against the configured account.");
+        setNotice("Medical appointment booked successfully. Appointment slip and invoice generated.");
       }
       await load();
     } catch (err) {
@@ -409,12 +449,19 @@ export default function MedicalAppointments() {
       <div className="min-h-0 flex-1 overflow-auto p-6">
         {canViewAppointments ? (
           <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-            <table className="w-full min-w-240 text-sm">
+            <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
-                  {["Candidate", "DOB / Age", "Passport", "Phone", "Medical service", "Appointment", "Fee", "Account", "Reference", "Status"].map((h) => (
-                    <th key={h} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
-                  ))}
+                  <th className="px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Candidate</th>
+                  <th className="hidden sm:table-cell px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>DOB / Age</th>
+                  <th className="hidden md:table-cell px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Passport</th>
+                  <th className="hidden lg:table-cell px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Phone</th>
+                  <th className="hidden xl:table-cell px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Service</th>
+                  <th className="px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Appointment</th>
+                  <th className="px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Fee</th>
+                  <th className="hidden sm:table-cell px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Account</th>
+                  <th className="hidden md:table-cell px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Reference</th>
+                  <th className="px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -422,18 +469,23 @@ export default function MedicalAppointments() {
                 {!loading && appointments.length === 0 && <tr><td colSpan={10} className="px-3 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No medical appointments booked yet.</td></tr>}
                 {!loading && appointments.map((appt) => (
                   <tr key={appt.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
-                    <td className="whitespace-nowrap px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>{appt.candidate_first_name} {appt.candidate_last_name}</td>
-                    <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>
-                      {appt.candidate_date_of_birth || "—"}
-                      <span className="ml-1" style={{ color: "var(--muted-foreground)" }}>({appt.candidate_age}y)</span>
+                    <td className="px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>
+                      <div className="max-w-xs">
+                        <p className="truncate">{appt.candidate_first_name} {appt.candidate_last_name}</p>
+                        <p className="text-xs truncate" style={{ color: "var(--muted-foreground)" }}>{appt.candidate_passport_number}</p>
+                      </div>
                     </td>
-                    <td className="px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{appt.candidate_passport_number}</td>
-                    <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{appt.candidate_phone}</td>
-                    <td className="px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{appt.income_type_name}</td>
-                    <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{new Date(appt.appointment_at).toLocaleString()}</td>
-                    <td className="whitespace-nowrap px-3 py-3 mono text-xs font-600" style={{ color: "#17845b" }}>{money(appt.fee_amount)}</td>
-                    <td className="px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{appt.account_name}</td>
-                    <td className="px-3 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{appt.payment_reference || "—"}</td>
+                    <td className="hidden sm:table-cell px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>
+                      {appt.candidate_date_of_birth || "—"}
+                      <span style={{ color: "var(--muted-foreground)" }}> ({appt.candidate_age}y)</span>
+                    </td>
+                    <td className="hidden md:table-cell px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{appt.candidate_passport_number}</td>
+                    <td className="hidden lg:table-cell px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{appt.candidate_phone}</td>
+                    <td className="hidden xl:table-cell px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{appt.income_type_name}</td>
+                    <td className="px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{new Date(appt.appointment_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                    <td className="px-3 py-3 mono text-xs font-600" style={{ color: "#17845b" }}>{money(appt.fee_amount)}</td>
+                    <td className="hidden sm:table-cell px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{appt.account_name}</td>
+                    <td className="hidden md:table-cell px-3 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{appt.payment_reference || "—"}</td>
                     <td className="px-3 py-3 capitalize text-xs" style={{ color: appt.status === "completed" ? "#17845b" : appt.status === "cancelled" ? "#b43c45" : "var(--muted-foreground)" }}>{appt.status}</td>
                   </tr>
                 ))}
@@ -603,10 +655,112 @@ export default function MedicalAppointments() {
                 </select>
               </label>
 
+              {/* Hospital selection */}
+              <label className={labelClass} style={{ color: "var(--muted-foreground)" }}>
+                Hospital / Medical Center
+                <select
+                  required
+                  value={form.hospitalId}
+                  onChange={(e) => setForm((f) => ({ ...f, hospitalId: e.target.value }))}
+                  className={inputClass}
+                  style={fieldStyle}
+                >
+                  <option value="">Select hospital…</option>
+                  {hospitals.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name}
+                      {h.city ? ` (${h.city})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {/* Fee breakdown */}
+              <div className="grid grid-cols-2 gap-3">
+                <label className={labelClass} style={{ color: "var(--muted-foreground)" }}>
+                  Total fee amount
+                  <input
+                    required
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="999999999.99"
+                    value={form.totalFeeAmount}
+                    onChange={(e) => setForm((f) => ({ ...f, totalFeeAmount: Number(e.target.value) }))}
+                    className={inputClass}
+                    style={fieldStyle}
+                  />
+                </label>
+                <label className={labelClass} style={{ color: "var(--muted-foreground)" }}>
+                  Doctor/Hospital fee
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="999999999.99"
+                    value={form.doctorFeeAmount}
+                    onChange={(e) => setForm((f) => ({ ...f, doctorFeeAmount: Number(e.target.value) }))}
+                    className={inputClass}
+                    style={fieldStyle}
+                  />
+                </label>
+              </div>
+
+              {/* Candidate amount display */}
+              {form.totalFeeAmount > 0 && (
+                <div className="border-y py-3 text-sm" style={{ borderColor: "var(--border)" }}>
+                  <div className="flex justify-between">
+                    <span style={{ color: "var(--muted-foreground)" }}>Candidate amount due</span>
+                    <span className="font-700 mono" style={{ color: "#17845b" }}>
+                      {money(Math.max(0, form.totalFeeAmount - form.doctorFeeAmount))}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Remarks */}
+              <label className={labelClass} style={{ color: "var(--muted-foreground)" }}>
+                Remarks (optional)
+                <textarea
+                  maxLength={500}
+                  value={form.remarks}
+                  onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))}
+                  className={`${inputClass} min-h-16 resize-none`}
+                  style={fieldStyle}
+                  placeholder="Additional notes about the appointment..."
+                />
+              </label>
+
+              {/* Received by and Booked by */}
+              <div className="grid grid-cols-2 gap-3">
+                <label className={labelClass} style={{ color: "var(--muted-foreground)" }}>
+                  Received by (optional)
+                  <input
+                    maxLength={255}
+                    value={form.receivedByName}
+                    onChange={(e) => setForm((f) => ({ ...f, receivedByName: e.target.value }))}
+                    className={inputClass}
+                    style={fieldStyle}
+                    placeholder="Name of person receiving..."
+                  />
+                </label>
+                <label className={labelClass} style={{ color: "var(--muted-foreground)" }}>
+                  Booked by (optional)
+                  <input
+                    maxLength={255}
+                    value={form.bookedByName}
+                    onChange={(e) => setForm((f) => ({ ...f, bookedByName: e.target.value }))}
+                    className={inputClass}
+                    style={fieldStyle}
+                    placeholder="Name of person booking..."
+                  />
+                </label>
+              </div>
+
               {/* Fee & account summary */}
               {selectedType && (
                 <div className="grid grid-cols-2 gap-y-2 border-y py-3 text-sm" style={{ borderColor: "var(--border)" }}>
-                  <span style={{ color: "var(--muted-foreground)" }}>Candidate fee</span>
+                  <span style={{ color: "var(--muted-foreground)" }}>Default service fee</span>
                   <span className="text-right font-700 mono" style={{ color: "#17845b" }}>{money(selectedType.fee)}</span>
                   <span style={{ color: "var(--muted-foreground)" }}>Credited to account</span>
                   <span className="text-right" style={{ color: "var(--foreground)" }}>{selectedType.account_name}</span>

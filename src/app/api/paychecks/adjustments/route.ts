@@ -18,16 +18,26 @@ async function getPayrollAccess(permission: "finance.view" | "finance.create") {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
   const { data: membership, error: membershipError } = await supabase.from("company_memberships")
-    .select("company_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
+    .select("company_id, branch_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
   const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
     requested_company_id: membership.company_id,
     requested_permission: permission,
   });
   if (permissionError || !allowed) return { error: "You do not have permission to manage payroll.", status: 403 as const };
+  const { data: isMainBranch, error: branchError } = await supabase.rpc("current_user_is_main_branch_user", {
+    requested_company_id: membership.company_id,
+  });
+  if (branchError || (!isMainBranch && !membership.branch_id)) return { error: "Unable to verify your company branch.", status: 503 as const };
   const admin = createAdminClient();
   if (!admin) return { error: "Payroll requires SUPABASE_SERVICE_ROLE_KEY in the server environment.", status: 503 as const };
-  return { admin, companyId: membership.company_id, userId: user.id };
+  return {
+    admin,
+    companyId: membership.company_id,
+    userId: user.id,
+    branchId: membership.branch_id,
+    isMainBranch: Boolean(isMainBranch),
+  };
 }
 
 function getCompanyInitials(name: string) {
@@ -66,15 +76,19 @@ export async function GET() {
       }
     }
 
-    const { data: adjustments, error } = await access.admin.from("company_staff_payroll_adjustments")
-      .select("id, staff_member_id, pay_period, adjustment_type, amount, payment_method, payment_reference, description, paycheck_id, created_at")
-      .eq("company_id", access.companyId).order("created_at", { ascending: false });
-    if (error) throw error;
-    const staffIds = [...new Set((adjustments ?? []).map((adjustment) => adjustment.staff_member_id))];
-    const { data: staff, error: staffError } = staffIds.length
-      ? await access.admin.from("company_staff_members").select("id, name, staff_id").eq("company_id", access.companyId).in("id", staffIds)
-      : { data: [], error: null };
+    let staffQuery = access.admin.from("company_staff_members")
+      .select("id, name, staff_id")
+      .eq("company_id", access.companyId);
+    if (!access.isMainBranch) staffQuery = staffQuery.eq("branch_id", access.branchId!);
+    const { data: staff, error: staffError } = await staffQuery.order("name");
     if (staffError) throw staffError;
+    const staffIds = (staff ?? []).map((member) => member.id);
+    const { data: adjustments, error } = staffIds.length
+      ? await access.admin.from("company_staff_payroll_adjustments")
+        .select("id, staff_member_id, pay_period, adjustment_type, amount, payment_method, payment_reference, description, paycheck_id, created_at")
+        .eq("company_id", access.companyId).in("staff_member_id", staffIds).order("created_at", { ascending: false })
+      : { data: [], error: null };
+    if (error) throw error;
     const staffById = new Map((staff ?? []).map((member) => [member.id, member]));
     return NextResponse.json({
       adjustments: (adjustments ?? []).map((adjustment) => ({ ...adjustment, employee: staffById.get(adjustment.staff_member_id) ?? { name: "Staff member", staff_id: "" } })),
@@ -107,8 +121,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Select staff members and enter a valid month, amount, payment method, and description." }, { status: 400, headers });
     }
 
+    let selectedStaffQuery = access.admin.from("company_staff_members").select("id, name")
+      .eq("company_id", access.companyId).in("id", staffMemberIds);
+    if (!access.isMainBranch) selectedStaffQuery = selectedStaffQuery.eq("branch_id", access.branchId!);
     const [{ data: selectedStaff, error: staffError }, { data: existingChecks, error: checksError }] = await Promise.all([
-      access.admin.from("company_staff_members").select("id, name").eq("company_id", access.companyId).in("id", staffMemberIds),
+      selectedStaffQuery,
       access.admin.from("company_staff_paychecks").select("staff_member_id").eq("company_id", access.companyId).eq("pay_period", payPeriod).in("staff_member_id", staffMemberIds),
     ]);
     if (staffError || checksError) throw staffError ?? checksError;

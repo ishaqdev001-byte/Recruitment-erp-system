@@ -98,7 +98,7 @@ export async function GET(request: Request) {
 
       .from("company_memberships")
 
-      .select("company_id")
+      .select("company_id, branch_id")
 
       .eq("user_id", user.id)
 
@@ -141,6 +141,63 @@ export async function GET(request: Request) {
       )
 
     const companyId = membership.company_id
+    const branchId = membership.branch_id
+    const { data: isMainBranch, error: branchError } = await supabase.rpc("current_user_is_main_branch_user", {
+      requested_company_id: companyId,
+    })
+    if (branchError || (!isMainBranch && !branchId)) {
+      return NextResponse.json(
+        { error: "Unable to verify your company branch." },
+        { status: 503, headers },
+      )
+    }
+
+    const accountsQuery = admin.from("company_accounts")
+      .select("id, name, account_type, status")
+      .eq("company_id", companyId)
+    const ledgerQuery = admin.from("company_account_transactions")
+      .select("account_id, direction, amount")
+      .eq("company_id", companyId)
+    const receiptsQuery = admin.from("financial_receipts")
+      .select("id, entry_type, amount, received_at, category, received_from, receipt_number")
+      .eq("company_id", companyId)
+      .order("received_at", { ascending: false })
+    const invoicesQuery = admin.from("invoices")
+      .select("id, invoice_number, recipient_type, recipient_name, amount, due_date, issued_at, status")
+      .eq("company_id", companyId)
+    const invoicePaymentsQuery = admin.from("invoice_payments")
+      .select("id, invoice_id, amount, paid_at")
+      .eq("company_id", companyId)
+    const depositAllocationsQuery = admin.from("invoice_deposit_allocations")
+      .select("invoice_id, amount")
+      .eq("company_id", companyId)
+    const expensesQuery = admin.from("company_expenses")
+      .select("id, description, paid_to, expense_type, amount, paid_at, reference")
+      .eq("company_id", companyId)
+      .order("paid_at", { ascending: false })
+    const paychecksQuery = admin.from("company_staff_paychecks")
+      .select("id, pay_period, net_amount, payment_date, payment_reference")
+      .eq("company_id", companyId)
+      .order("payment_date", { ascending: false })
+    const requisitionsQuery = admin.from("company_requisitions")
+      .select("id, requisition_number, title, currency_code, total_amount, amount_paid, status")
+      .eq("company_id", companyId)
+    const projectsQuery = admin.from("projects")
+      .select("id")
+      .eq("company_id", companyId)
+
+    if (!isMainBranch) {
+      accountsQuery.eq("branch_id", branchId)
+      ledgerQuery.eq("branch_id", branchId)
+      receiptsQuery.eq("branch_id", branchId)
+      invoicesQuery.eq("branch_id", branchId)
+      invoicePaymentsQuery.eq("branch_id", branchId)
+      depositAllocationsQuery.eq("branch_id", branchId)
+      expensesQuery.eq("branch_id", branchId)
+      paychecksQuery.eq("branch_id", branchId)
+      requisitionsQuery.eq("branch_id", branchId)
+      projectsQuery.eq("branch_id", branchId)
+    }
 
     const [
       { data: accounts, error: accountsError },
@@ -163,73 +220,22 @@ export async function GET(request: Request) {
 
       { data: requisitionPayments, error: requisitionPaymentsError },
 
-      { data: contractorCharges, error: contractorChargesError },
+      { data: projects, error: projectsError },
     ] = await Promise.all([
-      admin
-        .from("company_accounts")
-        .select("id, name, account_type, status")
-        .eq("company_id", companyId),
-
-      admin
-        .from("company_account_transactions")
-        .select("account_id, direction, amount")
-        .eq("company_id", companyId),
-
-      admin
-        .from("financial_receipts")
-        .select(
-          "id, entry_type, amount, received_at, category, received_from, receipt_number",
-        )
-        .eq("company_id", companyId)
-        .order("received_at", { ascending: false }),
-
-      admin
-        .from("invoices")
-        .select(
-          "id, invoice_number, recipient_type, recipient_name, amount, due_date, issued_at, status",
-        )
-        .eq("company_id", companyId),
-
-      admin
-        .from("invoice_payments")
-        .select("id, invoice_id, amount, paid_at")
-        .eq("company_id", companyId),
-
-      admin
-        .from("invoice_deposit_allocations")
-        .select("invoice_id, amount")
-        .eq("company_id", companyId),
-
-      admin
-        .from("company_expenses")
-        .select(
-          "id, description, paid_to, expense_type, amount, paid_at, reference",
-        )
-        .eq("company_id", companyId)
-        .order("paid_at", { ascending: false }),
-
-      admin
-        .from("company_staff_paychecks")
-        .select("id, pay_period, net_amount, payment_date, payment_reference")
-        .eq("company_id", companyId)
-        .order("payment_date", { ascending: false }),
-
-      admin
-        .from("company_requisitions")
-        .select(
-          "id, requisition_number, title, currency_code, total_amount, amount_paid, status",
-        )
-        .eq("company_id", companyId),
-
+      accountsQuery,
+      ledgerQuery,
+      receiptsQuery,
+      invoicesQuery,
+      invoicePaymentsQuery,
+      depositAllocationsQuery,
+      expensesQuery,
+      paychecksQuery,
+      requisitionsQuery,
       admin
         .from("requisition_payments")
         .select("id, amount, payment_date, requisition_id")
         .eq("company_id", companyId),
-
-      admin
-        .from("project_contractor_charges")
-        .select("id, contractor_name, amount, visa_received_at")
-        .eq("company_id", companyId),
+      projectsQuery,
     ])
 
     const queryError =
@@ -243,7 +249,7 @@ export async function GET(request: Request) {
       paychecksError ??
       requisitionsError ??
       requisitionPaymentsError ??
-      contractorChargesError
+      projectsError
 
     if (queryError) {
       console.error("Finance overview query failed", queryError)
@@ -256,6 +262,22 @@ export async function GET(request: Request) {
         { status: 503, headers },
       )
     }
+
+    const scopedProjectIds = (projects ?? []).map((project) => project.id)
+    const { data: contractorCharges, error: contractorChargesError } = scopedProjectIds.length
+      ? await admin.from("project_contractor_charges")
+        .select("id, contractor_name, amount, visa_received_at, project_id")
+        .eq("company_id", companyId)
+        .in("project_id", scopedProjectIds)
+      : { data: [], error: null }
+    if (contractorChargesError) {
+      console.error("Finance contractor charges query failed", contractorChargesError)
+      return NextResponse.json(
+        { error: "Unable to load the company finance summary." },
+        { status: 503, headers },
+      )
+    }
+    const scopedRequisitionIds = new Set((requisitions ?? []).map((requisition) => requisition.id))
 
     const url = new URL(request.url)
 
@@ -348,7 +370,7 @@ export async function GET(request: Request) {
     )
 
     const filteredRequisitionPayments = (requisitionPayments ?? []).filter(
-      (payment) => isInPeriod(payment.payment_date, period),
+      (payment) => scopedRequisitionIds.has(payment.requisition_id) && isInPeriod(payment.payment_date, period),
     )
 
     const incomeBreakdown = [
@@ -467,6 +489,7 @@ export async function GET(request: Request) {
 
       const monthRequisitionPayments = (requisitionPayments ?? []).filter(
         (item) =>
+          scopedRequisitionIds.has(item.requisition_id) &&
           item.payment_date.startsWith(month) &&
           (requisitions ?? []).some(
             (requisition) =>

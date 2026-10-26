@@ -21,13 +21,17 @@ async function getAccountsAccess(permission: "finance.view" | "finance.create") 
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
   const { data: membership, error: membershipError } = await supabase.from("company_memberships")
-    .select("company_id, role_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
+    .select("company_id, role_id, branch_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
   const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
     requested_company_id: membership.company_id,
     requested_permission: permission,
   });
   if (permissionError || !allowed) return { error: "You do not have permission to access company accounts.", status: 403 as const };
+  const { data: isMainBranch, error: branchError } = await supabase.rpc("current_user_is_main_branch_user", {
+    requested_company_id: membership.company_id,
+  });
+  if (branchError || (!isMainBranch && !membership.branch_id)) return { error: "Unable to verify your company branch.", status: 503 as const };
   const admin = createAdminClient();
   if (!admin) return { error: "Accounts require SUPABASE_SERVICE_ROLE_KEY in the server environment.", status: 503 as const };
   const [{ data: company, error: companyError }, { data: role, error: roleError }] = await Promise.all([
@@ -38,7 +42,15 @@ async function getAccountsAccess(permission: "finance.view" | "finance.create") 
   const canManageAccounts = company.primary_admin_user_id === user.id
     || ["CEO", "Finance Manager"].includes(role.name);
   const canAdministerAccounts = company.primary_admin_user_id === user.id || role.name === "CEO";
-  return { admin, companyId: membership.company_id, userId: user.id, canManageAccounts, canAdministerAccounts };
+  return {
+    admin,
+    companyId: membership.company_id,
+    userId: user.id,
+    branchId: membership.branch_id,
+    isMainBranch: Boolean(isMainBranch),
+    canManageAccounts,
+    canAdministerAccounts,
+  };
 }
 
 function validDate(value: unknown): value is string {
@@ -50,8 +62,11 @@ export async function GET(request: Request) {
     const access = await getAccountsAccess("finance.view");
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
     if (new URL(request.url).searchParams.get("options") === "1") {
+      const accountsQuery = access.admin.from("company_accounts").select("id, name, account_type, account_number, status")
+        .eq("company_id", access.companyId).eq("status", "active").order("name");
+      if (!access.isMainBranch) accountsQuery.eq("branch_id", access.branchId!);
       const [{ data: accounts, error: accountError }, { data: canCreate, error: createError }] = await Promise.all([
-        access.admin.from("company_accounts").select("id, name, account_type, account_number, status").eq("company_id", access.companyId).eq("status", "active").order("name"),
+        accountsQuery,
         (await createSupabaseServerClient()).rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "finance.create" }),
       ]);
       if (accountError || createError) throw accountError ?? createError;
@@ -60,10 +75,24 @@ export async function GET(request: Request) {
         permissions: { canCreate: Boolean(canCreate), canManageAccounts: access.canManageAccounts, canAdministerAccounts: access.canAdministerAccounts },
       }, { headers });
     }
+    const accountsQuery = access.admin.from("company_accounts")
+      .select("id, name, account_type, account_number, description, status, created_at")
+      .eq("company_id", access.companyId).order("name");
+    const ledgerQuery = access.admin.from("company_account_transactions")
+      .select("id, account_id, transaction_type, direction, amount, transaction_date, payment_method, reference, description, source_type, source_id, created_at")
+      .eq("company_id", access.companyId).order("transaction_date", { ascending: false }).order("created_at", { ascending: false });
+    const expensesQuery = access.admin.from("company_expenses")
+      .select("id, account_id, expense_type, description, paid_to, amount, payment_method, reference, paid_at, created_at")
+      .eq("company_id", access.companyId).order("paid_at", { ascending: false });
+    if (!access.isMainBranch) {
+      accountsQuery.eq("branch_id", access.branchId!);
+      ledgerQuery.eq("branch_id", access.branchId!);
+      expensesQuery.eq("branch_id", access.branchId!);
+    }
     const [{ data: accounts, error: accountError }, { data: ledger, error: ledgerError }, { data: expenses, error: expenseError }, { data: canCreate, error: createError }] = await Promise.all([
-      access.admin.from("company_accounts").select("id, name, account_type, account_number, description, status, created_at").eq("company_id", access.companyId).order("name"),
-      access.admin.from("company_account_transactions").select("id, account_id, transaction_type, direction, amount, transaction_date, payment_method, reference, description, source_type, source_id, created_at").eq("company_id", access.companyId).order("transaction_date", { ascending: false }).order("created_at", { ascending: false }),
-      access.admin.from("company_expenses").select("id, account_id, expense_type, description, paid_to, amount, payment_method, reference, paid_at, created_at").eq("company_id", access.companyId).order("paid_at", { ascending: false }),
+      accountsQuery,
+      ledgerQuery,
+      expensesQuery,
       (await createSupabaseServerClient()).rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "finance.create" }),
     ]);
     if (accountError || ledgerError || expenseError || createError) throw accountError ?? ledgerError ?? expenseError ?? createError;
@@ -115,6 +144,7 @@ export async function POST(request: Request) {
         account_type: accountType,
         account_number: accountNumber,
         description,
+        branch_id: access.branchId,
         created_by: access.userId,
       }).select("id, name, account_type, account_number, description, status, created_at").single();
       if (error?.code === "23505") return NextResponse.json({ error: "An account with this name already exists." }, { status: 409, headers });
@@ -122,6 +152,7 @@ export async function POST(request: Request) {
       if (openingBalance > 0) {
         const { error: openingError } = await access.admin.from("company_account_transactions").insert({
           company_id: access.companyId,
+          branch_id: access.branchId,
           account_id: account.id,
           transaction_type: "opening_balance",
           direction: "credit",
@@ -149,8 +180,10 @@ export async function POST(request: Request) {
       if (!/^[0-9a-f-]{36}$/i.test(accountId) || !newName || newName.length > 120) {
         return NextResponse.json({ error: "Enter a valid account ID and new account name." }, { status: 400, headers });
       }
-      const { data: account, error: accountError } = await access.admin.from("company_accounts")
-        .select("id, name, is_default").eq("id", accountId).eq("company_id", access.companyId).maybeSingle();
+      const accountQuery = access.admin.from("company_accounts")
+        .select("id, name, is_default, branch_id").eq("id", accountId).eq("company_id", access.companyId);
+      if (!access.isMainBranch) accountQuery.eq("branch_id", access.branchId!);
+      const { data: account, error: accountError } = await accountQuery.maybeSingle();
       if (accountError || !account) return NextResponse.json({ error: "Select an account from this company." }, { status: 404, headers });
       const { error: renameError } = await access.admin.from("company_accounts")
         .update({ name: newName, updated_at: new Date().toISOString() })
@@ -166,8 +199,10 @@ export async function POST(request: Request) {
       if (!/^[0-9a-f-]{36}$/i.test(accountId)) {
         return NextResponse.json({ error: "Enter a valid account ID to delete." }, { status: 400, headers });
       }
-      const { data: account, error: accountError } = await access.admin.from("company_accounts")
-        .select("id, name, is_default").eq("id", accountId).eq("company_id", access.companyId).maybeSingle();
+      const accountQuery = access.admin.from("company_accounts")
+        .select("id, name, is_default, branch_id").eq("id", accountId).eq("company_id", access.companyId);
+      if (!access.isMainBranch) accountQuery.eq("branch_id", access.branchId!);
+      const { data: account, error: accountError } = await accountQuery.maybeSingle();
       if (accountError || !account) return NextResponse.json({ error: "Select an account from this company." }, { status: 404, headers });
       const balanceQuery = await access.admin.from("company_account_transactions")
         .select("direction, amount", { count: "exact", head: false })
@@ -205,10 +240,14 @@ export async function POST(request: Request) {
         || !reference || reference.length > 100 || !description || description.length > 500 || !validDate(transactionDate)) {
         return NextResponse.json({ error: "Enter a valid account, amount, method, reference, description, and date." }, { status: 400, headers });
       }
-      const { data: account } = await access.admin.from("company_accounts").select("id").eq("id", accountId).eq("company_id", access.companyId).eq("status", "active").maybeSingle();
+      const accountQuery = access.admin.from("company_accounts").select("id, branch_id")
+        .eq("id", accountId).eq("company_id", access.companyId).eq("status", "active");
+      if (!access.isMainBranch) accountQuery.eq("branch_id", access.branchId!);
+      const { data: account } = await accountQuery.maybeSingle();
       if (!account) return NextResponse.json({ error: "Select an active account from this company." }, { status: 400, headers });
       const { data: transaction, error } = await access.admin.from("company_account_transactions").insert({
         company_id: access.companyId,
+        branch_id: access.branchId,
         account_id: account.id,
         transaction_type: movementType,
         direction: movementType === "deposit" ? "credit" : "debit",
@@ -241,8 +280,14 @@ export async function POST(request: Request) {
         || !reference || reference.length > 100 || !validDate(paidAt)) {
         return NextResponse.json({ error: "Enter a valid expense type, description, account, amount, payment method, reference, and date." }, { status: 400, headers });
       }
+      const accountQuery = access.admin.from("company_accounts").select("id, branch_id")
+        .eq("id", accountId).eq("company_id", access.companyId).eq("status", "active");
+      if (!access.isMainBranch) accountQuery.eq("branch_id", access.branchId!);
+      const { data: account } = await accountQuery.maybeSingle();
+      if (!account) return NextResponse.json({ error: "Select an active account from your branch." }, { status: 400, headers });
       const { data: expense, error } = await access.admin.from("company_expenses").insert({
         company_id: access.companyId,
+        branch_id: access.branchId,
         account_id: accountId,
         expense_type: expenseType,
         description,

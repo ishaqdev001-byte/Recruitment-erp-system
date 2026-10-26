@@ -26,15 +26,25 @@ async function getAccess() {
   const supabase = await createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
-  const { data: membership } = await supabase
+  const { data: membership, error: membershipError } = await supabase
     .from("company_memberships")
     .select("company_id, branch_id")
     .eq("user_id", user.id)
     .eq("status", "active")
     .limit(1)
     .maybeSingle();
-  if (!membership) return { error: "Active company membership not found.", status: 403 as const };
-  return { supabase, companyId: membership.company_id, userId: user.id, branchId: membership.branch_id ?? null };
+  if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
+  const { data: isMainBranch, error: branchError } = await supabase.rpc("current_user_is_main_branch_user", {
+    requested_company_id: membership.company_id,
+  });
+  if (branchError || (!isMainBranch && !membership.branch_id)) return { error: "Unable to verify your company branch.", status: 503 as const };
+  return {
+    supabase,
+    companyId: membership.company_id,
+    userId: user.id,
+    branchId: membership.branch_id ?? null,
+    isMainBranch: Boolean(isMainBranch),
+  };
 }
 
 async function insertNotification(
@@ -124,6 +134,20 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const statusFilter = url.searchParams.get("status") ?? "";
     const myOnly = url.searchParams.get("mine") === "1";
+    const permissionResults = await Promise.all([
+      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.view" }),
+      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.create" }),
+      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.review" }),
+      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.verify" }),
+      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.authorize" }),
+    ]);
+    if (permissionResults.some((result) => result.error)) {
+      return NextResponse.json({ error: "Unable to verify requisition permissions." }, { status: 503, headers: responseHeaders });
+    }
+    const [canView, canCreate, canReview, canVerify, canAuthorize] = permissionResults.map((result) => Boolean(result.data));
+    if (!canView && !canCreate && !canReview && !canVerify && !canAuthorize) {
+      return NextResponse.json({ error: "You do not have permission to view requisitions." }, { status: 403, headers: responseHeaders });
+    }
 
     let query = access.supabase
       .from("company_requisitions")
@@ -142,8 +166,8 @@ export async function GET(request: Request) {
 
     if (statusFilter) query = query.eq("status", statusFilter);
     if (myOnly) query = query.eq("created_by", access.userId);
-    // Branch-scoped: non-main-branch users see only their branch's requisitions
-    if (access.branchId) query = query.eq("branch_id", access.branchId);
+    if (!access.isMainBranch) query = query.eq("branch_id", access.branchId!);
+    if (!canView) query = query.eq("created_by", access.userId);
 
     const { data: requisitions, error } = await query;
     if (error) {
@@ -151,28 +175,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unable to load requisitions. Apply migration 202610180001_requisitions.sql if setup is incomplete." }, { status: 500, headers: responseHeaders });
     }
 
-    // Check permissions with error handling
-    const permissionResults = await Promise.allSettled([
-      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.create" }),
-      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.review" }),
-      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.verify" }),
-      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.authorize" }),
-    ]);
-
-    const getPermissionResult = (result: PromiseSettledResult<any>): boolean => {
-      if (result.status === "rejected") return false;
-      if (result.value?.error) return false;
-      return Boolean(result.value?.data ?? false);
-    };
-
     return NextResponse.json({
       requisitions: Array.isArray(requisitions) ? requisitions : [],
       currentUserId: access.userId,
       permissions: {
-        canCreate: getPermissionResult(permissionResults[0]),
-        canReview: getPermissionResult(permissionResults[1]),
-        canVerify: getPermissionResult(permissionResults[2]),
-        canAuthorize: getPermissionResult(permissionResults[3]),
+        canCreate,
+        canReview,
+        canVerify,
+        canAuthorize,
       },
     }, { headers: responseHeaders });
   } catch (err) {
@@ -265,6 +275,10 @@ export async function PUT(request: Request) {
 
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body || !isUuid(body.id)) return NextResponse.json({ error: "Invalid request." }, { status: 400, headers: responseHeaders });
+    const { data: visibleRequisition, error: visibilityError } = await access.supabase.from("company_requisitions")
+      .select("id").eq("id", body.id).eq("company_id", access.companyId).maybeSingle();
+    if (visibilityError) return NextResponse.json({ error: "Unable to verify requisition branch access." }, { status: 500, headers: responseHeaders });
+    if (!visibleRequisition) return NextResponse.json({ error: "Requisition not found." }, { status: 404, headers: responseHeaders });
 
     const items = Array.isArray(body.items) ? body.items : [];
     if (items.length === 0) return NextResponse.json({ error: "Add at least one line item." }, { status: 400, headers: responseHeaders });
@@ -311,6 +325,10 @@ export async function PATCH(request: Request) {
 
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body || !isUuid(body.id)) return NextResponse.json({ error: "Invalid request." }, { status: 400, headers: responseHeaders });
+    const { data: visibleRequisition, error: visibilityError } = await access.supabase.from("company_requisitions")
+      .select("id").eq("id", body.id).eq("company_id", access.companyId).maybeSingle();
+    if (visibilityError) return NextResponse.json({ error: "Unable to verify requisition branch access." }, { status: 500, headers: responseHeaders });
+    if (!visibleRequisition) return NextResponse.json({ error: "Requisition not found." }, { status: 404, headers: responseHeaders });
 
     const title = typeof body.title === "string" ? body.title.trim() : "";
     const departmentId = isUuid(body.departmentId) ? body.departmentId : null;

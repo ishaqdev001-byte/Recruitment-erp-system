@@ -7,8 +7,6 @@ export const runtime = "nodejs";
 
 const headers = { "Cache-Control": "private, no-store" };
 const incomeKinds = new Set(["medical", "other"]);
-const managerRoles = new Set(["CEO", "Finance Manager", "General Manager"]);
-const appointmentRoles = new Set(["CEO", "Finance Manager", "General Manager", "Medical Officer"]);
 
 function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -26,28 +24,28 @@ async function getAccess() {
     .select("company_id, role_id, branch_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
 
-  const [financeView, candidatesView, candidatesCreate] = await Promise.all([
+  const [financeView, financeCreate, financeEdit, candidatesView, candidatesCreate, medicalView, isMainBranchResult] = await Promise.all([
     supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "finance.view" }),
+    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "finance.create" }),
+    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "finance.edit" }),
     supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "candidates.view" }),
     supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "candidates.create" }),
+    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "medical.view" }),
+    supabase.rpc("current_user_is_main_branch_user", { requested_company_id: membership.company_id }),
   ]);
-  if (financeView.error || candidatesView.error || candidatesCreate.error) {
-    return { error: "Unable to verify income and appointment access.", status: 403 as const };
+  if ([financeView, financeCreate, financeEdit, candidatesView, candidatesCreate, medicalView, isMainBranchResult].some((result) => result.error)) {
+    return { error: "Unable to verify income, appointment, or branch access.", status: 503 as const };
   }
 
+  const isMainBranch = Boolean(isMainBranchResult.data);
+  if (!isMainBranch && !membership.branch_id) return { error: "Your account must be assigned to a branch.", status: 403 as const };
   const admin = createAdminClient();
   if (!admin) return { error: "Other income and appointments require SUPABASE_SERVICE_ROLE_KEY in the server environment.", status: 503 as const };
-  const [{ data: company, error: companyError }, { data: role, error: roleError }] = await Promise.all([
-    admin.from("companies").select("primary_admin_user_id").eq("id", membership.company_id).maybeSingle(),
-    admin.from("company_roles").select("name").eq("id", membership.role_id).eq("company_id", membership.company_id).maybeSingle(),
-  ]);
-  if (companyError || roleError || !company || !role) return { error: "Unable to verify company role.", status: 500 as const };
 
-  const isOwner = company.primary_admin_user_id === user.id;
-  const canManageTypes = isOwner || managerRoles.has(role.name);
-  const canBookAppointments = Boolean(candidatesCreate.data) || isOwner || appointmentRoles.has(role.name);
-  const canViewAppointments = Boolean(candidatesView.data) || canBookAppointments;
-  if (!financeView.data && !candidatesView.data && !candidatesCreate.data && !canManageTypes) {
+  const canManageTypes = Boolean(financeCreate.data || financeEdit.data);
+  const canBookAppointments = Boolean(candidatesCreate.data);
+  const canViewAppointments = Boolean(candidatesView.data || candidatesCreate.data || medicalView.data);
+  if (!financeView.data && !candidatesView.data && !candidatesCreate.data && !medicalView.data && !canManageTypes) {
     return { error: "You do not have permission to access company income sources.", status: 403 as const };
   }
   return {
@@ -55,6 +53,7 @@ async function getAccess() {
     companyId: membership.company_id,
     userId: user.id,
     branchId: membership.branch_id ?? null,
+    isMainBranch,
     canManageTypes,
     canBookAppointments,
     canViewAppointments,
@@ -76,8 +75,7 @@ export async function GET() {
     const access = await getAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
     // Branch-scoped filtering: non-main-branch users only see their branch's data
-    const isMainBranch = !access.branchId; // null branch_id = main branch
-    const branchFilter = isMainBranch ? null : access.branchId;
+    const branchFilter = access.isMainBranch ? null : access.branchId;
 
     let incomeTypeQuery = access.admin.from("company_income_types").select("id, name, income_kind, fee, account_id, is_default, is_active, created_at")
       .eq("company_id", access.companyId);
@@ -145,13 +143,16 @@ export async function POST(request: Request) {
         || !isUuid(accountId) || (body.action === "update-income-type" && !isUuid(incomeTypeId))) {
         return NextResponse.json({ error: "Enter a valid income name, kind, fee, and account." }, { status: 400, headers });
       }
-      const { data: account, error: accountError } = await access.admin.from("company_accounts")
-        .select("id").eq("id", accountId).eq("company_id", access.companyId).eq("status", "active").maybeSingle();
+      let accountQuery = access.admin.from("company_accounts")
+        .select("id").eq("id", accountId).eq("company_id", access.companyId).eq("status", "active");
+      if (!access.isMainBranch) accountQuery = accountQuery.eq("branch_id", access.branchId!);
+      const { data: account, error: accountError } = await accountQuery.maybeSingle();
       if (accountError || !account) return NextResponse.json({ error: "Select an active account from this company." }, { status: 400, headers });
 
       if (body.action === "create-income-type") {
         const { data, error } = await access.admin.from("company_income_types").insert({
           company_id: access.companyId,
+          branch_id: access.branchId,
           name,
           income_kind: incomeKind,
           fee,
@@ -163,8 +164,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ incomeType: { ...data, fee: Number(data.fee) } }, { status: 201, headers });
       }
 
-      const { data, error } = await access.admin.from("company_income_types").update({ name, income_kind: incomeKind, fee, account_id: accountId })
-        .eq("id", incomeTypeId).eq("company_id", access.companyId)
+      let incomeTypeQuery = access.admin.from("company_income_types").update({ name, income_kind: incomeKind, fee, account_id: accountId })
+        .eq("id", incomeTypeId).eq("company_id", access.companyId);
+      if (!access.isMainBranch) incomeTypeQuery = incomeTypeQuery.eq("branch_id", access.branchId!);
+      const { data, error } = await incomeTypeQuery
         .select("id, name, income_kind, fee, account_id, is_default, is_active, created_at").maybeSingle();
       if (error?.code === "23505") return NextResponse.json({ error: "An income source with that name already exists." }, { status: 409, headers });
       if (error || !data) return NextResponse.json({ error: "Income source not found or could not be updated." }, { status: 404, headers });
@@ -186,12 +189,13 @@ export async function POST(request: Request) {
       // When a registered candidate is selected, pull their data server-side
       // to guarantee we use what's actually in the database (not just what the client sent)
       if (candidateId) {
-        const { data: candidate, error: candidateError } = await access.admin
+        let candidateQuery = access.admin
           .from("candidates")
           .select("id, first_name, last_name, phone, date_of_birth, details")
           .eq("id", candidateId)
-          .eq("company_id", access.companyId)
-          .maybeSingle();
+          .eq("company_id", access.companyId);
+        if (!access.isMainBranch) candidateQuery = candidateQuery.eq("branch_id", access.branchId!);
+        const { data: candidate, error: candidateError } = await candidateQuery.maybeSingle();
         if (candidateError || !candidate) {
           return NextResponse.json({ error: "Selected candidate not found in this company." }, { status: 400, headers });
         }
@@ -228,9 +232,11 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Enter valid candidate details and choose a medical service and appointment date." }, { status: 400, headers });
       }
 
-      const { data: incomeType, error: typeError } = await access.admin.from("company_income_types")
+      let incomeTypeQuery = access.admin.from("company_income_types")
         .select("id, name, income_kind, fee, account_id")
-        .eq("id", incomeTypeId).eq("company_id", access.companyId).eq("income_kind", "medical").eq("is_active", true).maybeSingle();
+        .eq("id", incomeTypeId).eq("company_id", access.companyId).eq("income_kind", "medical").eq("is_active", true);
+      if (!access.isMainBranch) incomeTypeQuery = incomeTypeQuery.eq("branch_id", access.branchId!);
+      const { data: incomeType, error: typeError } = await incomeTypeQuery.maybeSingle();
       if (typeError || !incomeType) return NextResponse.json({ error: "Select an active medical service from this company." }, { status: 400, headers });
 
       const feeAmount = Number(incomeType.fee);
@@ -238,8 +244,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Set a positive fee for this medical service before booking appointments." }, { status: 400, headers });
       }
 
-      const { data: account, error: accountError } = await access.admin.from("company_accounts")
-        .select("id").eq("id", incomeType.account_id).eq("company_id", access.companyId).eq("status", "active").maybeSingle();
+      let appointmentAccountQuery = access.admin.from("company_accounts")
+        .select("id").eq("id", incomeType.account_id).eq("company_id", access.companyId).eq("status", "active");
+      if (!access.isMainBranch) appointmentAccountQuery = appointmentAccountQuery.eq("branch_id", access.branchId!);
+      const { data: account, error: accountError } = await appointmentAccountQuery.maybeSingle();
       if (accountError || !account) return NextResponse.json({ error: "The medical service account is inactive. Configure an active account first." }, { status: 400, headers });
 
       // Build a unique reference for the payment transaction
@@ -270,6 +278,7 @@ export async function POST(request: Request) {
       // transaction_type = 'income', direction = 'credit', source_type = 'medical_appointment'
       const { data: transaction, error: txError } = await access.admin.from("company_account_transactions").insert({
         company_id: access.companyId,
+        branch_id: access.branchId,
         account_id: account.id,
         transaction_type: "income",
         direction: "credit",

@@ -40,7 +40,7 @@ export async function GET() {
 
     const { data: membership, error: membershipError } = await supabase
       .from("company_memberships")
-      .select("company_id")
+      .select("company_id, branch_id")
       .eq("user_id", user.id)
       .eq("status", "active")
       .limit(1)
@@ -50,16 +50,33 @@ export async function GET() {
       return NextResponse.json({ error: "Active company membership not found." }, { status: 403, headers });
     }
 
+    const [candidateCreate, medicalUpdate, isMainBranch] = await Promise.all([
+      supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "candidates.create" }),
+      supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "medical.update" }),
+      supabase.rpc("current_user_is_main_branch_user", { requested_company_id: membership.company_id }),
+    ]);
+    if (candidateCreate.error || medicalUpdate.error || isMainBranch.error) {
+      return NextResponse.json({ error: "Unable to verify doctor directory access." }, { status: 503, headers });
+    }
+    if (!candidateCreate.data && !medicalUpdate.data) {
+      return NextResponse.json({ error: "You do not have permission to view the doctor directory." }, { status: 403, headers });
+    }
+    if (!isMainBranch.data && !membership.branch_id) {
+      return NextResponse.json({ error: "Your account must be assigned to a branch." }, { status: 403, headers });
+    }
+
     const admin = createAdminClient();
     if (!admin) {
       return NextResponse.json({ error: "Doctor directory is unavailable. Contact the workspace administrator." }, { status: 503, headers });
     }
 
-    const { data: memberships, error: membershipsError } = await admin
+    let membershipsQuery = admin
       .from("company_memberships")
       .select("user_id, role:company_roles!inner(name)")
       .eq("company_id", membership.company_id)
       .eq("status", "active");
+    if (!isMainBranch.data) membershipsQuery = membershipsQuery.eq("branch_id", membership.branch_id);
+    const { data: memberships, error: membershipsError } = await membershipsQuery;
 
     if (membershipsError) {
       console.error("Doctor membership lookup failed", membershipsError);

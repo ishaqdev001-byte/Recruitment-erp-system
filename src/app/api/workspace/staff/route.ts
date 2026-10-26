@@ -40,6 +40,11 @@ async function getStaffAccess() {
     .limit(1)
     .maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
+  const { data: isMainBranch, error: branchError } = await supabase.rpc("current_user_is_main_branch_user", {
+    requested_company_id: membership.company_id,
+  });
+  if (branchError) return { error: "Unable to verify your company branch.", status: 503 as const };
+  if (!isMainBranch && !membership.branch_id) return { error: "Your account must be assigned to a branch.", status: 403 as const };
 
   const admin = createAdminClient();
   if (!admin) return { error: "Set SUPABASE_SERVICE_ROLE_KEY in the server environment to enable staff management.", status: 503 as const };
@@ -60,7 +65,16 @@ async function getStaffAccess() {
   // CEO and GM can manage staff records but cannot change the ID settings.
   const canChangeSequence = isPrimaryAdmin || role.name === "Chairman";
 
-  return { admin, companyId: membership.company_id, userId: user.id, branchId: membership.branch_id ?? null, primaryAdminId: company.primary_admin_user_id, isPrimaryAdmin, canChangeSequence };
+  return {
+    admin,
+    companyId: membership.company_id,
+    userId: user.id,
+    branchId: membership.branch_id ?? null,
+    isMainBranch: Boolean(isMainBranch),
+    primaryAdminId: company.primary_admin_user_id,
+    isPrimaryAdmin,
+    canChangeSequence,
+  };
 }
 
 function ownerInitials(name: string) {
@@ -149,8 +163,7 @@ export async function GET() {
       }
     }
 
-    // Branch-scoped: isPrimaryAdmin, CEO, GM see all; Branch Managers see only their branch
-    const branchFilter = access.isPrimaryAdmin ? null : access.branchId;
+    const branchFilter = access.isMainBranch ? null : access.branchId;
 
     const [{ data: staff, error: staffError }, { data: accounts, error: accountsError }] = await Promise.all([
       (() => {
@@ -160,11 +173,14 @@ export async function GET() {
         if (branchFilter) q = q.eq("branch_id", branchFilter);
         return q.order("created_at", { ascending: false });
       })(),
-      access.admin.from("company_accounts")
+      (() => {
+        let q = access.admin.from("company_accounts")
         .select("id, name, account_type, account_number")
         .eq("company_id", access.companyId)
-        .eq("status", "active")
-        .order("name"),
+          .eq("status", "active");
+        if (branchFilter) q = q.eq("branch_id", branchFilter);
+        return q.order("name");
+      })(),
     ]);
     if (staffError || accountsError) throw staffError ?? accountsError;
 
@@ -193,17 +209,22 @@ export async function POST(request: Request) {
     if (!sequence) throw new Error("Staff ID sequence is not configured.");
     const staffId = `${sequence.staff_id_prefix}-${String(sequence.sequence_number).padStart(4, "0")}`;
     if (input.linkedUserId) {
-      const { data: membership } = await access.admin.from("company_memberships").select("user_id")
-        .eq("company_id", access.companyId).eq("user_id", input.linkedUserId).eq("status", "active").maybeSingle();
+      let memberQuery = access.admin.from("company_memberships").select("user_id, branch_id")
+        .eq("company_id", access.companyId).eq("user_id", input.linkedUserId).eq("status", "active");
+      if (!access.isMainBranch) memberQuery = memberQuery.eq("branch_id", access.branchId!);
+      const { data: membership } = await memberQuery.maybeSingle();
       if (!membership) return NextResponse.json({ error: "Link an active user in this company." }, { status: 400, headers });
     }
     if (input.transportAccountId) {
-      const { data: account } = await access.admin.from("company_accounts").select("id")
-        .eq("id", input.transportAccountId).eq("company_id", access.companyId).eq("status", "active").maybeSingle();
+      let accountQuery = access.admin.from("company_accounts").select("id")
+        .eq("id", input.transportAccountId).eq("company_id", access.companyId).eq("status", "active");
+      if (!access.isMainBranch) accountQuery = accountQuery.eq("branch_id", access.branchId!);
+      const { data: account } = await accountQuery.maybeSingle();
       if (!account) return NextResponse.json({ error: "Choose an active funding account from this company." }, { status: 400, headers });
     }
     const { data: staff, error } = await access.admin.from("company_staff_members").insert({
       company_id: access.companyId,
+      branch_id: access.branchId,
       staff_id: staffId,
       linked_user_id: input.linkedUserId,
       ...{
@@ -306,16 +327,20 @@ export async function PATCH(request: Request) {
     const input = parseStaffInput(body);
     if (!/^[0-9a-f-]{36}$/i.test(id) || !input) return NextResponse.json({ error: "Choose a pay arrangement. Payroll staff need a positive base salary; a weekly transport allowance needs an active funding account." }, { status: 400, headers });
     if (input.linkedUserId) {
-      const { data: membership } = await access.admin.from("company_memberships").select("user_id")
-        .eq("company_id", access.companyId).eq("user_id", input.linkedUserId).eq("status", "active").maybeSingle();
+      let memberQuery = access.admin.from("company_memberships").select("user_id, branch_id")
+        .eq("company_id", access.companyId).eq("user_id", input.linkedUserId).eq("status", "active");
+      if (!access.isMainBranch) memberQuery = memberQuery.eq("branch_id", access.branchId!);
+      const { data: membership } = await memberQuery.maybeSingle();
       if (!membership) return NextResponse.json({ error: "Link an active user in this company." }, { status: 400, headers });
     }
     if (input.transportAccountId) {
-      const { data: account } = await access.admin.from("company_accounts").select("id")
-        .eq("id", input.transportAccountId).eq("company_id", access.companyId).eq("status", "active").maybeSingle();
+      let accountQuery = access.admin.from("company_accounts").select("id")
+        .eq("id", input.transportAccountId).eq("company_id", access.companyId).eq("status", "active");
+      if (!access.isMainBranch) accountQuery = accountQuery.eq("branch_id", access.branchId!);
+      const { data: account } = await accountQuery.maybeSingle();
       if (!account) return NextResponse.json({ error: "Choose an active funding account from this company." }, { status: 400, headers });
     }
-    const { data: staff, error } = await access.admin.from("company_staff_members").update({
+    let updateQuery = access.admin.from("company_staff_members").update({
       name: input.name,
       position: input.position,
       status: input.status,
@@ -326,7 +351,9 @@ export async function PATCH(request: Request) {
       weekly_transport_allowance: input.weeklyTransportAllowance,
       transport_account_id: input.transportAccountId,
       updated_by: access.userId,
-    }).eq("company_id", access.companyId).eq("id", id)
+    }).eq("company_id", access.companyId).eq("id", id);
+    if (!access.isMainBranch) updateQuery = updateQuery.eq("branch_id", access.branchId!);
+    const { data: staff, error } = await updateQuery
       .select("id, staff_id, name, position, phone, status, date_joined, linked_user_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id")
       .maybeSingle();
     if (error?.code === "23505") return NextResponse.json({ error: "That user is already linked to a staff record." }, { status: 409, headers });

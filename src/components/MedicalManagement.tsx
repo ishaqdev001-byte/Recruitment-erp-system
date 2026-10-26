@@ -429,10 +429,10 @@ export default function MedicalManagement() {
                   className="border"
                   style={{ borderColor: appt.examResult === "unfit" ? "#ef444440" : "var(--border)", background: "var(--card)" }}
                 >
-                  {/* Row header */}
-                  <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-                    {/* Name + file number */}
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                  {/* Row header - responsive grid layout instead of flex-wrap */}
+                  <div className="grid gap-3 px-4 py-3" style={{ gridTemplateColumns: "auto 1fr auto auto auto", alignItems: "center" }}>
+                    {/* Column 1: Avatar + Name/ID */}
+                    <div className="flex min-w-0 items-center gap-3" style={{ gridColumn: "1 / -1" }}>
                       <div
                         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-700"
                         style={{ background: resultBg, color: resultColor }}
@@ -440,51 +440,51 @@ export default function MedicalManagement() {
                       >
                         {appt.firstName[0]}{appt.lastName[0]}
                       </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-700" style={{ color: "var(--foreground)" }}>
                           {appt.firstName} {appt.lastName}
                         </p>
-                        <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>
-                          {appt.candidateFileNumber ? `#${appt.candidateFileNumber} · ` : ""}
-                          {appt.passportNumber}
-                          {appt.candidateStage ? ` · Stage: ${appt.candidateStage}` : ""}
+                        <p className="truncate text-xs" style={{ color: "var(--muted-foreground)" }}>
+                          {appt.candidateFileNumber ? `#${appt.candidateFileNumber}` : appt.passportNumber}
+                          {appt.candidateStage ? ` · ${appt.candidateStage}` : ""}
                         </p>
                       </div>
                     </div>
 
-                    {/* Appointment date */}
-                    <div className="hidden sm:block text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
-                      <CalendarDays size={12} className="mr-1 inline" aria-hidden="true" />
-                      {fmt(appt.appointmentAt)}
+                    {/* Column 2: Appointment date (hidden on mobile) */}
+                    <div className="hidden sm:flex text-xs shrink-0 items-center gap-1" style={{ color: "var(--muted-foreground)" }}>
+                      <CalendarDays size={12} aria-hidden="true" />
+                      <span className="truncate">{fmt(appt.appointmentAt)}</span>
                     </div>
 
-                    {/* Service */}
-                    <div className="hidden md:block text-xs shrink-0" style={{ color: "var(--muted-foreground)" }}>
+                    {/* Column 3: Service (hidden on tablet and below) */}
+                    <div className="hidden md:block text-xs shrink-0 truncate" style={{ color: "var(--muted-foreground)" }}>
                       {appt.serviceName}
                     </div>
 
-                    {/* Result badge */}
+                    {/* Column 4: Result badge */}
                     <span
-                      className="shrink-0 rounded px-2.5 py-1 text-xs font-700 uppercase"
+                      className="shrink-0 rounded px-2.5 py-1 text-xs font-700 uppercase text-center"
                       style={{ background: resultBg, color: resultColor }}
                     >
                       {RESULT_LABELS[appt.examResult]}
                     </span>
 
-                    {/* Actions */}
-                    <div className="flex shrink-0 items-center gap-2">
+                    {/* Column 5: Actions - flex container on its own line */}
+                    <div className="flex shrink-0 items-center gap-2 justify-end" style={{ gridColumn: "1 / -1" }}>
                       {canUpdate && appt.status !== "cancelled" && (
                         <button
                           type="button"
                           onClick={() => setExamTarget(appt)}
-                          className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                          className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600 whitespace-nowrap"
                           style={{
                             borderColor: appt.examResult === "pending" ? "var(--primary)" : "var(--border)",
                             color: appt.examResult === "pending" ? "var(--primary)" : "var(--muted-foreground)",
                           }}
                         >
                           <FileText size={12} aria-hidden="true" />
-                          {appt.examResult === "pending" ? "Record Result" : "Update Result"}
+                          <span className="hidden xs:inline">{appt.examResult === "pending" ? "Record Result" : "Update Result"}</span>
+                          <span className="inline xs:hidden">{appt.examResult === "pending" ? "Record" : "Update"}</span>
                         </button>
                       )}
                       {canUpdate && appt.candidateId && (
@@ -512,7 +512,7 @@ export default function MedicalManagement() {
                           style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}
                         >
                           <Paperclip size={12} aria-hidden="true" />
-                          Docs
+                          <span className="hidden xs:inline">Docs</span>
                         </button>
                       )}
                       <button
@@ -520,7 +520,7 @@ export default function MedicalManagement() {
                         onClick={() => setExpandedId(isExpanded ? null : appt.id)}
                         aria-expanded={isExpanded}
                         aria-label={isExpanded ? "Collapse details" : "Expand details"}
-                        className="flex items-center justify-center border p-1.5"
+                        className="flex items-center justify-center border p-1.5 shrink-0"
                         style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}
                       >
                         <ChevronDown

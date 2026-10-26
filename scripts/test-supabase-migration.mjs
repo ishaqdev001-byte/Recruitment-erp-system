@@ -94,6 +94,22 @@ const invitedMemberWorkspaceAccessMigration = await readFile(
   new URL("../supabase/migrations/202610240001_invited_member_workspace_access.sql", import.meta.url),
   "utf8",
 );
+const assignedRolePermissionsReadMigration = await readFile(
+  new URL("../supabase/migrations/202610260002_assigned_role_permissions_read.sql", import.meta.url),
+  "utf8",
+);
+const candidateInquiryBranchScopeMigration = await readFile(
+  new URL("../supabase/migrations/20261026095533_candidate_inquiry_people_branch_scope.sql", import.meta.url),
+  "utf8",
+);
+const staffBranchSyncMigration = await readFile(
+  new URL("../supabase/migrations/20261026095616_sync_staff_branch_assignments.sql", import.meta.url),
+  "utf8",
+);
+const requisitionBranchEnforcementMigration = await readFile(
+  new URL("../supabase/migrations/20261026095710_requisition_branch_rpc_enforcement.sql", import.meta.url),
+  "utf8",
+);
 const companyDriveMigration = await readFile(
   new URL("../supabase/migrations/202610040019_company_drive.sql", import.meta.url),
   "utf8",
@@ -241,6 +257,7 @@ try {
   await database.exec(workspaceInvitationExpiryMigration);
   await database.exec(invitedMemberWorkspaceAccessMigration);
   await database.exec(invitedMemberWorkspaceAccessMigration);
+  await database.exec(assignedRolePermissionsReadMigration);
   await database.exec(companyDriveMigration);
   await database.exec(companyDriveMigration);
   await database.exec(companyDriveMountsMigration);
@@ -572,6 +589,19 @@ try {
       ('${documentMedical}', '${companyA}', '${candidateA}', 'medical.pdf', 'medical.pdf', 'pdf',
         'application/pdf', 100, 'company/${companyA}/candidates/${candidateA}/medical/60000000-0000-4000-8000-000000000002.pdf', 'medical', '${userA}');
   `);
+  await database.exec("reset role; set role authenticated");
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA]);
+  const assignedRolePermissions = await database.query(
+    "select permission_code from public.role_permissions where company_id = $1 and role_id = $2 order by permission_code",
+    [companyA, roleA],
+  );
+  assert.ok(assignedRolePermissions.rows.some((row) => row.permission_code === "candidates.view"));
+  const otherRolePermissions = await database.query(
+    "select permission_code from public.role_permissions where company_id = $1 and role_id = $2",
+    [companyA, statusRole],
+  );
+  assert.equal(otherRolePermissions.rows.length, 0);
+  await database.exec("reset role");
   const defaultMedicalTypes = await database.query(
     "select name, fee, account_id from public.company_income_types where company_id = $1 and is_default order by name",
     [companyD],
@@ -1341,6 +1371,15 @@ try {
       [companyB],
     ),
   );
+
+  assert.match(candidateInquiryBranchScopeMigration, /current_user_can_see_branch\(requested_company_id,\s*membership\.branch_id\)/);
+  assert.match(staffBranchSyncMigration, /membership\.user_id = staff\.linked_user_id/);
+  assert.match(staffBranchSyncMigration, /after insert or update of branch_id on public\.company_memberships/i);
+  assert.match(requisitionBranchEnforcementMigration, /create policy "Requisitions visible to authorized branch members"/);
+  assert.match(requisitionBranchEnforcementMigration, /create trigger company_requisitions_enforce_branch_scope/i);
+  assert.match(requisitionBranchEnforcementMigration, /create trigger company_requisition_items_enforce_branch_scope/i);
+  assert.match(requisitionBranchEnforcementMigration, /create trigger requisition_payments_enforce_branch_scope/i);
+  assert.match(requisitionBranchEnforcementMigration, /current_user_has_company_permission\(company_id, 'requisitions\.view'\)/);
 
   console.log("Supabase migration and tenant RLS checks passed.");
 } finally {

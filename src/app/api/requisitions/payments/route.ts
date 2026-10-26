@@ -43,6 +43,27 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Provide a valid requisition ID." }, { status: 400, headers: responseHeaders });
     }
 
+    const permissions = await Promise.all([
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "requisitions.view",
+      }),
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "requisitions.verify",
+      }),
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "requisitions.create",
+      }),
+    ]);
+    if (permissions.some((result) => result.error)) {
+      return NextResponse.json({ error: "Unable to verify requisition permissions." }, { status: 503, headers: responseHeaders });
+    }
+    if (!permissions.some((result) => result.data)) {
+      return NextResponse.json({ error: "You do not have permission to view requisition payments." }, { status: 403, headers: responseHeaders });
+    }
+
     const [paymentsResult, accountsResult] = await Promise.all([
       access.supabase
         .from("requisition_payments")

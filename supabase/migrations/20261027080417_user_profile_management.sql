@@ -1,4 +1,4 @@
--- Extend profiles table with bio and photo management
+-- Extend profiles and track user profile photos
 alter table public.profiles
   add column if not exists bio text not null default '' check (length(bio) <= 5000),
   add column if not exists photo_url text;
@@ -18,9 +18,12 @@ create table if not exists public.user_profile_photos (
   check (mime_type in ('image/jpeg', 'image/png', 'image/webp', 'image/gif')),
   check (storage_path like 'company/' || company_id::text || '/users/' || user_id::text || '/%'),
   check (storage_path not like '%..%'),
-  check (position(E'\\' in storage_path) = 0),
-  unique (user_id, company_id, is_current) where is_current = true
+  check (position(E'\\' in storage_path) = 0)
 );
+
+create unique index if not exists user_profile_photos_one_current_idx
+  on public.user_profile_photos (user_id, company_id)
+  where is_current = true;
 
 create index if not exists user_profile_photos_user_current_idx
   on public.user_profile_photos (user_id, company_id, is_current)
@@ -34,22 +37,26 @@ alter table public.user_profile_photos enable row level security;
 
 -- RLS policies for profile photos
 -- Users can view their own profile photos
-create policy if not exists "Users can view their own profile photos"
+drop policy if exists "Users can view their own profile photos" on public.user_profile_photos;
+create policy "Users can view their own profile photos"
   on public.user_profile_photos for select
   using (auth.uid() = user_id);
 
 -- Users can insert their own profile photos
-create policy if not exists "Users can upload their own profile photos"
+drop policy if exists "Users can upload their own profile photos" on public.user_profile_photos;
+create policy "Users can upload their own profile photos"
   on public.user_profile_photos for insert
   with check (auth.uid() = user_id);
 
 -- Users can update their own profile photos (mark as inactive)
-create policy if not exists "Users can deactivate their profile photos"
+drop policy if exists "Users can deactivate their profile photos" on public.user_profile_photos;
+create policy "Users can deactivate their profile photos"
   on public.user_profile_photos for update
   using (auth.uid() = user_id);
 
 -- Users can delete their own profile photos
-create policy if not exists "Users can delete their own profile photos"
+drop policy if exists "Users can delete their own profile photos" on public.user_profile_photos;
+create policy "Users can delete their own profile photos"
   on public.user_profile_photos for delete
   using (auth.uid() = user_id);
 

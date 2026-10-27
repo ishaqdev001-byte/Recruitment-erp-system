@@ -200,6 +200,7 @@ type CompanyUser = {
 type Session = {
   companyId: string;
   userId: string;
+  roleId: string;
   userName: string;
   userAvatarUrl: string;
   companyName: string;
@@ -376,6 +377,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     session: {
       companyId: company.id,
       userId: user.id,
+      roleId: roleRecord.id,
       userName,
       userAvatarUrl: String(user.user_metadata?.avatar_url ?? user.user_metadata?.picture ?? ""),
       companyName: company.name,
@@ -692,66 +694,164 @@ export default function App() {
     }
   }, [session, view]);
 
-  // Periodically refresh user permissions (every 5 minutes)
-  // This ensures that if an admin changes role permissions while the user is logged in,
-  // the changes will be reflected in the UI without requiring a logout/login
+  // Refresh access on database changes, with a short polling fallback if Realtime is unavailable.
   useEffect(() => {
     if (!session) return;
 
-    const refreshPermissions = async () => {
-      try {
-        const supabase = createSupabaseBrowserClient();
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError || !user) return;
+    const supabase = createSupabaseBrowserClient();
+    let cancelled = false;
+    let refreshing = false;
+    let refreshAgain = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastRefreshError = "";
 
-        const { data: membership } = await supabase
+    const clearWorkspace = async () => {
+      const { error } = await supabase.auth.signOut();
+      if (error) console.error("[Access Refresh] Unable to sign out after company access was removed.", error);
+      if (cancelled) return;
+      setCompanies([]);
+      setUsers([]);
+      setSession(null);
+      setView("dashboard");
+      setAuthView("login");
+      setLoginError("Your active company access was removed or disabled. Sign in again or contact your administrator.");
+    };
+
+    const refreshAccess = async () => {
+      if (refreshing) {
+        refreshAgain = true;
+        return;
+      }
+      refreshing = true;
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+        if (!user || user.id !== session.userId) {
+          await clearWorkspace();
+          return;
+        }
+
+        const { data: membership, error: membershipError } = await supabase
           .from("company_memberships")
-          .select("role_id, role:company_roles(id, name)")
-          .eq("user_id", user.id)
+          .select("role_id, branch_id, role:company_roles(id, name), branch:company_branches(id, name, is_main_branch)")
+          .eq("user_id", session.userId)
           .eq("company_id", session.companyId)
           .eq("status", "active")
           .limit(1)
           .maybeSingle();
 
-        if (!membership) return;
+        if (membershipError) throw membershipError;
+        if (!membership) {
+          await clearWorkspace();
+          return;
+        }
 
         const roleValue = membership.role as unknown as { id: string; name: string } | { id: string; name: string }[];
         const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue;
-        if (!roleRecord) return;
+        if (!roleRecord) throw new Error("The active membership has no assigned role.");
 
-        // Fetch fresh permissions from the database
         const { data: rolePerms, error: permsError } = await supabase
           .from("role_permissions")
           .select("permission_code")
           .eq("role_id", roleRecord.id)
           .eq("company_id", session.companyId);
 
-        if (permsError || !rolePerms) return;
-
+        if (permsError) throw permsError;
+        if (!rolePerms) throw new Error("Unable to load the assigned role permissions.");
         const newPermissions = rolePerms.map((rp) => rp.permission_code);
+        const branchValue = membership.branch as unknown as
+          | { id: string; name: string; is_main_branch: boolean }
+          | { id: string; name: string; is_main_branch: boolean }[]
+          | null;
+        const branchRecord = Array.isArray(branchValue) ? branchValue[0] : branchValue;
+        const nextRole = roleRecord.name as WorkspaceRole;
+        const nextBranchId = membership.branch_id ?? null;
+        const nextBranchName = branchRecord?.name ?? "Main Branch";
+        const nextIsMainBranch = !branchRecord || Boolean(branchRecord.is_main_branch);
 
-        // Only update session if permissions actually changed
-        const oldPermissions = new Set(session.permissions);
-        const hasChanges = newPermissions.length !== oldPermissions.size ||
-          newPermissions.some((p) => !oldPermissions.has(p));
-
-        if (hasChanges) {
-          console.log("[Permission Refresh] Detected permission changes, updating session");
-          setSession((current) => current ? { ...current, permissions: newPermissions } : current);
-        }
+        if (cancelled) return;
+        lastRefreshError = "";
+        setSession((current) => {
+          if (!current || current.userId !== session.userId || current.companyId !== session.companyId) return current;
+          const permissionsMatch = current.permissions.length === newPermissions.length
+            && current.permissions.every((permission) => newPermissions.includes(permission));
+          if (
+            current.roleId === roleRecord.id
+            && current.role === nextRole
+            && current.branchId === nextBranchId
+            && current.branchName === nextBranchName
+            && current.isMainBranchUser === nextIsMainBranch
+            && permissionsMatch
+          ) return current;
+          return {
+            ...current,
+            roleId: roleRecord.id,
+            role: nextRole,
+            branchId: nextBranchId,
+            branchName: nextBranchName,
+            isMainBranchUser: nextIsMainBranch,
+            permissions: newPermissions,
+          };
+        });
+        setRole(nextRole);
+        setUsers((current) => {
+          const companyUser = current.find((entry) => entry.id === session.userId);
+          if (!companyUser || companyUser.role === nextRole) return current;
+          return current.map((entry) => entry.id === session.userId ? { ...entry, role: nextRole } : entry);
+        });
       } catch (error) {
-        // Silently fail - this is a background refresh, no need to notify user of errors
-        console.debug("[Permission Refresh] Error refreshing permissions:", error);
+        const message = error instanceof Error ? error.message : String(error);
+        if (message !== lastRefreshError) {
+          console.error("[Access Refresh] Unable to refresh role and permissions:", error);
+          lastRefreshError = message;
+        }
+      } finally {
+        refreshing = false;
+        if (refreshAgain && !cancelled) {
+          refreshAgain = false;
+          void refreshAccess();
+        }
       }
     };
 
-    // Refresh immediately on mount
-    void refreshPermissions();
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void refreshAccess(), 100);
+    };
 
-    // Then refresh every 5 minutes
-    const interval = setInterval(refreshPermissions, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [session?.companyId]);
+    const channel = supabase
+      .channel(`workspace-access:${session.companyId}:${session.userId}`)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "company_memberships",
+        filter: `user_id=eq.${session.userId}`,
+      }, scheduleRefresh)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "role_permissions",
+        filter: `role_id=eq.${session.roleId}`,
+      }, scheduleRefresh)
+      .subscribe((status, error) => {
+        if ((status === "CHANNEL_ERROR" || status === "TIMED_OUT") && !cancelled) {
+          console.error("[Access Refresh] Realtime subscription is unavailable; polling will continue.", error);
+        }
+      });
+
+    const interval = setInterval(() => void refreshAccess(), 30_000);
+    const handleFocus = () => void refreshAccess();
+    window.addEventListener("focus", handleFocus);
+    void refreshAccess();
+
+    return () => {
+      cancelled = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+      void supabase.removeChannel(channel);
+    };
+  }, [session?.companyId, session?.roleId, session?.userId]);
 
   // Keep URL path and document title in sync with the active view.
   // Uses pushState so the browser back button navigates between views.
@@ -1097,13 +1197,18 @@ export default function App() {
 
     switch (view) {
       case "dashboard":
-        return <Dashboard role={activeUser?.role ?? role} onNavigate={handleNavigate} />;
+        return <Dashboard
+          role={activeUser?.role ?? role}
+          companyId={session?.companyId ?? ""}
+          permissions={session?.permissions ?? []}
+          onNavigate={handleNavigate}
+        />;
       case "candidates":
         return <Candidates page="pipeline" onNavigate={handleNavigate} />;
       case "candidate-inquiries":
         return <Candidates page="inquiries" onNavigate={handleNavigate} />;
       case "documents":
-        return <CompanyDrive companyName={session?.companyName ?? ""} />;
+        return <CompanyDrive companyName={session?.companyName ?? ""} permissions={session?.permissions ?? []} />;
       case "users":
         return <UsersRoles companyId={session?.companyId ?? ""} currentUserId={session?.userId ?? ""} />;
       case "agents":

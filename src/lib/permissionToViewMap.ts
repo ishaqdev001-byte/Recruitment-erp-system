@@ -7,7 +7,7 @@
  * Format: permission_code → Set<View>
  */
 
-import type { View } from "../App";
+import type { View } from "../App"
 
 const medicalOnlyPermissions = new Set([
   "candidates.view",
@@ -17,52 +17,80 @@ const medicalOnlyPermissions = new Set([
   "medical_documents.view",
   "medical.view",
   "medical.update",
-]);
-const medicalAccessPermissions = new Set(["medical_documents.view", "medical.view", "medical.update"]);
+])
+const medicalAccessPermissions = new Set(["medical.view", "medical.update"])
 
 export function isMedicalOnlyUser(permissions: string[]): boolean {
-  const hasMedicalAccess = permissions.some((permission) => medicalAccessPermissions.has(permission));
-  if (!hasMedicalAccess) return false;
+  const hasMedicalAccess = permissions.some((permission) =>
+    medicalAccessPermissions.has(permission),
+  )
+  if (!hasMedicalAccess) return false
 
-  return permissions.every((permission) => medicalOnlyPermissions.has(permission));
+  return permissions.every((permission) =>
+    medicalOnlyPermissions.has(permission),
+  )
 }
 
 /**
  * Maps each permission code to the views it grants access to.
  * Used to determine which views a user can access based on their role's permissions.
  *
- * When a role has permission "candidates.view", the user gains access to:
- * - "candidates" (pipeline)
- * - "candidate-inquiries" (inquiries)
- * - potentially "documents" if combined with documents.view
+ * Candidate-document permissions remain scoped to candidate records; they do
+ * not grant access to the company-wide drive.
  */
 export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   // Candidates permissions
-  "candidates.view": new Set(["candidates", "candidate-inquiries", "medical-appointments"]),
-  "candidates.create": new Set(["candidates", "medical-appointments"]),
+  "candidates.view": new Set(["candidates", "candidate-inquiries"]),
+  "candidates.create": new Set(["candidates"]),
   "candidates.edit": new Set(["candidates"]),
   "candidates.delete": new Set(["candidates"]),
 
-  // Documents permissions
-  "documents.view": new Set(["documents", "drive"]),
-  "documents.upload": new Set(["documents", "drive"]),
-  "documents.download": new Set(["documents", "drive"]),
-  "documents.edit": new Set(["documents", "drive"]),
-  "documents.delete": new Set(["documents", "drive"]),
+  // Company Drive permissions. Candidate document permissions remain scoped to
+  // candidate records and must not grant access to the company-wide drive.
+  "drive.view": new Set(["documents", "drive"]),
+  "drive.finance.view": new Set(["documents", "drive"]),
 
   // Medical documents and examination permissions
-  "medical_documents.view": new Set(["medical-management"]),
-  "medical.view": new Set(["medical-management", "hospital-management"]),
-  "medical.update": new Set(["medical-management", "hospital-management"]),
+  "medical.view": new Set([
+    "medical-management",
+    "hospital-management",
+    "medical-appointments",
+  ]),
+  "medical.update": new Set([
+    "medical-management",
+    "hospital-management",
+    "medical-appointments",
+  ]),
 
   // Passport permissions
   "passport.view": new Set(["passport"]),
   "passport.edit": new Set(["passport"]),
 
   // Finance permissions
-  "finance.view": new Set(["finance", "accounts", "invoices", "payments", "paychecks", "reports"]),
-  "finance.create": new Set(["finance", "accounts", "invoices", "payments", "paychecks", "requisitions"]),
-  "finance.edit": new Set(["finance", "accounts", "invoices", "payments", "paychecks"]),
+  "finance.view": new Set([
+    "finance",
+    "accounts",
+    "invoices",
+    "payments",
+    "paychecks",
+    "reports",
+    "medical-appointments",
+  ]),
+  "finance.create": new Set([
+    "finance",
+    "accounts",
+    "invoices",
+    "payments",
+    "paychecks",
+    "requisitions",
+  ]),
+  "finance.edit": new Set([
+    "finance",
+    "accounts",
+    "invoices",
+    "payments",
+    "paychecks",
+  ]),
   "finance.approve": new Set(["finance", "approvals"]),
 
   // Users & Roles permissions
@@ -76,6 +104,8 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   // Tasks permissions
   "tasks.view": new Set(["tasks"]),
   "tasks.create": new Set(["tasks"]),
+  "tasks.edit": new Set(["tasks"]),
+  "tasks.delete": new Set(["tasks"]),
 
   // Communications permissions
   "communications.email.read": new Set(["communications"]),
@@ -83,6 +113,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "communications.sms.send": new Set(["communications"]),
   "communications.whatsapp.read": new Set(["communications"]),
   "communications.whatsapp.send": new Set(["communications"]),
+  "communications.whatsapp.manage": new Set(["communications"]),
 
   // Roles management
   "roles.manage": new Set(["users", "settings"]),
@@ -138,40 +169,42 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
 
   // AI
   "ai.view": new Set(["ai"]),
-};
+}
 
 /**
  * Returns the set of views that the given permissions grant access to.
  * Merges all views from all provided permissions.
  */
 export function viewsFromPermissions(permissions: string[]): Set<View> {
-  const allowedViews = new Set<View>();
+  const allowedViews = new Set<View>()
 
   if (isMedicalOnlyUser(permissions)) {
-    if (permissions.some((permission) => medicalAccessPermissions.has(permission))) {
-      allowedViews.add("medical-management");
+    if (
+      permissions.some((permission) => medicalAccessPermissions.has(permission))
+    ) {
+      allowedViews.add("medical-management")
     }
-    return allowedViews;
+    return allowedViews
   }
 
   for (const permCode of permissions) {
-    const views = PERMISSION_TO_VIEWS[permCode];
+    const views = PERMISSION_TO_VIEWS[permCode]
     if (views) {
-      views.forEach((view) => allowedViews.add(view));
+      views.forEach((view) => allowedViews.add(view))
     }
   }
 
   // Dashboard and HR self-service are available to all non-medical-only roles.
-  allowedViews.add("dashboard");
-  allowedViews.add("human-resources");
+  allowedViews.add("dashboard")
+  allowedViews.add("human-resources")
 
-  return allowedViews;
+  return allowedViews
 }
 
 /**
  * Returns true if the given view is accessible with the provided permissions.
  */
 export function canAccessView(view: View, permissions: string[]): boolean {
-  const allowedViews = viewsFromPermissions(permissions);
-  return allowedViews.has(view);
+  const allowedViews = viewsFromPermissions(permissions)
+  return allowedViews.has(view)
 }

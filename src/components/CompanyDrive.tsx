@@ -45,8 +45,11 @@ const initials = (value: string) => {
   return (words.length > 1 ? words.slice(0, 3).map((word) => word[0]).join("") : (words[0] ?? "CO").slice(0, 3)) || "CO";
 };
 
-export default function CompanyDrive({ companyName }: { companyName: string }) {
-  const [category, setCategory] = useState<DriveCategory>("shared");
+export default function CompanyDrive({ companyName, permissions: accessPermissions }: { companyName: string; permissions: string[] }) {
+  const canViewSharedDrive = accessPermissions.includes("drive.view");
+  const canViewFinanceDrive = accessPermissions.includes("drive.finance.view");
+  const canBrowseCandidateDocuments = accessPermissions.includes("candidates.view") && accessPermissions.includes("documents.view");
+  const [category, setCategory] = useState<DriveCategory>(canViewSharedDrive ? "shared" : "finance");
   const [browseSection, setBrowseSection] = useState<BrowseSection>("drive");
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([{ id: null, name: "All files" }]);
@@ -86,6 +89,19 @@ export default function CompanyDrive({ companyName }: { companyName: string }) {
   const [backupProgress, setBackupProgress] = useState<{ done: number; total: number } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (category === "shared" && !canViewSharedDrive && canViewFinanceDrive) {
+      setCategory("finance");
+    } else if (category === "finance" && !canViewFinanceDrive && canViewSharedDrive) {
+      setCategory("shared");
+    }
+    if (!canBrowseCandidateDocuments && browseSection !== "drive") {
+      setBrowseSection("drive");
+      setSelectedCandidate(null);
+      setCandidateDocuments([]);
+    }
+  }, [browseSection, canBrowseCandidateDocuments, canViewFinanceDrive, canViewSharedDrive, category]);
 
   useEffect(() => {
     let cancelled = false;
@@ -685,13 +701,13 @@ export default function CompanyDrive({ companyName }: { companyName: string }) {
             <HardDriveDownload size={18} aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <h1 id="document-mgt-title" className="text-xl font-700 tracking-tight" style={{ color: "var(--foreground)" }}>Document Mgt</h1>
+            <h1 id="document-mgt-title" className="text-xl font-700 tracking-tight" style={{ color: "var(--foreground)" }}>Company Drive</h1>
             <p className="mt-1 truncate text-xs" style={{ color: "var(--muted-foreground)" }}>{initials(companyName)} / {breadcrumbs.map((crumb) => crumb.name).join(" / ")}</p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {browseSection === "drive" && category === "shared" && (
+          {browseSection === "drive" && category === "shared" && canViewSharedDrive && (
             <>
               <button type="button" disabled={!permissions.canUpload || !personalFolder || saving} onClick={() => folderInput.current?.click()} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", background: "rgba(148,163,184,0.04)", color: "var(--foreground)" }}>
                 <FolderInput size={15} aria-hidden="true" />
@@ -703,7 +719,7 @@ export default function CompanyDrive({ companyName }: { companyName: string }) {
               </button>
             </>
           )}
-          {browseSection === "drive" && <>
+          {browseSection === "drive" && ((category === "shared" && canViewSharedDrive) || (category === "finance" && canViewFinanceDrive)) && <>
             <button type="button" disabled={!permissions.canUpload || loading || saving} onClick={() => setShowNewFolder(true)} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", background: "rgba(148,163,184,0.04)", color: "var(--foreground)" }}>
               <FolderPlus size={15} aria-hidden="true" />
               New folder
@@ -726,25 +742,25 @@ export default function CompanyDrive({ companyName }: { companyName: string }) {
               Quick access
             </div>
 
-            <button type="button" onClick={() => openQuickAccess("all-files")} className="flex w-auto shrink-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-600 md:w-full md:gap-2.5" style={{ background: browseSection === "drive" && category === "shared" && currentFolderId === null ? "rgba(59,130,246,0.12)" : "transparent", color: browseSection === "drive" && category === "shared" && currentFolderId === null ? "#60a5fa" : "var(--muted-foreground)" }}>
+            {canViewSharedDrive && <button type="button" onClick={() => openQuickAccess("all-files")} className="flex w-auto shrink-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-600 md:w-full md:gap-2.5" style={{ background: browseSection === "drive" && category === "shared" && currentFolderId === null ? "rgba(59,130,246,0.12)" : "transparent", color: browseSection === "drive" && category === "shared" && currentFolderId === null ? "#60a5fa" : "var(--muted-foreground)" }}>
               <Folder size={14} aria-hidden="true" />
               All files
-            </button>
-            {permissions.canViewFinance && (
+            </button>}
+            {permissions.canViewFinance && canViewFinanceDrive && (
               <button type="button" onClick={() => openQuickAccess("finance")} className="flex w-auto shrink-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-600 md:w-full md:gap-2.5" style={{ background: category === "finance" ? "rgba(59,130,246,0.12)" : "transparent", color: category === "finance" ? "#60a5fa" : "var(--muted-foreground)" }}>
                 <FilePlus2 size={15} aria-hidden="true" />
                 Finance
               </button>
             )}
-            <button type="button" onClick={() => openQuickAccess("candidates")} className="flex w-auto shrink-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-600 md:w-full md:gap-2.5" style={{ background: browseSection !== "drive" ? "rgba(59,130,246,0.12)" : "transparent", color: browseSection !== "drive" ? "#60a5fa" : "var(--muted-foreground)" }}>
+            {canBrowseCandidateDocuments && <button type="button" onClick={() => openQuickAccess("candidates")} className="flex w-auto shrink-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-600 md:w-full md:gap-2.5" style={{ background: browseSection !== "drive" ? "rgba(59,130,246,0.12)" : "transparent", color: browseSection !== "drive" ? "#60a5fa" : "var(--muted-foreground)" }}>
               <Users size={15} aria-hidden="true" />
               Candidates
-            </button>
-            {usersFolder && <button type="button" onClick={() => openQuickAccess("users")} className="flex w-auto shrink-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-600 md:w-full md:gap-2.5" style={{ background: currentFolderId === usersFolder.id && browseSection === "drive" ? "rgba(59,130,246,0.12)" : "transparent", color: currentFolderId === usersFolder.id && browseSection === "drive" ? "#60a5fa" : "var(--muted-foreground)" }}>
+            </button>}
+            {canViewSharedDrive && usersFolder && <button type="button" onClick={() => openQuickAccess("users")} className="flex w-auto shrink-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-600 md:w-full md:gap-2.5" style={{ background: currentFolderId === usersFolder.id && browseSection === "drive" ? "rgba(59,130,246,0.12)" : "transparent", color: currentFolderId === usersFolder.id && browseSection === "drive" ? "#60a5fa" : "var(--muted-foreground)" }}>
               <Users size={15} aria-hidden="true" />
               Users
             </button>}
-            {!isPrimaryCompanyUser && personalFolder && <button type="button" onClick={() => openQuickAccess("personal")} className="flex w-auto shrink-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-600 md:w-full md:gap-2.5" style={{ background: currentFolderId === personalFolder.id && browseSection === "drive" ? "rgba(59,130,246,0.12)" : "transparent", color: currentFolderId === personalFolder.id && browseSection === "drive" ? "#60a5fa" : "var(--muted-foreground)" }}>
+            {canViewSharedDrive && !isPrimaryCompanyUser && personalFolder && <button type="button" onClick={() => openQuickAccess("personal")} className="flex w-auto shrink-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-600 md:w-full md:gap-2.5" style={{ background: currentFolderId === personalFolder.id && browseSection === "drive" ? "rgba(59,130,246,0.12)" : "transparent", color: currentFolderId === personalFolder.id && browseSection === "drive" ? "#60a5fa" : "var(--muted-foreground)" }}>
               <Folder size={15} aria-hidden="true" />
               Personal vault
             </button>}

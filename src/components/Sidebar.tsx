@@ -78,7 +78,7 @@ const nav: NavItem[] = [
     ],
   },
   { type: "item",  id: "passport",       label: "Passport Custody",  icon: IdCard },
-  { type: "item",  id: "documents",      label: "Document Mgt",      icon: FileText },
+  { type: "item",  id: "documents",      label: "Company Drive",      icon: FileText },
   { type: "item",  id: "approvals",      label: "Approvals",          icon: CheckSquare },
   { type: "item",  id: "tasks",          label: "Tasks",             icon: ClipboardCheck },
   { type: "item",  id: "communications", label: "Communications",    icon: MessageSquareText },
@@ -96,7 +96,7 @@ const agentSupplierViews = new Set<View>(["agents", "suppliers"]);
 const workforceViews = new Set<View>(["human-resources", "attendance", "leave"]);
 const candidateViews = new Set<View>(["candidates", "candidate-inquiries", "medical-appointments", "medical-management"]);
 
-export default function Sidebar({ active, onNavigate, onPrefetch, role, userName, companyName, companyLogo, mobileOpen, onLogout, branchName, isMainBranchUser, permissions }: { active: View; onNavigate: (v: View) => void; onPrefetch: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void; branchName?: string; isMainBranchUser?: boolean; permissions?: string[] }) {
+export default function Sidebar({ active, onNavigate, onPrefetch, role, userName, companyName, companyLogo, mobileOpen, onLogout, branchName, isMainBranchUser, permissions }: { active: View; onNavigate: (v: View) => void; onPrefetch: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void; branchName?: string; isMainBranchUser?: boolean; permissions: string[] }) {
   const [openGroups, setOpenGroups] = useState({ agents: agentSupplierViews.has(active), finance: financeViews.has(active), employers: employerViews.has(active), workforce: workforceViews.has(active), candidates: candidateViews.has(active) });
 
   useEffect(() => {
@@ -140,7 +140,7 @@ export default function Sidebar({ active, onNavigate, onPrefetch, role, userName
         {nav.map((item, idx) => {
           // Check if this item is accessible based on permissions
           if (item.type === "item") {
-            if (permissions && !canAccessView(item.id, permissions)) {
+            if (!canAccessView(item.id, permissions)) {
               return null; // Skip this nav item
             }
             const Icon = item.icon;
@@ -164,7 +164,7 @@ export default function Sidebar({ active, onNavigate, onPrefetch, role, userName
           const groupViews = item.id === "finance" ? financeViews : item.id === "employers" ? employerViews : item.id === "workforce" ? workforceViews : item.id === "candidates" ? candidateViews : agentSupplierViews;
 
           // Filter children based on permissions
-          const allowedChildren = permissions ? item.children.filter((child) => canAccessView(child.id, permissions)) : item.children;
+          const allowedChildren = item.children.filter((child) => canAccessView(child.id, permissions));
 
           // Skip group entirely if no children are accessible
           if (allowedChildren.length === 0) {

@@ -68,53 +68,89 @@ export async function GET() {
     // Check if user has finance.view permission
     const { data: roleData, error: roleError } = await supabase
       .from("company_roles")
-      .select("permissions, name")
+      .select("name")
       .eq("id", membership.role_id)
       .single();
-    
-    const permissions = roleData?.permissions as Record<string, unknown> | null;
-    const canViewFinance = permissions && typeof permissions === "object" && permissions["finance.view"] === true;
-    
-    // Check if user is Chairman or General Manager for activity logs access
+    if (roleError || !roleData) {
+      return NextResponse.json({ error: "Unable to verify your company role." }, { status: 503, headers });
+    }
+
+    const [
+      { data: canViewFinance, error: financePermissionError },
+      { data: canEditCandidates, error: editPermissionError },
+      { data: canRegisterCandidates, error: registerPermissionError },
+      { data: canCreateCandidates, error: legacyCreatePermissionError },
+      { data: candidateScope, error: scopeError },
+      { data: canViewAgentFinance, error: agentFinancePermissionError },
+    ] = await Promise.all([
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "finance.view",
+      }),
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "candidates.edit",
+      }),
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "candidates.register",
+      }),
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "candidates.create",
+      }),
+      supabase.rpc("current_user_role_setting", {
+        requested_company_id: membership.company_id,
+        requested_setting: "candidate_scope",
+        fallback_value: "company",
+      }),
+      supabase.rpc("current_user_can_view_agent_finance", {
+        requested_company_id: membership.company_id,
+      }),
+    ]);
+    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || scopeError || agentFinancePermissionError) {
+      return NextResponse.json({ error: "Unable to verify candidate access." }, { status: 503, headers });
+    }
+    const { data: candidateRegistration, error: registrationSettingError } = await supabase.rpc(
+      "current_user_role_setting",
+      {
+        requested_company_id: membership.company_id,
+        requested_setting: "candidate_registration",
+        fallback_value: "true",
+      },
+    );
+    if (registrationSettingError) {
+      return NextResponse.json({ error: "Unable to verify candidate registration access." }, { status: 503, headers });
+    }
+
     const roleName = roleData?.name || "";
     const canViewActivityLogs = roleName.includes("Chairman") || roleName.includes("General Manager");
-    
-    // Check if user is an agent - agents see only their own candidates
-    const isAgent = roleName.toLowerCase().includes("agent");
-    
-    // Get user's company_users record to get their display name for agent filtering
-    let userDisplayName = "";
-    if (isAgent) {
-      const { data: companyUser, error: companyUserError } = await supabase
-        .from("company_users")
-        .select("first_name, last_name")
-        .eq("user_id", user.id)
-        .eq("company_id", membership.company_id)
-        .maybeSingle();
-      
-      if (!companyUserError && companyUser) {
-        userDisplayName = `${companyUser.first_name} ${companyUser.last_name}`.trim();
-      }
-    }
+    const isAgent = candidateScope === "assigned";
+    const canRegister = Boolean(canRegisterCandidates) && candidateRegistration === "true";
 
     let query = supabase
       .from("candidates")
-      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details, created_at, created_by")
+      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by")
       .eq("company_id", membership.company_id)
       .order("created_at", { ascending: false });
-    
-    // If user is agent, filter by their agent_name
-    if (isAgent && userDisplayName) {
-      query = query.eq("agent_name", userDisplayName);
-    }
-    
+
     const { data, error } = await query;
     if (error) {
       console.error("Candidate list query failed", error);
       return NextResponse.json({ error: "Unable to load candidates." }, { status: 403, headers });
     }
 
-    return NextResponse.json({ candidates: data, permissions: { canViewFinance, canViewActivityLogs, isAgent } }, { headers });
+    return NextResponse.json({
+      candidates: data,
+      permissions: {
+        canViewFinance: Boolean(canViewFinance),
+        canViewAgentFinance: Boolean(canViewAgentFinance),
+        canViewActivityLogs,
+        canEditCandidates: Boolean(canEditCandidates),
+        canRegisterCandidates: (Boolean(canRegisterCandidates) || Boolean(canCreateCandidates)) && canRegister,
+        isAgent,
+      },
+    }, { headers });
   } catch (error) {
     console.error("Candidate list request failed", error);
     return NextResponse.json({ error: "Candidate data is unavailable." }, { status: 503, headers });
@@ -158,11 +194,90 @@ export async function POST(request: Request) {
       .maybeSingle();
     if (membershipError || !membership) return NextResponse.json({ error: "Active company membership not found." }, { status: 403, headers });
 
+    const [
+      { data: canRegister, error: registerPermissionError },
+      { data: canCreate, error: legacyCreatePermissionError },
+      { data: registrationSetting, error: registrationSettingError },
+      { data: candidateScope, error: scopeError },
+    ] = await Promise.all([
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "candidates.register",
+      }),
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "candidates.create",
+      }),
+      supabase.rpc("current_user_role_setting", {
+        requested_company_id: membership.company_id,
+        requested_setting: "candidate_registration",
+        fallback_value: "true",
+      }),
+      supabase.rpc("current_user_role_setting", {
+        requested_company_id: membership.company_id,
+        requested_setting: "candidate_scope",
+        fallback_value: "company",
+      }),
+    ]);
+    if (registerPermissionError || legacyCreatePermissionError || registrationSettingError || scopeError) {
+      return NextResponse.json({ error: "Unable to verify candidate registration access." }, { status: 503, headers });
+    }
+    if (!(canRegister || canCreate) || registrationSetting !== "true") {
+      return NextResponse.json({ error: "You do not have permission to register candidates." }, { status: 403, headers });
+    }
+
+    let inquiryAgentUserId: string | null = null;
+    let inquiryCreatedBy: string | null = null;
     if (inquiryId) {
       const { data: inquiry, error: inquiryError } = await supabase.from("candidate_inquiries")
-        .select("id").eq("id", inquiryId).eq("company_id", membership.company_id).eq("status", "inquiry").maybeSingle();
+        .select("id, agent_user_id, created_by").eq("id", inquiryId).eq("company_id", membership.company_id).eq("status", "inquiry").maybeSingle();
       if (inquiryError || !inquiry) return NextResponse.json({ error: "This inquiry is no longer open for registration." }, { status: 409, headers });
+      inquiryAgentUserId = inquiry.agent_user_id;
+      inquiryCreatedBy = inquiry.created_by;
     }
+
+    const requestedAgentUserId = typeof body.agentUserId === "string" && body.agentUserId
+      ? body.agentUserId
+      : null;
+    if (requestedAgentUserId && !isUuid(requestedAgentUserId)) {
+      return NextResponse.json({ error: "The assigned agent is invalid." }, { status: 400, headers });
+    }
+
+    const { data: people, error: peopleError } = await supabase.rpc(
+      "list_candidate_inquiry_people",
+      { requested_company_id: membership.company_id },
+    );
+    if (peopleError) {
+      console.error("Candidate agent lookup failed", peopleError);
+      return NextResponse.json({ error: "Unable to verify the assigned agent." }, { status: 503, headers });
+    }
+    const agents = (people ?? []).filter((person: { role_name: string }) =>
+      person.role_name.toLocaleLowerCase().includes("agent"),
+    );
+    const requestedAgentName = typeof body.agent === "string" ? body.agent.trim() : "";
+    let assignedAgent = requestedAgentUserId
+      ? agents.find((person: { user_id: string }) => person.user_id === requestedAgentUserId)
+      : agents.find((person: { display_name: string }) =>
+        person.display_name.trim().toLocaleLowerCase() === requestedAgentName.toLocaleLowerCase(),
+      );
+    if (requestedAgentUserId && !assignedAgent) {
+      return NextResponse.json({ error: "Select an active agent in this company." }, { status: 400, headers });
+    }
+    if (candidateScope === "assigned") {
+      if (requestedAgentUserId && requestedAgentUserId !== user.id) {
+        return NextResponse.json({ error: "You can only assign candidates to your own agent account." }, { status: 403, headers });
+      }
+      assignedAgent = agents.find((person: { user_id: string }) => person.user_id === user.id);
+    } else if (!assignedAgent && inquiryAgentUserId) {
+      assignedAgent = agents.find((person: { user_id: string }) => person.user_id === inquiryAgentUserId);
+    } else if (!assignedAgent && inquiryCreatedBy === user.id) {
+      assignedAgent = agents.find((person: { user_id: string }) => person.user_id === user.id);
+    }
+    if (requestedAgentName && !assignedAgent && candidateScope !== "assigned") {
+      return NextResponse.json({ error: "Choose an active agent from the company roster." }, { status: 400, headers });
+    }
+    const agentUserId = assignedAgent?.user_id ?? null;
+    const agentName = assignedAgent?.display_name ?? requestedAgentName;
 
     const dateOfBirth = typeof body.dob === "string" && body.dob ? body.dob : null;
     if (dateOfBirth && (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth) || Number.isNaN(Date.parse(dateOfBirth)))) {
@@ -187,14 +302,15 @@ export async function POST(request: Request) {
       phone,
       date_of_birth: dateOfBirth,
       place_of_birth: typeof body.placeOfBirth === "string" ? body.placeOfBirth.trim() : "",
-      agent_name: typeof body.agent === "string" ? body.agent.trim() : "",
+      agent_name: agentName,
+      agent_user_id: agentUserId,
       religion: typeof body.religion === "string" ? body.religion.trim() : "",
       position: Array.isArray(body.jobOfInterest) ? body.jobOfInterest.join(", ") : "",
       nationality: typeof body.nationality === "string" ? body.nationality.trim() : "",
       father_name: typeof body.fatherName === "string" ? body.fatherName.trim() : "",
       mother_name: typeof body.motherName === "string" ? body.motherName.trim() : "",
       details,
-    }).select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details").single();
+    }).select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details").single();
 
     if (error || !data) {
       console.error("Candidate registration failed", error);

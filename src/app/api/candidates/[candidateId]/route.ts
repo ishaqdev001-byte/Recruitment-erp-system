@@ -60,6 +60,15 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Invalid candidate update." }, { status: 400, headers });
 
+    const { data: currentCandidate, error: currentCandidateError } = await supabase
+      .from("candidates")
+      .select("company_id, details")
+      .eq("id", candidateId)
+      .maybeSingle();
+    if (currentCandidateError || !currentCandidate) {
+      return NextResponse.json({ error: "Candidate not found." }, { status: 404, headers });
+    }
+
     const updates: Record<string, string | null | Record<string, string | number | string[]>> = {};
     for (const field of candidateFields) {
       if (!(field in body)) continue;
@@ -82,9 +91,6 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       const assignedAgent = typeof updates.agent_name === "string" ? updates.agent_name : "";
       const passportError = passportSetupError(details, assignedAgent);
       if (passportError) return NextResponse.json({ error: passportError }, { status: 400, headers });
-      const { data: currentCandidate, error: currentCandidateError } = await supabase.from("candidates")
-        .select("details").eq("id", candidateId).maybeSingle();
-      if (currentCandidateError || !currentCandidate) return NextResponse.json({ error: "Candidate not found." }, { status: 404, headers });
       const currentDetails = currentCandidate.details && typeof currentCandidate.details === "object" && !Array.isArray(currentCandidate.details)
         ? currentCandidate.details as Record<string, unknown>
         : {};
@@ -97,13 +103,37 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       }
       updates.details = details;
     }
+    if ("agentUserId" in body) {
+      const requestedAgentUserId = body.agentUserId === "" ? null : body.agentUserId;
+      if (requestedAgentUserId !== null && (typeof requestedAgentUserId !== "string" || !isUuid(requestedAgentUserId))) {
+        return NextResponse.json({ error: "The assigned agent is invalid." }, { status: 400, headers });
+      }
+      if (typeof requestedAgentUserId === "string") {
+        const { data: membership, error: membershipError } = await supabase
+          .from("company_memberships")
+          .select("user_id, role:company_roles!company_memberships_role_id_fkey(name)")
+          .eq("user_id", requestedAgentUserId)
+          .eq("company_id", currentCandidate.company_id)
+          .eq("status", "active")
+          .limit(1)
+          .maybeSingle();
+        const role = membership?.role as { name: string } | { name: string }[] | null;
+        const roleName = Array.isArray(role) ? role[0]?.name : role?.name;
+        if (membershipError || !membership || !roleName?.toLocaleLowerCase().includes("agent")) {
+          return NextResponse.json({ error: "Select an active agent in this company." }, { status: 400, headers });
+        }
+        updates.agent_user_id = requestedAgentUserId;
+      } else {
+        updates.agent_user_id = null;
+      }
+    }
     if (!Object.keys(updates).length) return NextResponse.json({ error: "Provide at least one candidate field to update." }, { status: 400, headers });
 
     const { data, error } = await supabase
       .from("candidates")
       .update(updates as never)
       .eq("id", candidateId)
-      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details")
+      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details")
       .maybeSingle();
     if (error || !data) {
       console.error("Candidate update failed", error);

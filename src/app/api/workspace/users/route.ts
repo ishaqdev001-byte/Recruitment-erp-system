@@ -3,6 +3,12 @@ import { createClient } from "@supabase/supabase-js"
 import { NextResponse } from "next/server"
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import {
+  isRecruitmentAgentRestrictedPermission,
+  isRecruitmentAgentRole,
+  isRoleAccessSettings,
+  roleAccessSettings,
+} from "@/lib/role-access-settings"
 
 export const runtime = "nodejs"
 
@@ -178,7 +184,7 @@ export async function GET() {
     ] = await Promise.all([
       admin
         .from("company_roles")
-        .select("id, name, description, is_system_default, created_at")
+        .select("id, name, description, is_system_default, created_at, access_settings")
         .eq("company_id", access.companyId)
         .order("name"),
 
@@ -279,6 +285,18 @@ export async function GET() {
         roleRecord.name,
       ]),
     )
+    const recruitmentAgentRoleIds = new Set(
+      (rolesResult.data ?? [])
+        .filter((roleRecord) => isRecruitmentAgentRole(roleRecord.name))
+        .map((roleRecord) => roleRecord.id),
+    )
+    const visibleRolePermissions = (rolePermissions ?? []).filter(
+      (rolePermission) =>
+        !recruitmentAgentRoleIds.has(rolePermission.role_id) ||
+        !isRecruitmentAgentRestrictedPermission(
+          rolePermission.permission_code,
+        ),
+    )
 
     const users = (membershipsResult.data ?? []).map((membership) => {
       const authUser = authUserById.get(membership.user_id)
@@ -332,7 +350,7 @@ export async function GET() {
 
         permissions: permissionsResult.data ?? [],
 
-        rolePermissions: rolePermissions ?? [],
+        rolePermissions: visibleRolePermissions,
 
         canManageRoles: access.canManageRoles,
 
@@ -710,6 +728,19 @@ export async function POST(request: Request) {
         )
       }
 
+      if (
+        isRecruitmentAgentRole(name) &&
+        requestedPermissions.some(isRecruitmentAgentRestrictedPermission)
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Recruitment Agent roles cannot be granted Human Resource, Company Drive, Approvals, Tasks, or Communications access.",
+          },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
       const { data: role, error: roleError } = await admin
 
         .from("company_roles")
@@ -721,7 +752,7 @@ export async function POST(request: Request) {
           is_system_default: false,
         })
 
-        .select("id, name, description, created_at")
+        .select("id, name, description, created_at, access_settings")
 
         .single()
 
@@ -807,7 +838,13 @@ export async function POST(request: Request) {
         )
       }
 
-      return NextResponse.json({ role, permissions: requestedPermissions }, {
+      return NextResponse.json({
+        role: {
+          ...role,
+          access_settings: roleAccessSettings(role.access_settings, role.name),
+        },
+        permissions: requestedPermissions,
+      }, {
         status: 201,
         headers: responseHeaders,
       })
@@ -830,6 +867,7 @@ export async function POST(request: Request) {
         typeof body.description === "string" ? body.description.trim() : ""
 
       const requestedPermissions = parseRequestedPermissions(body.permissions)
+      const requestedAccessSettings = body.accessSettings
 
       if (!roleId)
         return NextResponse.json({ error: "Select a role to update." }, {
@@ -855,13 +893,19 @@ export async function POST(request: Request) {
           { status: 400, headers: responseHeaders },
         )
 
+      if (!isRoleAccessSettings(requestedAccessSettings))
+        return NextResponse.json(
+          { error: "Provide valid role access settings." },
+          { status: 400, headers: responseHeaders },
+        )
+
       // Verify role belongs to this company and get its current state
 
       const { data: existingRole, error: existingRoleError } = await admin
 
         .from("company_roles")
 
-        .select("id, name, is_system_default")
+        .select("id, name, is_system_default, access_settings")
 
         .eq("id", roleId)
 
@@ -874,6 +918,29 @@ export async function POST(request: Request) {
           status: 404,
           headers: responseHeaders,
         })
+
+      if (
+        isRecruitmentAgentRole(existingRole.name) !==
+        isRecruitmentAgentRole(name)
+      ) {
+        return NextResponse.json(
+          { error: "The Recruitment Agent role name cannot be changed." },
+          { status: 403, headers: responseHeaders },
+        )
+      }
+
+      if (
+        isRecruitmentAgentRole(name) &&
+        requestedPermissions.some(isRecruitmentAgentRestrictedPermission)
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Recruitment Agent roles cannot be granted Human Resource, Company Drive, Approvals, Tasks, or Communications access.",
+          },
+          { status: 400, headers: responseHeaders },
+        )
+      }
 
       // The primary admin role name is immutable — protect it from rename
 
@@ -915,13 +982,17 @@ export async function POST(request: Request) {
 
         .from("company_roles")
 
-        .update({ name, description })
+        .update({
+          name,
+          description,
+          access_settings: requestedAccessSettings,
+        })
 
         .eq("id", roleId)
 
         .eq("company_id", access.companyId)
 
-        .select("id, name, description, is_system_default, created_at")
+        .select("id, name, description, is_system_default, created_at, access_settings")
 
         .single()
 
@@ -1001,7 +1072,16 @@ export async function POST(request: Request) {
       }
 
       return NextResponse.json(
-        { role: updatedRole, permissions: requestedPermissions },
+        {
+          role: {
+            ...updatedRole,
+            access_settings: roleAccessSettings(
+              updatedRole.access_settings,
+              updatedRole.name,
+            ),
+          },
+          permissions: requestedPermissions,
+        },
         { headers: responseHeaders },
       )
     }

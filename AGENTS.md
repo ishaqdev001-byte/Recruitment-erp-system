@@ -6,6 +6,8 @@ Next.js App Router application using React 19, TypeScript, and Tailwind CSS v4.
 
 Run `pnpm dev` to start the development server, `pnpm build` to create a production build, and `pnpm start` to serve it.
 
+For browser and closed-browser push alerts, apply `supabase/migrations/20261031123905_browser_push_notifications.sql` and `supabase/migrations/20261031131429_notification_push_cron_scheduler.sql`. Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, and `NOTIFICATION_DISPATCH_SECRET` only in the app server environment. In Supabase Vault, create secrets named `notification_app_base_url` (the HTTPS app origin) and `notification_dispatch_secret` (the same value as the app's `NOTIFICATION_DISPATCH_SECRET`). Supabase Cron then calls `/api/notifications/push/dispatch` every minute. Users opt in from the notification center; push subscriptions are scoped to the signed-in user and alerts are permission-filtered.
+
 ## Project Structure
 
 - `src/app/page.tsx` - App Router page

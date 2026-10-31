@@ -6,6 +6,13 @@
 
 import { useEffect, useState, type FormEvent } from "react"
 import { SearchableSelect } from "./SearchableSelect"
+import {
+  DEFAULT_ROLE_ACCESS_SETTINGS,
+  isRecruitmentAgentRestrictedPermission,
+  isRecruitmentAgentRole,
+  roleAccessSettings,
+  type RoleAccessSettings,
+} from "@/lib/role-access-settings"
 
 type UserRecord = {
   id: string
@@ -24,6 +31,7 @@ type RoleRecord = {
   description: string
   is_system_default: boolean
   created_at: string
+  access_settings?: RoleAccessSettings
 }
 type PermissionRecord = { code: string; description: string }
 type RolePermissionRecord = { role_id: string; permission_code: string }
@@ -286,6 +294,8 @@ export default function UsersRoles({
   const [roleEditName, setRoleEditName] = useState("")
   const [roleEditDescription, setRoleEditDescription] = useState("")
   const [roleEditPermissions, setRoleEditPermissions] = useState<string[]>([])
+  const [roleEditAccessSettings, setRoleEditAccessSettings] =
+    useState<RoleAccessSettings>(DEFAULT_ROLE_ACCESS_SETTINGS)
   const [showStaffForm, setShowStaffForm] = useState(false)
   const [editingStaffId, setEditingStaffId] = useState("")
   const [staffMembers, setStaffMembers] = useState<StaffRecord[]>([])
@@ -610,6 +620,7 @@ export default function UsersRoles({
     setRoleEditName(role.name)
     setRoleEditDescription(role.description)
     setRoleEditPermissions(permsForRole)
+    setRoleEditAccessSettings(roleAccessSettings(role.access_settings, role.name))
     setError("")
     setShowEditRole(true)
   }
@@ -630,6 +641,7 @@ export default function UsersRoles({
           name: roleEditName,
           description: roleEditDescription,
           permissions: roleEditPermissions,
+          accessSettings: roleEditAccessSettings,
         }),
       })
 
@@ -2246,7 +2258,16 @@ export default function UsersRoles({
                 />
               </div>
               <RolePermissionsEditor
-                permissions={data.permissions}
+                permissions={
+                  isRecruitmentAgentRole(roleName)
+                    ? data.permissions.filter(
+                        (permission) =>
+                          !isRecruitmentAgentRestrictedPermission(
+                            permission.code,
+                          ),
+                      )
+                    : data.permissions
+                }
                 selectedPermissions={selectedPermissions}
                 onChange={setSelectedPermissions}
               />
@@ -2405,8 +2426,74 @@ export default function UsersRoles({
               >
                 Only the permissions you select below will be assigned.
               </p>
+              <section className="space-y-3 rounded border p-4" style={{ borderColor: "var(--border)" }}>
+                <div>
+                  <h3 className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--foreground)" }}>
+                    Access settings
+                  </h3>
+                  <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                    These scope settings are enforced by the API and database policies.
+                  </p>
+                </div>
+                <label className="block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
+                  Candidate pipeline
+                  <select
+                    value={roleEditAccessSettings.candidate_scope}
+                    onChange={(event) => setRoleEditAccessSettings((current) => ({
+                      ...current,
+                      candidate_scope: event.target.value as RoleAccessSettings["candidate_scope"],
+                    }))}
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                    style={fieldStyle}
+                  >
+                    <option value="company">All candidates in accessible branches</option>
+                    <option value="assigned">Candidates assigned to this user only</option>
+                  </select>
+                </label>
+                <label className="block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
+                  Candidate inquiries
+                  <select
+                    value={roleEditAccessSettings.inquiry_scope}
+                    onChange={(event) => setRoleEditAccessSettings((current) => ({
+                      ...current,
+                      inquiry_scope: event.target.value as RoleAccessSettings["inquiry_scope"],
+                    }))}
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                    style={fieldStyle}
+                  >
+                    <option value="company">All inquiries in accessible branches</option>
+                    <option value="created">Inquiries created by this user only</option>
+                  </select>
+                </label>
+                {([
+                  ["candidate_registration", "Allow registering candidates from inquiries"],
+                  ["agent_visa_finance", "Allow agent-specific invoices and candidate receipts"],
+                ] as const).map(([key, label]) => (
+                  <label key={key} className="flex items-start gap-2 text-xs" style={{ color: "var(--foreground)" }}>
+                    <input
+                      type="checkbox"
+                      checked={roleEditAccessSettings[key]}
+                      onChange={(event) => setRoleEditAccessSettings((current) => ({
+                        ...current,
+                        [key]: event.target.checked,
+                      }))}
+                      className="mt-0.5"
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </section>
               <RolePermissionsEditor
-                permissions={data.permissions}
+                permissions={
+                  selectedRole && isRecruitmentAgentRole(selectedRole.name)
+                    ? data.permissions.filter(
+                        (permission) =>
+                          !isRecruitmentAgentRestrictedPermission(
+                            permission.code,
+                          ),
+                      )
+                    : data.permissions
+                }
                 selectedPermissions={roleEditPermissions}
                 onChange={setRoleEditPermissions}
               />

@@ -1,11 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import dynamic from "next/dynamic";
 import { Eye, EyeOff } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
-import { createSupabaseBrowserClient } from "./lib/supabase/browser";
+import {
+  createSupabaseBrowserClient,
+  createSupabasePasswordVerificationClient,
+} from "./lib/supabase/browser";
 import { canAccessView, isMedicalOnlyUser } from "./lib/permissionToViewMap";
+import {
+  isRecruitmentAgentRestrictedPermission,
+  isRecruitmentAgentRole,
+} from "./lib/role-access-settings";
 
 /** Kilax Smart Recruit logo — shown on all pre-auth screens. */
 function KilaxLogo({ size = 64 }: { size?: number }) {
@@ -40,6 +47,25 @@ const PageLoading = () => (
     Loading page…
   </div>
 );
+
+async function removeBrowserPushSubscription() {
+  if (!("serviceWorker" in navigator)) return;
+  const registration = await navigator.serviceWorker.getRegistration("/");
+  const subscription = await registration?.pushManager.getSubscription();
+  if (!subscription) return;
+
+  try {
+    const response = await fetch("/api/notifications/push", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint: subscription.endpoint }),
+    });
+    if (!response.ok) console.error("Unable to remove the signed-in user's push subscription.", response.status);
+  } finally {
+    await subscription.unsubscribe();
+  }
+}
+
 const Sidebar = dynamic(() => import("./components/Sidebar"), { loading: PageLoading });
 const TopBar = dynamic(() => import("./components/TopBar"), { loading: PageLoading });
 const Dashboard = dynamic(() => import("./components/LiveDashboard"), { loading: PageLoading });
@@ -48,6 +74,7 @@ const UsersRoles = dynamic(() => import("./components/UsersRoles"), { loading: P
 const Agents = dynamic(() => import("./components/Agents"), { loading: PageLoading });
 const Finance = dynamic(() => import("./components/Finance"), { loading: PageLoading });
 const Invoices = dynamic(() => import("./components/InvoiceWorkspace"), { loading: PageLoading });
+const AgentFinance = dynamic(() => import("./components/AgentFinanceWorkspace"), { loading: PageLoading });
 const Payments = dynamic(() => import("./components/Payments"), { loading: PageLoading });
 const Paychecks = dynamic(() => import("./components/Paychecks"), { loading: PageLoading });
 const AccountsWorkspace = dynamic(() => import("./components/AccountsWorkspace"), { loading: PageLoading });
@@ -81,6 +108,7 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
   finance: () => import("./components/Finance"),
   accounts: () => import("./components/AccountsWorkspace"),
   invoices: () => import("./components/InvoiceWorkspace"),
+  "agent-invoices": () => import("./components/AgentFinanceWorkspace"),
   payments: () => import("./components/Payments"),
   paychecks: () => import("./components/Paychecks"),
   contractors: () => import("./components/Employers"),
@@ -134,6 +162,7 @@ export type View =
   | "contractors"
   | "projects"
   | "invoices"
+  | "agent-invoices"
   | "tasks"
   | "communications"
   | "auditlog"
@@ -259,6 +288,8 @@ const formatInitials = (value: string) =>
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("") || "R";
 
+const IDLE_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+
 /** Convert a company name to a URL-safe slug, e.g. "Acme Corp Ltd" → "acme-corp-ltd" */
 const toCompanySlug = (name: string) =>
   name
@@ -320,7 +351,13 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     .eq("role_id", roleRecord.id)
     .eq("company_id", companyRecord.id);
   if (permsError) throw new Error("Unable to load your permissions.");
-  const permissions = (rolePerms ?? []).map((rp) => rp.permission_code);
+  const permissions = (rolePerms ?? [])
+    .map((rp) => rp.permission_code)
+    .filter(
+      (permission) =>
+        !isRecruitmentAgentRole(roleRecord.name) ||
+        !isRecruitmentAgentRestrictedPermission(permission),
+    );
 
   const knownRoles: WorkspaceRole[] = [
     "Chairman", "General Manager", "CEO",
@@ -449,6 +486,12 @@ export default function App() {
   const [forcedPasswordSaving, setForcedPasswordSaving] = useState(false);
   const [forcedPasswordError, setForcedPasswordError] = useState("");
   const [forcedShowPassword, setForcedShowPassword] = useState(false);
+  const [idleLocked, setIdleLocked] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState("");
+  const [unlockError, setUnlockError] = useState("");
+  const [unlockSaving, setUnlockSaving] = useState(false);
+  const idleLockedRef = useRef(false);
+  const lastActivityAt = useRef(Date.now());
 
   const handleNavigate = useCallback((nextView: View) => {
     if (session && !canAccessView(nextView, session.permissions)) return;
@@ -459,6 +502,74 @@ export default function App() {
     handleNavigate(nextView);
     setMobileNavOpen(false);
   }, [handleNavigate]);
+
+  useEffect(() => {
+    if (!session?.onboarded || mustChangePassword) return;
+
+    const lockStorageKey = `kilax.idle-locked:${session.userId}`;
+    if (window.sessionStorage.getItem(lockStorageKey) === "true") {
+      idleLockedRef.current = true;
+      setIdleLocked(true);
+      return;
+    }
+
+    idleLockedRef.current = false;
+    lastActivityAt.current = Date.now();
+    let timeoutId: number | undefined;
+
+    const checkIdleTime = () => {
+      const remaining =
+        IDLE_LOCK_TIMEOUT_MS - (Date.now() - lastActivityAt.current);
+      if (remaining <= 0) {
+        idleLockedRef.current = true;
+        window.sessionStorage.setItem(lockStorageKey, "true");
+        setUnlockPassword("");
+        setUnlockError("");
+        setIdleLocked(true);
+        return;
+      }
+
+      timeoutId = window.setTimeout(checkIdleTime, remaining);
+    };
+
+    const recordActivity = () => {
+      if (idleLockedRef.current) return;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      lastActivityAt.current = Date.now();
+      checkIdleTime();
+    };
+
+    const checkAfterVisibilityChange = () => {
+      if (document.hidden) return;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      checkIdleTime();
+    };
+
+    const activityEvents = [
+      "pointerdown",
+      "pointermove",
+      "keydown",
+      "touchstart",
+      "wheel",
+      "scroll",
+    ] as const;
+    for (const eventName of activityEvents) {
+      window.addEventListener(eventName, recordActivity, { passive: true });
+    }
+    document.addEventListener("visibilitychange", checkAfterVisibilityChange);
+    checkIdleTime();
+
+    return () => {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      for (const eventName of activityEvents) {
+        window.removeEventListener(eventName, recordActivity);
+      }
+      document.removeEventListener(
+        "visibilitychange",
+        checkAfterVisibilityChange,
+      );
+    };
+  }, [idleLocked, mustChangePassword, session?.onboarded, session?.userId]);
 
   useEffect(() => {
     for (const key of ["recruitos.companies", "recruitos.users", "recruitos.session"]) {
@@ -482,7 +593,7 @@ export default function App() {
       if (currentUrl.searchParams.get("view") === "communications") setView("communications");
       // Restore active view from the URL path on load / hard refresh.
       // Supports /view, /company-slug/view, and legacy ?v= / ?view= params.
-      const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
+      const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","agent-invoices","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
       // Handle both /view and /company-slug/view path formats
       const pathParts = currentUrl.pathname.replace(/^\//, "").split("/").filter(Boolean);
       const pathView = pathParts.length >= 2 ? pathParts[1] : pathParts[0] ?? "";
@@ -706,6 +817,9 @@ export default function App() {
     let lastRefreshError = "";
 
     const clearWorkspace = async () => {
+      await removeBrowserPushSubscription().catch((error: unknown) =>
+        console.error("[Access Refresh] Push subscription cleanup failed.", error),
+      );
       const { error } = await supabase.auth.signOut();
       if (error) console.error("[Access Refresh] Unable to sign out after company access was removed.", error);
       if (cancelled) return;
@@ -939,7 +1053,7 @@ export default function App() {
 
   // Handle browser back / forward buttons
   useEffect(() => {
-    const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
+    const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","agent-invoices","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
     const authViewSet = new Set<string>(["login","register","invite","reset-password"]);
     const onPopState = (event: PopStateEvent) => {
       const state = event.state as { view?: string; authView?: string; companySlug?: string } | null;
@@ -1175,10 +1289,83 @@ export default function App() {
     }
   };
 
+  const handleUnlockSession = async (event: FormEvent) => {
+    event.preventDefault();
+    setUnlockError("");
+    const email = activeUser?.email;
+    if (!session || !email || !unlockPassword) {
+      setUnlockError("Enter your password to continue.");
+      return;
+    }
+
+    setUnlockSaving(true);
+    try {
+      const verifier = createSupabasePasswordVerificationClient();
+      const { data: verification, error: verificationError } =
+        await verifier.auth.signInWithPassword({ email, password: unlockPassword });
+      if (verificationError) {
+        if (
+          verificationError.message
+            .toLowerCase()
+            .includes("invalid login credentials")
+        ) {
+          throw new Error("Incorrect password. Please try again.");
+        }
+        if (verificationError.status === 429) {
+          throw new Error("Too many attempts. Please wait before trying again.");
+        }
+        throw new Error("Unable to verify your password. Please try again.");
+      }
+      if (!verification.user || verification.user.id !== session.userId) {
+        throw new Error("Incorrect password. Please try again.");
+      }
+      if (!verification.session) {
+        throw new Error("Unable to restore your session. Please try again.");
+      }
+
+      const supabase = createSupabaseBrowserClient();
+      const { data: restoredSession, error: restoreError } =
+        await supabase.auth.setSession({
+          access_token: verification.session.access_token,
+          refresh_token: verification.session.refresh_token,
+        });
+      if (
+        restoreError ||
+        !restoredSession.user ||
+        restoredSession.user.id !== session.userId
+      ) {
+        throw new Error("Unable to restore your session. Please try again.");
+      }
+
+      window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`);
+      lastActivityAt.current = Date.now();
+      idleLockedRef.current = false;
+      setIdleLocked(false);
+      setUnlockPassword("");
+    } catch (error) {
+      setUnlockError(
+        error instanceof Error
+          ? error.message
+          : "Unable to verify your password. Please try again.",
+      );
+    } finally {
+      setUnlockSaving(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
+      await removeBrowserPushSubscription().catch((error: unknown) =>
+        console.error("Push subscription cleanup failed during sign-out.", error),
+      );
       await createSupabaseBrowserClient().auth.signOut();
     } finally {
+      if (session) {
+        window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`);
+      }
+      idleLockedRef.current = false;
+      setIdleLocked(false);
+      setUnlockPassword("");
       setCompanies([]);
       setUsers([]);
       setSession(null);
@@ -1200,13 +1387,22 @@ export default function App() {
         return <Dashboard
           role={activeUser?.role ?? role}
           companyId={session?.companyId ?? ""}
+          companyName={session?.companyName ?? ""}
           permissions={session?.permissions ?? []}
           onNavigate={handleNavigate}
         />;
       case "candidates":
-        return <Candidates page="pipeline" onNavigate={handleNavigate} />;
+        return <Candidates
+          page="pipeline"
+          companyName={session?.companyName ?? ""}
+          onNavigate={handleNavigate}
+        />;
       case "candidate-inquiries":
-        return <Candidates page="inquiries" onNavigate={handleNavigate} />;
+        return <Candidates
+          page="inquiries"
+          companyName={session?.companyName ?? ""}
+          onNavigate={handleNavigate}
+        />;
       case "documents":
         return <CompanyDrive companyName={session?.companyName ?? ""} permissions={session?.permissions ?? []} />;
       case "users":
@@ -1219,6 +1415,8 @@ export default function App() {
         return <AccountsWorkspace />;
       case "invoices":
         return <Invoices />;
+      case "agent-invoices":
+        return <AgentFinance />;
       case "payments":
         return <Payments onOpenInvoices={() => handleNavigate("invoices")} />;
       case "paychecks":
@@ -1333,6 +1531,7 @@ export default function App() {
 
   return (
     <div data-theme={theme} data-density={density} className="app-shell flex h-dvh min-h-0 w-full overflow-hidden" style={{ background: "var(--background)" }}>
+      <div className="contents" inert={idleLocked}>
       {mobileNavOpen && (
         <button
           type="button"
@@ -1361,6 +1560,7 @@ export default function App() {
           onMenuClick={() => setMobileNavOpen(true)}
           onNavigate={handleNavigate}
           role={activeUser?.role ?? role}
+          permissions={session.permissions}
           theme={theme}
           onThemeChange={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
           density={density}
@@ -1441,6 +1641,103 @@ export default function App() {
           {renderView()}
         </main>
       </div>
+      </div>
+      {idleLocked && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="idle-lock-title"
+          aria-describedby="idle-lock-description"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border p-8 shadow-2xl"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <div
+              className="text-xs uppercase tracking-[0.22em]"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Workspace locked
+            </div>
+            <h2
+              id="idle-lock-title"
+              className="mt-2 text-2xl font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Your session has expired
+            </h2>
+            <p
+              id="idle-lock-description"
+              className="mt-2 text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Your session has expired due to inactivity. Kindly enter your
+              password to continue.
+            </p>
+            <form onSubmit={handleUnlockSession} className="mt-6 space-y-4">
+              <label
+                className="block text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Email
+                <input
+                  type="email"
+                  autoComplete="username"
+                  value={activeUser?.email ?? ""}
+                  readOnly
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={{
+                    background: "var(--secondary)",
+                    borderColor: "var(--border)",
+                    color: "var(--foreground)",
+                  }}
+                />
+              </label>
+              <label
+                className="block text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Password
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  autoFocus
+                  required
+                  value={unlockPassword}
+                  onChange={(event) => setUnlockPassword(event.target.value)}
+                  disabled={unlockSaving}
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none disabled:opacity-50"
+                  style={{
+                    background: "var(--secondary)",
+                    borderColor: "var(--border)",
+                    color: "var(--foreground)",
+                  }}
+                />
+              </label>
+              {unlockError && (
+                <div
+                  role="alert"
+                  className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400"
+                >
+                  {unlockError}
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={unlockSaving || !unlockPassword}
+                className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                {unlockSaving ? "Verifying…" : "Continue to workspace"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

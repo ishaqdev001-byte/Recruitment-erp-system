@@ -17,6 +17,7 @@ const medicalOnlyPermissions = new Set([
   "medical_documents.view",
   "medical.view",
   "medical.update",
+  "human_resources.view",
 ])
 const medicalAccessPermissions = new Set(["medical.view", "medical.update"])
 
@@ -40,10 +41,14 @@ export function isMedicalOnlyUser(permissions: string[]): boolean {
  */
 export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   // Candidates permissions
-  "candidates.view": new Set(["candidates", "candidate-inquiries"]),
+  "candidates.view": new Set(["candidates"]),
   "candidates.create": new Set(["candidates"]),
+  "candidates.register": new Set(["candidates"]),
+  "candidate_inquiries.view": new Set(["candidate-inquiries"]),
+  "candidate_inquiries.create": new Set(["candidate-inquiries"]),
   "candidates.edit": new Set(["candidates"]),
   "candidates.delete": new Set(["candidates"]),
+  "human_resources.view": new Set(["human-resources"]),
 
   // Company Drive permissions. Candidate document permissions remain scoped to
   // candidate records and must not grant access to the company-wide drive.
@@ -76,6 +81,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
     "reports",
     "medical-appointments",
   ]),
+  "agent_finance.view": new Set(["agent-invoices"]),
   "finance.create": new Set([
     "finance",
     "accounts",
@@ -194,9 +200,8 @@ export function viewsFromPermissions(permissions: string[]): Set<View> {
     }
   }
 
-  // Dashboard and HR self-service are available to all non-medical-only roles.
+  // The dashboard is available to every non-medical-only role.
   allowedViews.add("dashboard")
-  allowedViews.add("human-resources")
 
   return allowedViews
 }

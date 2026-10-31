@@ -154,6 +154,30 @@ const candidateInquiryMultipleJobsMigration = await readFile(
   "utf8",
 )
 
+const recruitmentAgentAccessControlsMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261030064119_recruitment_agent_access_controls.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const recruitmentAgentWorkforceAccessMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261030081806_restrict_recruitment_agent_workforce_access.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const recruitmentAgentFinanceNavigationMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261031113749_restrict_recruitment_agent_finance_navigation.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const medicalAppointmentsAndOtherIncomeMigration = await readFile(
   new URL(
     "../supabase/migrations/202610170003_medical_appointments_and_other_income.sql",
@@ -449,7 +473,14 @@ const projectSubmissionCountsMigration = await readFile(
     "../supabase/migrations/202610150001_project_submission_counts.sql",
     import.meta.url,
   ),
+  "utf8",
+)
 
+const browserPushNotificationsMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261031123905_browser_push_notifications.sql",
+    import.meta.url,
+  ),
   "utf8",
 )
 
@@ -466,6 +497,8 @@ const companyD = "10000000-0000-4000-8000-000000000004"
 const userA = "20000000-0000-4000-8000-000000000001"
 
 const userB = "20000000-0000-4000-8000-000000000002"
+
+const recruitmentAgentUser = "20000000-0000-4000-8000-000000000007"
 
 const userC = "20000000-0000-4000-8000-000000000003"
 
@@ -638,8 +671,45 @@ try {
   await database.exec(companyRootFolderAccessMigration)
 
   await database.exec(googleTasksMigration)
-
   await database.exec(smsugCommunicationsMigration)
+
+  await database.exec(`
+    create table public.requisition_notifications (
+      id uuid primary key default gen_random_uuid(),
+      company_id uuid not null references public.companies (id) on delete cascade,
+      recipient_id uuid not null references auth.users (id) on delete cascade,
+      title text not null,
+      body text not null,
+      is_read boolean not null default false,
+      created_at timestamptz not null default now()
+    )
+  `)
+  await database.exec(browserPushNotificationsMigration)
+
+  const pushSubscriptionsRls = await database.query(`
+    select relrowsecurity
+    from pg_class
+    where oid = 'public.notification_push_subscriptions'::regclass
+  `)
+  assert.equal(pushSubscriptionsRls.rows[0]?.relrowsecurity, true)
+
+  const pushSubscriptionPrivileges = await database.query(`
+    select
+      has_table_privilege('authenticated', 'public.notification_push_subscriptions', 'select') as authenticated_can_read,
+      has_table_privilege('service_role', 'public.notification_push_subscriptions', 'select') as service_role_can_read
+  `)
+  assert.equal(pushSubscriptionPrivileges.rows[0]?.authenticated_can_read, false)
+  assert.equal(pushSubscriptionPrivileges.rows[0]?.service_role_can_read, true)
+
+  const pushDeliveryFunction = await database.query(`
+    select
+      to_regprocedure('public.claim_notification_push_delivery(uuid,uuid,text,uuid)') is not null as exists,
+      has_function_privilege('authenticated', 'public.claim_notification_push_delivery(uuid,uuid,text,uuid)', 'execute') as authenticated_can_execute,
+      has_function_privilege('service_role', 'public.claim_notification_push_delivery(uuid,uuid,text,uuid)', 'execute') as service_role_can_execute
+  `)
+  assert.equal(pushDeliveryFunction.rows[0]?.exists, true)
+  assert.equal(pushDeliveryFunction.rows[0]?.authenticated_can_execute, false)
+  assert.equal(pushDeliveryFunction.rows[0]?.service_role_can_execute, true)
 
   await database.exec(mailConnectionsMigration)
 
@@ -755,6 +825,27 @@ try {
   await database.exec(projectChargesMigration)
 
   await database.exec(projectChargesMigration)
+
+  await database.exec(`
+    alter table public.candidates add column if not exists branch_id uuid;
+    alter table public.candidate_inquiries add column if not exists branch_id uuid;
+    create or replace function public.current_user_can_see_branch(requested_company_id uuid, requested_branch_id uuid)
+      returns boolean language sql stable as $$ select true $$;
+    create or replace function public.can_access_candidate_document(requested_company_id uuid, requested_document_type text, requested_action text, requested_candidate_id uuid)
+      returns boolean language sql stable as $$ select true $$;
+  `)
+
+  await database.exec(recruitmentAgentAccessControlsMigration)
+
+  await database.exec(recruitmentAgentAccessControlsMigration)
+
+  await database.exec(recruitmentAgentWorkforceAccessMigration)
+
+  await database.exec(recruitmentAgentWorkforceAccessMigration)
+
+  await database.exec(recruitmentAgentFinanceNavigationMigration)
+
+  await database.exec(recruitmentAgentFinanceNavigationMigration)
 
   const legacyProjectAccount = await database.query(
     "select account_id from public.projects where id = $1",
@@ -941,6 +1032,7 @@ try {
       "drive.view",
       "finance.create",
       "finance.view",
+      "human_resources.view",
       "leave.create",
       "tasks.create",
       "tasks.edit",
@@ -1114,7 +1206,7 @@ try {
   assert.equal(seededPassports.rows[0].count, 17)
 
   await database.exec(`
-    insert into auth.users (id) values ('${userB}'), ('${userD}'), ('${userE}');
+    insert into auth.users (id) values ('${userB}'), ('${userD}'), ('${userE}'), ('${recruitmentAgentUser}');
     insert into public.companies (id, name) values
       ('${companyA}', 'Company A'), ('${companyB}', 'Company B');
     insert into public.company_roles (id, company_id, name) values
@@ -1123,6 +1215,10 @@ try {
     insert into public.company_memberships (company_id, user_id, role_id) values
       ('${companyA}', '${userA}', '${roleA}'),
       ('${companyA}', '${userB}', '${statusRole}');
+    insert into public.company_memberships (company_id, user_id, role_id)
+      select '${companyA}', '${recruitmentAgentUser}', id
+      from public.company_roles
+      where company_id = '${companyA}' and name = 'Recruitment Agent';
     insert into public.company_memberships (company_id, user_id, role_id)
       select '${companyA}', '${userD}', id from public.company_roles where company_id = '${companyA}' and name = 'General Manager';
     insert into public.company_memberships (company_id, user_id, role_id)
@@ -1163,6 +1259,9 @@ try {
     insert into public.candidates (id, company_id, file_number, first_name, last_name) values
       ('${candidateA}', '${companyA}', 'A-001', 'Candidate', 'A'),
       ('${candidateB}', '${companyB}', 'B-001', 'Candidate', 'B');
+    update public.candidates
+      set agent_user_id = '${recruitmentAgentUser}', agent_name = 'Recruitment Agent'
+      where id = '${candidateA}';
     insert into public.candidate_documents (
       id, company_id, candidate_id, file_name, original_file_name, file_type,
       mime_type, file_size, storage_path, document_type, uploaded_by
@@ -1173,6 +1272,103 @@ try {
         'application/pdf', 100, 'company/${companyA}/candidates/${candidateA}/medical/60000000-0000-4000-8000-000000000002.pdf', 'medical', '${userA}');
   `)
 
+  const seededAgentRole = await database.query(
+    "select id, access_settings from public.company_roles where company_id = $1 and name = 'Recruitment Agent'",
+    [companyA],
+  )
+  assert.deepEqual(seededAgentRole.rows[0].access_settings, {
+    candidate_scope: "assigned",
+    inquiry_scope: "created",
+    candidate_registration: false,
+    agent_visa_finance: true,
+  })
+
+  const seededAgentPermissions = await database.query(
+    "select permission_code from public.role_permissions where role_id = $1 order by permission_code",
+    [seededAgentRole.rows[0].id],
+  )
+  const agentPermissionCodes = seededAgentPermissions.rows.map((row) => row.permission_code)
+  assert.ok(agentPermissionCodes.includes("candidate_inquiries.create"))
+  assert.ok(agentPermissionCodes.includes("agent_finance.view"))
+  assert.ok(!agentPermissionCodes.some((permission) =>
+    permission.startsWith("tasks.") ||
+    permission.startsWith("approvals.") ||
+    permission.startsWith("communications.") ||
+    permission.startsWith("drive.") ||
+    permission.startsWith("finance.") ||
+    permission.startsWith("requisitions.") ||
+    permission === "human_resources.view" ||
+    permission === "candidates.create" ||
+    permission === "candidates.edit",
+  ))
+
+  await database.query(
+    `insert into public.role_permissions (role_id, company_id, permission_code)
+      select $1, $2, code
+      from public.permissions
+      where code in (
+        'human_resources.view',
+        'drive.view',
+        'tasks.view',
+        'approvals.view',
+        'communications.email.read',
+        'attendance.view',
+        'leave.view',
+        'finance.approve',
+        'finance.view',
+        'finance.create',
+        'requisitions.create'
+      )
+      on conflict (role_id, permission_code) do nothing`,
+    [seededAgentRole.rows[0].id, companyA],
+  )
+
+  await database.exec("set role authenticated")
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [recruitmentAgentUser],
+  )
+  const restrictedAgentModulePermissions = await database.query(
+    `select code
+      from public.permissions
+      where code in (
+        'human_resources.view',
+        'drive.view',
+        'tasks.view',
+        'approvals.view',
+        'communications.email.read',
+        'attendance.view',
+        'leave.view',
+        'finance.approve',
+        'finance.view',
+        'finance.create',
+        'requisitions.create'
+      )
+      and public.current_user_has_company_permission($1, code)
+      order by code`,
+    [companyA],
+  )
+  assert.deepEqual(restrictedAgentModulePermissions.rows, [])
+
+  const agentVisibleCandidates = await database.query(
+    "select id from public.candidates where company_id = $1 order by id",
+    [companyA],
+  )
+  assert.deepEqual(agentVisibleCandidates.rows, [{ id: candidateA }])
+  const agentVisibleDocuments = await database.query(
+    "select document_type from public.candidate_documents where company_id = $1 order by document_type",
+    [companyA],
+  )
+  assert.deepEqual(agentVisibleDocuments.rows, [{ document_type: "cv" }])
+  await assert.rejects(
+    database.query(
+      "insert into public.candidates (company_id, file_number, first_name, last_name, created_by, agent_user_id) values ($1, 'A-AGENT-01', 'Agent', 'Registration', $2, $2)",
+      [companyA, recruitmentAgentUser],
+    ),
+    /row-level security|permission denied/,
+  )
+
+  await database.exec("reset role; set role authenticated")
   await database.exec("reset role; set role authenticated")
 
   await database.query(
@@ -1492,6 +1688,16 @@ try {
 
     /row-level security|permission denied/,
   )
+
+  await database.exec("reset role; set role service_role")
+  await database.exec(`
+    insert into public.role_permissions (role_id, company_id, permission_code) values
+      ('${roleA}', '${companyA}', 'medical_documents.view'),
+      ('${statusRole}', '${companyA}', 'documents.view'),
+      ('${statusRole}', '${companyA}', 'medical_documents.view'),
+      ('${statusRole}', '${companyA}', 'documents.edit');
+  `)
+  await database.exec("reset role; set role authenticated")
 
   await database.query(
     "select set_config('request.jwt.claim.sub', $1, false)",
@@ -1818,6 +2024,8 @@ try {
     { employee_id: userD, status: "absent" },
 
     { employee_id: userE, status: "absent" },
+
+    { employee_id: recruitmentAgentUser, status: "absent" },
   ])
 
   await database.exec("reset role")
@@ -2174,7 +2382,7 @@ try {
       tracking_number: 1,
       candidate_name: "Candidate A",
       file_number: "A-001",
-      agent_name: "",
+      agent_name: "Recruitment Agent",
       company_name: "Company A",
     },
   ])
@@ -2516,7 +2724,7 @@ try {
 
   assert.deepEqual(
     recipientOptions.rows.map((recipient) => recipient.recipient_type),
-    ["candidate", "candidate", "contractor", "supplier"],
+    ["agent", "candidate", "candidate", "contractor", "supplier"],
   )
 
   const createdInvoice = await database.query(
@@ -2922,7 +3130,8 @@ try {
   await database.exec(`
     insert into public.role_permissions (role_id, company_id, permission_code) values
       ('${roleA}', '${companyA}', 'medical_documents.view'),
-      ('${roleA}', '${companyA}', 'documents.edit');
+      ('${roleA}', '${companyA}', 'documents.edit')
+    on conflict (role_id, permission_code) do nothing;
   `)
 
   await database.exec("set role authenticated")

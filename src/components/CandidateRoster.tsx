@@ -14,6 +14,7 @@ interface CandidateRecord {
   date_of_birth: string | null;
   place_of_birth: string;
   agent_name: string;
+  agent_user_id?: string | null;
   religion: string;
   position: string;
   nationality: string;
@@ -91,6 +92,7 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
     abroadExperience: text("abroadExperience"),
     source: text("source"),
     agent: record.agent_name,
+    agentUserId: record.agent_user_id ?? undefined,
     mediaChannel: list("mediaChannel"),
     nin: text("nin"),
     passportNumber,
@@ -153,7 +155,7 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
 function newCandidate(): Candidate {
   return candidateFromRecord({
     id: crypto.randomUUID(), source_row_number: null, file_number: "", first_name: "", last_name: "", phone: "",
-    date_of_birth: null, place_of_birth: "", agent_name: "", religion: "", position: "", nationality: "",
+    date_of_birth: null, place_of_birth: "", agent_name: "", agent_user_id: null, religion: "", position: "", nationality: "",
     father_name: "", mother_name: "", details: {},
   });
 }
@@ -202,6 +204,7 @@ function candidateFromInquiry(inquiry: InquiryRecord): Candidate {
     date_of_birth: null,
     place_of_birth: "",
     agent_name: inquiry.agent_name,
+    agent_user_id: inquiry.agent_user_id,
     religion: "",
     position: inquiry.job_of_interest.join(", "),
     nationality: "",
@@ -224,11 +227,27 @@ function candidateFromInquiry(inquiry: InquiryRecord): Candidate {
   });
 }
 
-export default function CandidateRoster({ page, onNavigate }: { page: "inquiries" | "pipeline"; onNavigate: (view: "candidates") => void }) {
+export default function CandidateRoster({
+  page,
+  companyName,
+  onNavigate,
+}: {
+  page: "inquiries" | "pipeline";
+  companyName: string;
+  onNavigate: (view: "candidates" | "candidate-inquiries") => void;
+}) {
   const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
   const [canViewFinance, setCanViewFinance] = useState(false);
   const [canViewActivityLogs, setCanViewActivityLogs] = useState(false);
-  const [permissions, setPermissions] = useState<{ canViewFinance?: boolean; canViewActivityLogs?: boolean; isAgent?: boolean; canViewActivityByRole?: boolean }>({});
+  const [permissions, setPermissions] = useState<{
+    canViewFinance?: boolean;
+    canViewAgentFinance?: boolean;
+    canViewActivityLogs?: boolean;
+    canEditCandidates?: boolean;
+    canRegisterCandidates?: boolean;
+    isAgent?: boolean;
+    canViewActivityByRole?: boolean;
+  }>({});
   const activePage = page;
   const [inquiries, setInquiries] = useState<InquiryRecord[]>([]);
   const [inquiryPeople, setInquiryPeople] = useState<InquiryPerson[]>([]);
@@ -315,6 +334,7 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
 
   useEffect(() => {
     let cancelled = false;
+    if (!permissions.canEditCandidates || activePage !== "pipeline") return;
     fetch("/api/projects", { cache: "no-store" })
       .then(async (response) => {
         const payload = await response.json() as { projects?: ProjectOption[]; error?: string };
@@ -328,7 +348,7 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
         if (!cancelled) setProjectLoadError("Unable to load active projects.");
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [activePage, permissions.canEditCandidates]);
 
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = candidates.filter((candidate) =>
@@ -521,8 +541,12 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
   const saveCandidate = async (form: Candidate) => {
     const {
       id, fileNumber, firstName, lastName, phone, dob, placeOfBirth, agent, religion,
-      nationality, fatherName, motherName, jobOfInterest, ...details
+      agentUserId, nationality, fatherName, motherName, jobOfInterest, ...details
     } = form;
+    const selectedAgentUserId = inquiryPeople.find((person) =>
+      person.role_name.toLocaleLowerCase().includes("agent") &&
+      person.display_name.trim().toLocaleLowerCase() === agent.trim().toLocaleLowerCase(),
+    )?.user_id ?? agentUserId ?? "";
     const requestBody = {
       fileNumber,
       firstName,
@@ -531,6 +555,7 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
       dob: dob || null,
       placeOfBirth,
       agent,
+      agentUserId: selectedAgentUserId,
       religion,
       nationality: nationality ?? "",
       fatherName,
@@ -603,8 +628,8 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
             className="w-full max-w-sm border px-3 py-2 text-sm outline-none"
             style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
           />
-          {activePage === "pipeline" ? <button type="button" onClick={() => { setRegistrationInquiryId(null); setEditingCandidate(newCandidate()); setIsNewCandidate(true); }} className="inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><UserPlus size={16} aria-hidden="true" /> Register Candidate</button>
-            : <button type="button" onClick={() => { setInquiryError(""); setInquiryNotice(""); setInquiryDraft(emptyInquiryDraft()); setShowInquiryForm(true); }} className="inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><UserPlus size={16} aria-hidden="true" /> Add Inquiry</button>}
+          {activePage === "pipeline" ? permissions.canRegisterCandidates && <button type="button" onClick={() => { setRegistrationInquiryId(null); setEditingCandidate(newCandidate()); setIsNewCandidate(true); }} className="inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><UserPlus size={16} aria-hidden="true" /> Register Candidate</button>
+            : <button type="button" onClick={() => { setInquiryError(""); setInquiryNotice(""); setInquiryDraft(emptyInquiryDraft()); setShowInquiryForm(true); }} className="inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><UserPlus size={16} aria-hidden="true" /> Register Candidate Inquiry</button>}
         </div>
       </header>
 
@@ -612,7 +637,7 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
         <table className="w-full min-w-260 text-sm">
           <thead className="sticky top-0" style={{ background: "var(--card)" }}>
             <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
-              <th className="px-3 py-3"><input type="checkbox" aria-label="Select all visible candidates" checked={allFilteredSelected} onChange={toggleFiltered} className="h-4 w-4 accent-amber-700" /></th>
+              <th className="px-3 py-3">{permissions.canEditCandidates && <input type="checkbox" aria-label="Select all visible candidates" checked={allFilteredSelected} onChange={toggleFiltered} className="h-4 w-4 accent-amber-700" />}</th>
               {["S/N", "File No.", "Candidate Name", "Agent", "Mobile", "Passport", "Project", "Stage"].map((heading) => (
                 <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase" style={{ color: "var(--muted-foreground)" }}>{heading}</th>
               ))}
@@ -623,11 +648,42 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
             {loading && <tr><td colSpan={10} className="px-4 py-10 text-center" style={{ color: "var(--muted-foreground)" }}>Loading company records…</td></tr>}
             {error && <tr><td colSpan={10} role="alert" className="px-4 py-10 text-center" style={{ color: "#ef4444" }}>{error}</td></tr>}
             {!loading && !error && filtered.length === 0 && (
-              <tr><td colSpan={10} className="px-4 py-10 text-center" style={{ color: "var(--muted-foreground)" }}>{candidates.length ? "No matching candidates." : "No candidate records found for this company."}</td></tr>
+              <tr>
+                <td
+                  colSpan={10}
+                  className="px-4 py-10 text-center"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  {candidates.length
+                    ? "No matching candidates."
+                    : permissions.isAgent
+                      ? (
+                          <div className="mx-auto max-w-xl">
+                            <p>
+                              Sorry, you currently have no candidates at{" "}
+                              {companyName || "your company"}. Kindly register your candidates at
+                              our office under Inquiries.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => onNavigate("candidate-inquiries")}
+                              className="mt-3 rounded px-4 py-2 text-sm font-600"
+                              style={{
+                                background: "var(--primary)",
+                                color: "var(--primary-foreground)",
+                              }}
+                            >
+                              Open Inquiries
+                            </button>
+                          </div>
+                        )
+                      : "No candidate records found for this company."}
+                </td>
+              </tr>
             )}
             {filtered.map((candidate) => (
               <tr key={candidate.id} className="border-b" style={{ borderColor: "var(--border)", background: selectedIds.includes(candidate.id) ? "color-mix(in srgb, var(--primary) 8%, var(--card))" : "transparent", color: "var(--foreground)" }}>
-                <td className="px-3 py-2"><div className="flex items-center gap-1"><input type="checkbox" aria-label={`Select ${candidate.first_name} ${candidate.last_name}`} checked={selectedIds.includes(candidate.id)} onChange={() => toggleCandidate(candidate.id)} className="h-4 w-4 accent-amber-700" /><button type="button" onClick={() => setDrawerCandidate(candidate)} aria-label={`View attachments for ${candidate.first_name} ${candidate.last_name}`} title="View attachments" className="flex h-7 w-7 items-center justify-center rounded hover:bg-secondary" style={{ color: "var(--primary)" }}><Paperclip size={15} aria-hidden="true" /></button><button type="button" onClick={() => openStageUpdate(candidate.id)} aria-label={`Advance stage for ${candidate.first_name} ${candidate.last_name}`} title="Advance candidate stage" className="flex h-7 w-7 items-center justify-center rounded hover:bg-secondary" style={{ color: "var(--foreground)" }}><RefreshCw size={14} aria-hidden="true" /></button></div></td>
+                <td className="px-3 py-2"><div className="flex items-center gap-1">{permissions.canEditCandidates && <input type="checkbox" aria-label={`Select ${candidate.first_name} ${candidate.last_name}`} checked={selectedIds.includes(candidate.id)} onChange={() => toggleCandidate(candidate.id)} className="h-4 w-4 accent-amber-700" />}<button type="button" onClick={() => setDrawerCandidate(candidate)} aria-label={`View attachments for ${candidate.first_name} ${candidate.last_name}`} title="View attachments" className="flex h-7 w-7 items-center justify-center rounded hover:bg-secondary" style={{ color: "var(--primary)" }}><Paperclip size={15} aria-hidden="true" /></button>{permissions.canEditCandidates && <button type="button" onClick={() => openStageUpdate(candidate.id)} aria-label={`Advance stage for ${candidate.first_name} ${candidate.last_name}`} title="Advance candidate stage" className="flex h-7 w-7 items-center justify-center rounded hover:bg-secondary" style={{ color: "var(--foreground)" }}><RefreshCw size={14} aria-hidden="true" /></button>}</div></td>
                 <td className="px-3 py-2 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{candidate.source_row_number ?? "—"}</td>
                 <td className="px-3 py-2 mono text-xs" title={candidate.file_number}>{candidate.file_number ? `${candidate.file_number[0]}...${candidate.file_number.slice(-3)}` : "—"}</td>
                 <td className="whitespace-nowrap px-3 py-2 font-600">{candidate.first_name} {candidate.last_name}</td>
@@ -636,7 +692,7 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
                 <td className="px-3 py-2">{typeof candidate.details?.passportStatus === "string" && candidate.details.passportStatus ? candidate.details.passportStatus : candidate.details?.passportNumber ? "On file" : "—"}</td>
                 <td className="px-3 py-2">{typeof candidate.details?.contracts === "string" && candidate.details.contracts ? candidate.details.contracts : typeof candidate.details?.assignedContracts === "string" && candidate.details.assignedContracts ? candidate.details.assignedContracts : "—"}</td>
                 <td className="px-3 py-2">{typeof candidate.details?.stage === "string" && candidate.details.stage ? candidate.details.stage : "Registration"}</td>
-                <td className="px-3 py-2 text-right"><button type="button" onClick={() => { setEditingCandidate(candidateFromRecord(candidate)); setIsNewCandidate(false); }} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--card)" }}><Pencil size={14} aria-hidden="true" /> Edit</button></td>
+                <td className="px-3 py-2 text-right">{permissions.canEditCandidates && <button type="button" onClick={() => { setEditingCandidate(candidateFromRecord(candidate)); setIsNewCandidate(false); }} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--card)" }}><Pencil size={14} aria-hidden="true" /> Edit</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -664,7 +720,7 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
                 <td className="px-3 py-3 capitalize" style={{ color: "var(--foreground)" }}>{inquiry.communication_method}</td>
                 <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{inquiry.handled_by_name}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{new Date(inquiry.created_at).toLocaleDateString()}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-right"><button type="button" onClick={() => registerFromInquiry(inquiry)} className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><ArrowRight size={14} aria-hidden="true" />Register</button></td>
+                <td className="whitespace-nowrap px-3 py-3 text-right">{permissions.canRegisterCandidates && <button type="button" onClick={() => registerFromInquiry(inquiry)} className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><ArrowRight size={14} aria-hidden="true" />Complete Registration</button>}</td>
               </tr>)}
             </tbody>
           </table>
@@ -673,7 +729,7 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
       {showInquiryForm && activePage === "inquiries" && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeInquiryForm(); }}>
         <form onSubmit={(event) => void saveInquiry(event)} className="max-h-[92dvh] w-full max-w-2xl overflow-y-auto border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
           <header className="mb-5 flex items-center justify-between gap-4 border-b pb-4" style={{ borderColor: "var(--border)" }}>
-            <div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Record candidate inquiry</h2><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>Save contact details now; complete registration when the candidate returns.</p></div>
+            <div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Register candidate inquiry</h2><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>Record the candidate here. Company staff will complete registration at the office.</p></div>
             <button type="button" onClick={closeInquiryForm} aria-label="Close inquiry form" className="flex h-8 w-8 items-center justify-center" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button>
           </header>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -691,7 +747,7 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
                 {inquirySources.map((source) => <label key={source.value} className="inline-flex items-center gap-2 text-sm" style={{ color: "var(--foreground)" }}><input required name="inquiry-source" type="radio" value={source.value} checked={inquiryDraft.discoverySource === source.value} onChange={() => setInquiryDraft((current) => ({ ...current, discoverySource: source.value, agentUserId: source.value === "agent" ? current.agentUserId : "" }))} />{source.label}</label>)}
               </div>
             </fieldset>
-            {inquiryDraft.discoverySource === "agent" && <label className="text-xs font-700 sm:col-span-2" style={{ color: "var(--muted-foreground)" }}>Registered agent<select required value={inquiryDraft.agentUserId} onChange={(event) => setInquiryDraft((current) => ({ ...current, agentUserId: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}><option value="">Select a registered agent</option>{inquiryPeople.filter((person) => person.role_name.toLocaleLowerCase().includes("agent")).map((person) => <option key={person.user_id} value={person.user_id}>{person.display_name}</option>)}</select></label>}
+            {inquiryDraft.discoverySource === "agent" && !permissions.isAgent && <label className="text-xs font-700 sm:col-span-2" style={{ color: "var(--muted-foreground)" }}>Registered agent<select required value={inquiryDraft.agentUserId} onChange={(event) => setInquiryDraft((current) => ({ ...current, agentUserId: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}><option value="">Select a registered agent</option>{inquiryPeople.filter((person) => person.role_name.toLocaleLowerCase().includes("agent")).map((person) => <option key={person.user_id} value={person.user_id}>{person.display_name}</option>)}</select></label>}
             <fieldset className="sm:col-span-2">
               <legend className="mb-2 text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Countries they want to travel to</legend>
               <div className="flex gap-2"><input value={countryDraft} onChange={(event) => setCountryDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addInquiryCountry(); } }} placeholder="Type a country" className="min-w-0 flex-1 border px-3 py-2 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /><button type="button" onClick={addInquiryCountry} className="border px-3 py-2 text-sm font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>Add country</button></div>
@@ -706,7 +762,7 @@ export default function CandidateRoster({ page, onNavigate }: { page: "inquiries
               <legend className="mb-2 text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Preferred communication</legend>
               <div className="flex gap-4">{([ ["call", "Call"], ["text", "Text"], ["both", "Both"] ] as const).map(([value, label]) => <label key={value} className="inline-flex items-center gap-2 text-sm" style={{ color: "var(--foreground)" }}><input type="radio" name="inquiry-contact-method" checked={inquiryDraft.communicationMethod === value} onChange={() => setInquiryDraft((current) => ({ ...current, communicationMethod: value }))} />{label}</label>)}</div>
             </fieldset>
-            <label className="text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Handled by<select required value={inquiryDraft.handledByUserId} onChange={(event) => setInquiryDraft((current) => ({ ...current, handledByUserId: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}><option value="">Select team member</option>{inquiryPeople.map((person) => <option key={person.user_id} value={person.user_id}>{person.display_name} · {person.role_name}</option>)}</select></label>
+            {!permissions.isAgent && <label className="text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Handled by<select required value={inquiryDraft.handledByUserId} onChange={(event) => setInquiryDraft((current) => ({ ...current, handledByUserId: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}><option value="">Select team member</option>{inquiryPeople.map((person) => <option key={person.user_id} value={person.user_id}>{person.display_name} · {person.role_name}</option>)}</select></label>}
             <label className="text-xs font-700 sm:col-span-2" style={{ color: "var(--muted-foreground)" }}>Remarks<textarea maxLength={4000} rows={3} value={inquiryDraft.remarks} onChange={(event) => setInquiryDraft((current) => ({ ...current, remarks: event.target.value }))} className="mt-1 w-full resize-y border px-3 py-2 text-sm font-normal" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>
           </div>
           {inquiryError && <p role="alert" className="mt-4 text-sm text-red-500">{inquiryError}</p>}

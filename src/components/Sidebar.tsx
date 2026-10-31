@@ -28,6 +28,10 @@ import {
 } from "lucide-react";
 import type { View, WorkspaceRole } from "../App";
 import { canAccessView } from "../lib/permissionToViewMap";
+import {
+  isRecruitmentAgentRestrictedPermission,
+  isRecruitmentAgentRole,
+} from "../lib/role-access-settings";
 
 type NavItem =
   | { type: "item"; id: View; label: string; icon: LucideIcon }
@@ -59,6 +63,7 @@ const nav: NavItem[] = [
       { id: "suppliers", label: "Suppliers", icon: Building2 },
     ],
   },
+  { type: "item", id: "agent-invoices", label: "Agent Invoices & Receipts", icon: ReceiptText },
   {
     type: "group", id: "employers", label: "Employers", icon: Building2,
     children: [
@@ -98,6 +103,11 @@ const candidateViews = new Set<View>(["candidates", "candidate-inquiries", "medi
 
 export default function Sidebar({ active, onNavigate, onPrefetch, role, userName, companyName, companyLogo, mobileOpen, onLogout, branchName, isMainBranchUser, permissions }: { active: View; onNavigate: (v: View) => void; onPrefetch: (v: View) => void; role: WorkspaceRole; userName?: string; companyName?: string; companyLogo?: string; mobileOpen: boolean; onClose: () => void; onLogout: () => void; branchName?: string; isMainBranchUser?: boolean; permissions: string[] }) {
   const [openGroups, setOpenGroups] = useState({ agents: agentSupplierViews.has(active), finance: financeViews.has(active), employers: employerViews.has(active), workforce: workforceViews.has(active), candidates: candidateViews.has(active) });
+  const visiblePermissions = isRecruitmentAgentRole(role)
+    ? permissions.filter(
+        (permission) => !isRecruitmentAgentRestrictedPermission(permission),
+      )
+    : permissions;
 
   useEffect(() => {
     if (financeViews.has(active)) setOpenGroups((current) => current.finance ? current : { ...current, finance: true });
@@ -140,7 +150,7 @@ export default function Sidebar({ active, onNavigate, onPrefetch, role, userName
         {nav.map((item, idx) => {
           // Check if this item is accessible based on permissions
           if (item.type === "item") {
-            if (!canAccessView(item.id, permissions)) {
+            if (!canAccessView(item.id, visiblePermissions)) {
               return null; // Skip this nav item
             }
             const Icon = item.icon;
@@ -164,7 +174,9 @@ export default function Sidebar({ active, onNavigate, onPrefetch, role, userName
           const groupViews = item.id === "finance" ? financeViews : item.id === "employers" ? employerViews : item.id === "workforce" ? workforceViews : item.id === "candidates" ? candidateViews : agentSupplierViews;
 
           // Filter children based on permissions
-          const allowedChildren = item.children.filter((child) => canAccessView(child.id, permissions));
+          const allowedChildren = item.children.filter((child) =>
+            canAccessView(child.id, visiblePermissions),
+          );
 
           // Skip group entirely if no children are accessible
           if (allowedChildren.length === 0) {

@@ -40,28 +40,35 @@ type NotificationItem = {
   body: string;
   time: string;
   read: boolean;
+  view?: View;
   taskNotificationId?: string;
   candidateInquiryNotificationId?: string;
   leaveNotificationId?: string;
+  requisitionNotificationId?: string;
 };
 
-const notifications: NotificationItem[] = [
-  { id: 1, priority: "Critical", type: "error", title: "Passport expiring soon", body: "James Okello passport expires Sep 22, 2026", time: "2h ago", read: false },
-  { id: 2, priority: "Critical", type: "warning", title: "Missing documents", body: "Suzan Mirembe — Medical certificate missing", time: "4h ago", read: false },
-  { id: 3, priority: "Important", type: "info", title: "Payment received", body: "UGX 1,500,000 deposit from Godfrey Kamuhangire", time: "5h ago", read: false },
-  { id: 4, priority: "Informational", type: "success", title: "Placement confirmed", body: "Alice Namukasa placed — Kuwait contract", time: "1d ago", read: true },
-  { id: 5, priority: "Important", type: "warning", title: "Invoice overdue", body: "INV-2026-001 — Gulf Manpower Ltd overdue by 3 days", time: "1d ago", read: true },
-  { id: 6, priority: "Informational", type: "info", title: "Task due today", body: "Follow up with James Okello — passport renewal", time: "2d ago", read: true },
-];
+type PushSettings = {
+  configured: boolean;
+  dispatchConfigured: boolean;
+  publicKey: string | null;
+  subscribed: boolean;
+};
 
 const typeIcon: Record<NotificationItem["type"], LucideIcon> = { warning: TriangleAlert, error: CircleAlert, info: Info, success: CircleCheck };
 const typeColor: Record<string, string> = { warning: "#f59e0b", error: "#ef4444", info: "#6366f1", success: "#10b981" };
 const formatCompanyInitials = (value: string) => value.split(" ").filter(Boolean).slice(0, 2).map((piece) => piece[0]?.toUpperCase() ?? "").join("") || "R";
 
+function decodeVapidPublicKey(value: string) {
+  const padded = value + "=".repeat((4 - value.length % 4) % 4);
+  const base64 = padded.replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(window.atob(base64), (character) => character.charCodeAt(0));
+}
+
 export default function TopBar({
   onMenuClick,
   onNavigate,
   role,
+  permissions,
   theme,
   onThemeChange,
   density,
@@ -75,6 +82,7 @@ export default function TopBar({
   onMenuClick: () => void;
   onNavigate: (v: View) => void;
   role: WorkspaceRole;
+  permissions: string[];
   theme: "dark" | "light";
   onThemeChange: () => void;
   density: "comfortable" | "compact";
@@ -90,8 +98,22 @@ export default function TopBar({
   const [showNotifs, setShowNotifs] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [notifs, setNotifs] = useState(notifications);
-  const shownReminderIds = useRef(new Set<string>());
+  const [notifs, setNotifs] = useState<NotificationItem[]>([]);
+  const [notificationPanelTop, setNotificationPanelTop] = useState(60);
+  const [pushSettings, setPushSettings] = useState<PushSettings | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMessage, setPushMessage] = useState("");
+  const topbarRef = useRef<HTMLDivElement>(null);
+  const notificationButtonRef = useRef<HTMLButtonElement>(null);
+  const notificationPanelRef = useRef<HTMLDivElement>(null);
+  const canViewTaskReminders = permissions.includes("tasks.view");
+  const canViewLeaveNotifications = permissions.some((permission) =>
+    permission.startsWith("leave."),
+  );
+  const canViewCandidateInquiries = permissions.includes("candidates.view");
+  const canViewRequisitionNotifications = permissions.some((permission) =>
+    permission.startsWith("requisitions."),
+  );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -113,26 +135,86 @@ export default function TopBar({
 
   useEffect(() => {
     let cancelled = false;
+    if ("serviceWorker" in navigator && window.isSecureContext) {
+      void navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" })
+        .catch((error: unknown) => console.error("Service worker registration failed", error));
+    }
+
+    const loadPushSettings = async () => {
+      try {
+        const response = await fetch("/api/notifications/push", { cache: "no-store" });
+        if (!response.ok) throw new Error("Unable to load browser notification settings.");
+        const settings = await response.json() as PushSettings;
+        if (!cancelled) setPushSettings(settings);
+      } catch (error) {
+        console.error("Browser notification settings request failed", error);
+        if (!cancelled) setPushMessage("Browser notification settings are unavailable.");
+      }
+    };
+    void loadPushSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showNotifs) return;
+    const updatePanelPosition = () => {
+      const top = topbarRef.current?.getBoundingClientRect().bottom ?? 52;
+      setNotificationPanelTop(Math.max(8, Math.min(top + 8, window.innerHeight - 120)));
+    };
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (
+        notificationPanelRef.current?.contains(target)
+        || notificationButtonRef.current?.contains(target)
+      ) return;
+      setShowNotifs(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    window.addEventListener("resize", updatePanelPosition);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      window.removeEventListener("resize", updatePanelPosition);
+    };
+  }, [showNotifs]);
+
+  useEffect(() => {
+    let cancelled = false;
     const loadReminders = async () => {
       try {
-        const [taskResponse, inquiryResponse, leaveResponse] = await Promise.all([
-          fetch("/api/tasks/reminders", { cache: "no-store" }),
-          fetch("/api/candidate-inquiries/reminders", { cache: "no-store" }),
-          fetch("/api/leave/notifications", { cache: "no-store" }),
+        const [taskResponse, inquiryResponse, leaveResponse, requisitionResponse] = await Promise.all([
+          canViewTaskReminders
+            ? fetch("/api/tasks/reminders", { cache: "no-store" })
+            : Promise.resolve(null),
+          canViewCandidateInquiries
+            ? fetch("/api/candidate-inquiries/reminders", { cache: "no-store" })
+            : Promise.resolve(null),
+          canViewLeaveNotifications
+            ? fetch("/api/leave/notifications", { cache: "no-store" })
+            : Promise.resolve(null),
+          canViewRequisitionNotifications
+            ? fetch("/api/requisitions/notifications", { cache: "no-store" })
+            : Promise.resolve(null),
         ]);
-        const payload = taskResponse.ok
+        const payload = taskResponse?.ok
           ? await taskResponse.json() as { reminders?: { id: string; title: string; body: string; sent_at: string; read_at: string | null }[] }
           : { reminders: [] };
-        const inquiryPayload = inquiryResponse.ok
+        const inquiryPayload = inquiryResponse?.ok
           ? await inquiryResponse.json() as { reminders?: { id: string; title: string; body: string; sent_at: string; read_at: string | null }[] }
           : { reminders: [] };
-        const leavePayload = leaveResponse.ok
+        const leavePayload = leaveResponse?.ok
           ? await leaveResponse.json() as { notifications?: { id: string; stage: string; title: string; body: string; sent_at: string; read_at: string | null }[] }
+          : { notifications: [] };
+        const requisitionPayload = requisitionResponse?.ok
+          ? await requisitionResponse.json() as { notifications?: { id: string; title: string; body: string; created_at: string; is_read: boolean }[] }
           : { notifications: [] };
         if (cancelled) return;
         const reminders = payload.reminders ?? [];
         const inquiryReminders = inquiryPayload.reminders ?? [];
         const leaveNotifications = leavePayload.notifications ?? [];
+        const requisitionNotifications = requisitionPayload.notifications ?? [];
 
         // Determine leave notification priority by stage
         const leaveNotifPriority = (stage: string): NotificationPriority => {
@@ -148,10 +230,22 @@ export default function TopBar({
           return "info";
         };
 
-        setNotifs((current) => [
+        setNotifs([
+          ...requisitionNotifications.map((notification) => ({
+            id: `requisition-${notification.id}`,
+            requisitionNotificationId: notification.id,
+            view: "requisitions" as const,
+            priority: "Important" as const,
+            type: "info" as const,
+            title: notification.title,
+            body: notification.body,
+            time: new Date(notification.created_at).toLocaleString(),
+            read: notification.is_read,
+          })),
           ...leaveNotifications.map((n) => ({
             id: `leave-${n.id}`,
             leaveNotificationId: n.id,
+            view: "leave" as const,
             priority: leaveNotifPriority(n.stage),
             type: leaveNotifType(n.stage),
             title: n.title,
@@ -162,6 +256,7 @@ export default function TopBar({
           ...inquiryReminders.map((reminder) => ({
             id: `candidate-inquiry-${reminder.id}`,
             candidateInquiryNotificationId: reminder.id,
+            view: "candidate-inquiries" as const,
             priority: "Important" as const,
             type: "info" as const,
             title: reminder.title,
@@ -172,6 +267,7 @@ export default function TopBar({
           ...reminders.map((reminder) => ({
             id: `task-${reminder.id}`,
             taskNotificationId: reminder.id,
+            view: "tasks" as const,
             priority: "Important" as const,
             type: "warning" as const,
             title: reminder.title,
@@ -179,34 +275,15 @@ export default function TopBar({
             time: new Date(reminder.sent_at).toLocaleString(),
             read: Boolean(reminder.read_at),
           })),
-          ...current.filter((item) => !item.taskNotificationId && !item.candidateInquiryNotificationId && !item.leaveNotificationId),
         ]);
-        const canNotify = "Notification" in window && window.Notification.permission === "granted";
-        if (!canNotify) return;
-        const cutoff = Date.now() - 5 * 60 * 1000;
-        for (const reminder of [...reminders, ...inquiryReminders]) {
-          if (reminder.read_at || shownReminderIds.current.has(reminder.id) || Date.parse(reminder.sent_at) < cutoff) continue;
-          shownReminderIds.current.add(reminder.id);
-          const notification = new window.Notification(reminder.title, { body: reminder.body, tag: reminder.id });
-          notification.onclick = () => {
-            window.focus();
-            onNavigate("communications");
-            notification.close();
-          };
+        if (pushSettings?.configured && pushSettings.subscribed) {
+          const dispatchResponse = await fetch("/api/notifications/push/dispatch", { method: "POST" });
+          if (!dispatchResponse.ok) {
+            console.error("Active browser push dispatch failed", await dispatchResponse.text());
+          }
         }
-        // Browser notifications for leave updates
-        for (const n of leaveNotifications) {
-          if (n.read_at || shownReminderIds.current.has(`leave-${n.id}`) || Date.parse(n.sent_at) < cutoff) continue;
-          shownReminderIds.current.add(`leave-${n.id}`);
-          const notification = new window.Notification(n.title, { body: n.body, tag: `leave-${n.id}` });
-          notification.onclick = () => {
-            window.focus();
-            onNavigate("leave");
-            notification.close();
-          };
-        }
-      } catch {
-        return;
+      } catch (error) {
+        console.error("Loading notification history failed", error);
       }
     };
     const refreshReminders = () => { void loadReminders(); };
@@ -220,53 +297,158 @@ export default function TopBar({
       window.removeEventListener("task-reminders-changed", refreshReminders);
       window.removeEventListener("leave-notifications-changed", refreshReminders);
     };
-  }, [onNavigate]);
+  }, [
+    canViewCandidateInquiries,
+    canViewLeaveNotifications,
+    canViewRequisitionNotifications,
+    canViewTaskReminders,
+    pushSettings,
+  ]);
 
   const results = useMemo(() => {
     const normalized = query.toLowerCase();
     if (!normalized) return [];
 
     const matches = [
-      ...searchIndex.filter((item) => item.label.toLowerCase().includes(normalized) || item.sub.toLowerCase().includes(normalized) || item.group.toLowerCase().includes(normalized)),
-      ...categoryActionItems.filter((item) => item.label.toLowerCase().includes(normalized) || item.sub.toLowerCase().includes(normalized) || item.group.toLowerCase().includes(normalized)),
+      ...searchIndex.filter((item) =>
+        (canViewTaskReminders || item.view !== "tasks") &&
+        (item.label.toLowerCase().includes(normalized) || item.sub.toLowerCase().includes(normalized) || item.group.toLowerCase().includes(normalized)),
+      ),
+      ...categoryActionItems.filter((item) =>
+        (canViewTaskReminders || item.view !== "tasks") &&
+        (item.label.toLowerCase().includes(normalized) || item.sub.toLowerCase().includes(normalized) || item.group.toLowerCase().includes(normalized)),
+      ),
     ];
 
     return matches.slice(0, 8);
-  }, [query]);
+  }, [canViewTaskReminders, query]);
 
-  const unread = notifs.filter((n) => !n.read).length;
+  const visibleNotifs = notifs;
+  const unread = visibleNotifs.filter((n) => !n.read).length;
   const groupedNotifications = [
-    { priority: "Critical" as const, items: notifs.filter((item) => item.priority === "Critical") },
-    { priority: "Important" as const, items: notifs.filter((item) => item.priority === "Important") },
-    { priority: "Informational" as const, items: notifs.filter((item) => item.priority === "Informational") },
+    { priority: "Critical" as const, items: visibleNotifs.filter((item) => item.priority === "Critical") },
+    { priority: "Important" as const, items: visibleNotifs.filter((item) => item.priority === "Important") },
+    { priority: "Informational" as const, items: visibleNotifs.filter((item) => item.priority === "Informational") },
   ];
 
   const markAllRead = async () => {
-    await Promise.all([
-      fetch("/api/tasks/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }),
-      fetch("/api/candidate-inquiries/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }),
-      fetch("/api/leave/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }),
-    ]).catch(() => undefined);
-    setNotifs((prev) => prev.map((n) => ({ ...n, read: true })));
+    const requests: Promise<Response>[] = [];
+    if (canViewCandidateInquiries)
+      requests.push(fetch("/api/candidate-inquiries/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }));
+    if (canViewTaskReminders)
+      requests.push(fetch("/api/tasks/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }));
+    if (canViewLeaveNotifications)
+      requests.push(fetch("/api/leave/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }));
+    if (canViewRequisitionNotifications)
+      requests.push(fetch("/api/requisitions/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }));
+    try {
+      const responses = await Promise.all(requests);
+      if (responses.some((response) => !response.ok)) {
+        console.error("One or more notification read updates failed", responses.filter((response) => !response.ok).map((response) => response.status));
+        return;
+      }
+      setNotifs((prev) => prev.map((n) => ({ ...n, read: true })));
+    } catch (error) {
+      console.error("Mark all notifications read failed", error);
+    }
   };
 
-  const snoozeNotification = async (id: string | number) => {
+  const markNotificationRead = async (id: string | number) => {
     const notification = notifs.find((item) => item.id === id);
-    if (notification?.taskNotificationId) {
-      await fetch("/api/tasks/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.taskNotificationId }) }).catch(() => undefined);
+    if (!notification || notification.read) return;
+    let response: Response | null = null;
+    try {
+      if (notification.taskNotificationId) {
+        response = await fetch("/api/tasks/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.taskNotificationId }) });
+      } else if (notification.candidateInquiryNotificationId) {
+        response = await fetch("/api/candidate-inquiries/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.candidateInquiryNotificationId }) });
+      } else if (notification.leaveNotificationId) {
+        response = await fetch("/api/leave/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.leaveNotificationId }) });
+      } else if (notification.requisitionNotificationId) {
+        response = await fetch("/api/requisitions/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.requisitionNotificationId }) });
+      }
+      if (response && !response.ok) {
+        console.error("Notification read update failed", response.status);
+        return;
+      }
+      setNotifs((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    } catch (error) {
+      console.error("Notification read update failed", error);
     }
-    if (notification?.candidateInquiryNotificationId) {
-      await fetch("/api/candidate-inquiries/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.candidateInquiryNotificationId }) }).catch(() => undefined);
+  };
+
+  const enableBrowserAlerts = async () => {
+    setPushBusy(true);
+    setPushMessage("");
+    try {
+      if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+        throw new Error("This browser does not support push notifications.");
+      }
+      if (!pushSettings?.configured || !pushSettings.publicKey) {
+        throw new Error("The server has not configured Web Push yet.");
+      }
+      const permission = window.Notification.permission === "granted"
+        ? "granted"
+        : await window.Notification.requestPermission();
+      if (permission !== "granted") {
+        throw new Error("Allow notifications in your browser settings to receive alerts.");
+      }
+      const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" });
+      const subscription = await registration.pushManager.getSubscription()
+        ?? await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: decodeVapidPublicKey(pushSettings.publicKey),
+        });
+      const response = await fetch("/api/notifications/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(subscription.toJSON()),
+      });
+      if (!response.ok) {
+        const payload = await response.json() as { error?: string };
+        throw new Error(payload.error ?? "Unable to enable browser alerts.");
+      }
+      setPushSettings((current) => current ? { ...current, subscribed: true } : current);
+      setPushMessage("Browser alerts are enabled.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to enable browser alerts.";
+      setPushMessage(message);
+      console.error("Enabling browser push notifications failed", error);
+    } finally {
+      setPushBusy(false);
     }
-    if (notification?.leaveNotificationId) {
-      await fetch("/api/leave/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.leaveNotificationId }) }).catch(() => undefined);
+  };
+
+  const disableBrowserAlerts = async () => {
+    setPushBusy(true);
+    setPushMessage("");
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        const response = await fetch("/api/notifications/push", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: subscription.endpoint }),
+        });
+        if (!response.ok) throw new Error("Unable to remove the server push subscription.");
+        await subscription.unsubscribe();
+      }
+      setPushSettings((current) => current ? { ...current, subscribed: false } : current);
+      setPushMessage("Browser alerts are disabled.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to disable browser alerts.";
+      setPushMessage(message);
+      console.error("Disabling browser push notifications failed", error);
+    } finally {
+      setPushBusy(false);
     }
-    setNotifs((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
   };
 
   return (
     <>
       <div
+        ref={topbarRef}
         className="topbar flex flex-wrap items-center gap-2 px-3 py-2 border-b shrink-0 lg:flex-nowrap lg:gap-4 lg:px-6 lg:py-2.5"
         style={{ background: "var(--card)", borderColor: "var(--border)", minHeight: "52px" }}
       >
@@ -366,7 +548,17 @@ export default function TopBar({
 
           <div className="relative">
             <button
-              onClick={() => setShowNotifs(!showNotifs)}
+              ref={notificationButtonRef}
+              type="button"
+              aria-label="Open notification center"
+              aria-expanded={showNotifs}
+              onClick={() => {
+                if (!showNotifs) {
+                  const top = topbarRef.current?.getBoundingClientRect().bottom ?? 52;
+                  setNotificationPanelTop(Math.max(8, Math.min(top + 8, window.innerHeight - 120)));
+                }
+                setShowNotifs((open) => !open);
+              }}
               className="relative w-8 h-8 flex items-center justify-center rounded transition-colors"
               style={{ background: showNotifs ? "var(--secondary)" : "transparent", color: "var(--muted-foreground)" }}
             >
@@ -383,47 +575,97 @@ export default function TopBar({
 
             {showNotifs && (
               <div
-                className="topbar-notifications absolute right-0 top-full mt-1 w-96 rounded border shadow-xl z-50"
-                style={{ background: "var(--card)", borderColor: "var(--border)" }}
+                ref={notificationPanelRef}
+                role="dialog"
+                aria-label="Notification center"
+                className="topbar-notifications fixed right-2 z-[70] flex flex-col overflow-hidden rounded border shadow-xl sm:right-4"
+                style={{
+                  background: "var(--card)",
+                  borderColor: "var(--border)",
+                  top: `${notificationPanelTop}px`,
+                  width: "min(24rem, calc(100vw - 1rem))",
+                  maxHeight: `calc(100dvh - ${notificationPanelTop}px - 0.5rem)`,
+                }}
               >
                 <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: "var(--border)" }}>
                   <span className="text-sm font-700" style={{ color: "var(--foreground)" }}>Notification center</span>
-                  <button onClick={markAllRead} className="text-xs" style={{ color: "var(--primary)" }}>Mark all read</button>
+                  <button type="button" onClick={markAllRead} disabled={unread === 0} className="text-xs disabled:opacity-50" style={{ color: "var(--primary)" }}>Mark all read</button>
                 </div>
-                <div className="max-h-96 overflow-y-auto">
-                  {groupedNotifications.map((group) => (
+                <div className="border-b px-4 py-3" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-600" style={{ color: "var(--foreground)" }}>
+                        {pushSettings?.subscribed ? "Browser alerts are enabled" : "Browser and system alerts"}
+                      </div>
+                      <div className="mt-1 text-[11px]" style={{ color: "var(--muted-foreground)" }}>
+                        {pushSettings?.dispatchConfigured
+                          ? "A 1-minute server schedule is still required for closed-browser alerts."
+                          : "Closed-browser delivery needs a scheduled server dispatcher."}
+                      </div>
+                    </div>
+                    {pushSettings?.configured ? (
+                      <button
+                        type="button"
+                        disabled={pushBusy}
+                        onClick={pushSettings.subscribed ? disableBrowserAlerts : enableBrowserAlerts}
+                        className="shrink-0 rounded border px-2.5 py-1.5 text-[11px] font-600 disabled:opacity-50"
+                        style={{ borderColor: "var(--border)", color: "var(--primary)" }}
+                      >
+                        {pushBusy ? "Saving…" : pushSettings.subscribed ? "Disable" : "Enable"}
+                      </button>
+                    ) : (
+                      <span className="shrink-0 text-[10px]" style={{ color: "var(--muted-foreground)" }}>Setup needed</span>
+                    )}
+                  </div>
+                  {pushMessage && <div className="mt-2 text-[11px]" role="status" style={{ color: "var(--muted-foreground)" }}>{pushMessage}</div>}
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  {visibleNotifs.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>You are all caught up.</div>
+                  ) : groupedNotifications.map((group) => group.items.length > 0 && (
                     <div key={group.priority} className="border-b last:border-b-0" style={{ borderColor: "var(--border)" }}>
                       <div className="px-4 py-2 text-[10px] font-700 uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>
                         {group.priority}
                       </div>
-                      {group.items.length === 0 ? (
-                        <div className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>No {group.priority.toLowerCase()} alerts.</div>
-                      ) : (
-                        group.items.map((n) => (
-                          <div
-                            key={n.id}
-                            className="flex gap-3 px-4 py-3"
-                            style={{ background: n.read ? "transparent" : "var(--secondary)" }}
-                          >
-                            {(() => {
-                              const Icon = typeIcon[n.type];
-                              return <Icon size={17} strokeWidth={1.8} aria-hidden="true" className="shrink-0 mt-0.5" style={{ color: typeColor[n.type] }} />;
-                            })()}
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-700 mb-0.5" style={{ color: typeColor[n.type] }}>{n.title}</div>
-                              <div className="text-xs" style={{ color: "var(--foreground)" }}>{n.body}</div>
-                              <div className="mono text-[11px] mt-1" style={{ color: "var(--muted-foreground)" }}>{n.time}</div>
-                            </div>
-                            <div className="flex flex-col items-end gap-2">
-                              {(n.taskNotificationId || n.candidateInquiryNotificationId || n.leaveNotificationId) && <button onClick={() => { onNavigate(n.leaveNotificationId ? "leave" : n.candidateInquiryNotificationId ? "candidates" : "communications"); setShowNotifs(false); }} className="text-[10px] font-600" style={{ color: "var(--primary)" }}>Open</button>}
-                              {!n.read && <div className="w-2 h-2 rounded-full" style={{ background: "var(--primary)" }} />}
-                              <button onClick={() => snoozeNotification(n.id)} className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>
-                                Snooze
-                              </button>
-                            </div>
+                      {group.items.map((n) => (
+                        <div
+                          key={n.id}
+                          className="flex gap-3 px-4 py-3"
+                          style={{ background: n.read ? "transparent" : "var(--secondary)" }}
+                        >
+                          {(() => {
+                            const Icon = typeIcon[n.type];
+                            return <Icon size={17} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 shrink-0" style={{ color: typeColor[n.type] }} />;
+                          })()}
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-0.5 text-xs font-700" style={{ color: typeColor[n.type] }}>{n.title}</div>
+                            <div className="text-xs" style={{ color: "var(--foreground)" }}>{n.body}</div>
+                            <div className="mono mt-1 text-[11px]" style={{ color: "var(--muted-foreground)" }}>{n.time}</div>
                           </div>
-                        ))
-                      )}
+                          <div className="flex flex-col items-end gap-2">
+                            {n.view && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const destination = n.view;
+                                  if (destination) onNavigate(destination);
+                                  setShowNotifs(false);
+                                }}
+                                className="text-[10px] font-600"
+                                style={{ color: "var(--primary)" }}
+                              >
+                                Open
+                              </button>
+                            )}
+                            {!n.read && <div className="h-2 w-2 rounded-full" style={{ background: "var(--primary)" }} />}
+                            {!n.read && (
+                              <button type="button" onClick={() => void markNotificationRead(n.id)} className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+                                Mark read
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>

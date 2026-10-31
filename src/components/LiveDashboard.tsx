@@ -15,11 +15,13 @@ interface WorkspaceSummary {
 export default function LiveDashboard({
   role,
   companyId,
+  companyName,
   permissions,
   onNavigate,
 }: {
   role: WorkspaceRole
   companyId: string
+  companyName: string
   permissions: string[]
   onNavigate: (view: View) => void
 }) {
@@ -233,16 +235,33 @@ export default function LiveDashboard({
         !error &&
         permissions.includes("candidates.view") &&
         summary?.candidateCount === 0 && (
-          <p
+            <div
             className="mt-6 border-l-2 pl-4 text-sm"
             style={{
               borderColor: "var(--primary)",
               color: "var(--muted-foreground)",
             }}
           >
-            No candidate records are available in this company workspace yet.
-          </p>
-        )}
+              <p>
+                {role === "Recruitment Agent"
+                  ? `Sorry, you currently have no candidates at ${companyName || "your company"}. Kindly register your candidates at our office under Inquiries.`
+                  : "No candidate records are available in this company workspace yet."}
+              </p>
+              {role === "Recruitment Agent" && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate("candidate-inquiries")}
+                  className="mt-3 rounded px-4 py-2 text-sm font-600"
+                  style={{
+                    background: "var(--primary)",
+                    color: "var(--primary-foreground)",
+                  }}
+                >
+                  Open Inquiries
+                </button>
+              )}
+            </div>
+          )}
     </div>
   )
 }

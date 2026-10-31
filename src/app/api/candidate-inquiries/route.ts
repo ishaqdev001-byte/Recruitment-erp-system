@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
 const sources = new Set(["radio", "television", "friend_referral", "walk_in", "sign_post", "agent"]);
 
-async function getInquiryAccess(permission: "candidates.view" | "candidates.create") {
+async function getInquiryAccess(permission: "candidate_inquiries.view" | "candidate_inquiries.create") {
   const supabase = await createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
@@ -15,17 +15,44 @@ async function getInquiryAccess(permission: "candidates.view" | "candidates.crea
     .select("company_id, branch_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
 
-  const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
+  const legacyPermission = permission === "candidate_inquiries.view" ? "candidates.view" : "candidates.create";
+  const [
+    { data: allowed, error: permissionError },
+    { data: legacyAllowed, error: legacyPermissionError },
+  ] = await Promise.all([
+    supabase.rpc("current_user_has_company_permission", {
+      requested_company_id: membership.company_id,
+      requested_permission: permission,
+    }),
+    supabase.rpc("current_user_has_company_permission", {
+      requested_company_id: membership.company_id,
+      requested_permission: legacyPermission,
+    }),
+  ]);
+  if (permissionError || legacyPermissionError) {
+    return { error: "Unable to verify candidate inquiry permissions.", status: 503 as const };
+  }
+  if (!allowed && !legacyAllowed) {
+    return { error: "You do not have permission to access candidate inquiries.", status: 403 as const };
+  }
+  const { data: inquiryScope, error: scopeError } = await supabase.rpc("current_user_role_setting", {
     requested_company_id: membership.company_id,
-    requested_permission: permission,
+    requested_setting: "inquiry_scope",
+    fallback_value: "company",
   });
-  if (permissionError || !allowed) return { error: "You do not have permission to access candidate inquiries.", status: 403 as const };
-  return { supabase, companyId: membership.company_id, userId: user.id, branchId: membership.branch_id ?? null };
+  if (scopeError) return { error: "Unable to verify inquiry access settings.", status: 503 as const };
+  return {
+    supabase,
+    companyId: membership.company_id,
+    userId: user.id,
+    branchId: membership.branch_id ?? null,
+    inquiryScope: inquiryScope === "created" ? "created" as const : "company" as const,
+  };
 }
 
 export async function GET() {
   try {
-    const access = await getInquiryAccess("candidates.view");
+    const access = await getInquiryAccess("candidate_inquiries.view");
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
     const [{ data: inquiries, error: inquiryError }, { data: people, error: peopleError }] = await Promise.all([
       access.supabase.from("candidate_inquiries").select("*")
@@ -52,7 +79,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const access = await getInquiryAccess("candidates.create");
+    const access = await getInquiryAccess("candidate_inquiries.create");
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     const firstName = typeof body?.firstName === "string" ? body.firstName.trim() : "";
@@ -70,7 +97,8 @@ export async function POST(request: Request) {
     const hasExperience = body?.hasExperience;
     const experienceDescription = typeof body?.experienceDescription === "string" ? body.experienceDescription.trim() : "";
     const communicationMethod = body?.communicationMethod;
-    const handledByUserId = typeof body?.handledByUserId === "string" ? body.handledByUserId : "";
+    const requestedHandledByUserId = typeof body?.handledByUserId === "string" ? body.handledByUserId : "";
+    const handledByUserId = access.inquiryScope === "created" ? access.userId : requestedHandledByUserId;
     const remarks = typeof body?.remarks === "string" ? body.remarks.trim() : "";
 
     if (!firstName || firstName.length > 200 || !lastName || lastName.length > 200
@@ -80,7 +108,7 @@ export async function POST(request: Request) {
       || typeof hasExperience !== "boolean" || (hasExperience && (!experienceDescription || experienceDescription.length > 2000))
       || (communicationMethod !== "call" && communicationMethod !== "text" && communicationMethod !== "both")
       || !isUuid(handledByUserId) || remarks.length > 4000
-      || (discoverySource === "agent" && !isUuid(agentUserId))
+      || (discoverySource === "agent" && access.inquiryScope !== "created" && !isUuid(agentUserId))
       || (discoverySource !== "agent" && Boolean(agentUserId))) {
       return NextResponse.json({ error: "Complete the required inquiry details and choose valid options." }, { status: 400, headers });
     }
@@ -91,8 +119,11 @@ export async function POST(request: Request) {
     if (peopleError) throw peopleError;
     const actors = people ?? [];
     const handler = actors.find((person: { user_id: string }) => person.user_id === handledByUserId);
+    const requestedAgentUserId = access.inquiryScope === "created" && discoverySource === "agent"
+      ? access.userId
+      : agentUserId;
     const agent = discoverySource === "agent"
-      ? actors.find((person: { user_id: string; role_name: string }) => person.user_id === agentUserId && person.role_name.toLocaleLowerCase().includes("agent"))
+      ? actors.find((person: { user_id: string; role_name: string }) => person.user_id === requestedAgentUserId && person.role_name.toLocaleLowerCase().includes("agent"))
       : null;
     if (!handler || (discoverySource === "agent" && !agent)) {
       return NextResponse.json({ error: "Choose an active handler and a registered agent for agent referrals." }, { status: 400, headers });

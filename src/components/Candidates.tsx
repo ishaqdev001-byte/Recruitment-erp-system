@@ -21,6 +21,7 @@ export interface Candidate {
   abroadExperience: string;
   source: string;
   agent: string;
+  agentUserId?: string;
   mediaChannel: string[];
   // Passport
   nin: string;

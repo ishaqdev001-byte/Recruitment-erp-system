@@ -23,6 +23,16 @@ export async function getLinkedStaffAccess() {
     .maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
 
+  const { data: canAccessHr, error: permissionError } = await supabase.rpc(
+    "current_user_has_company_permission",
+    {
+      requested_company_id: membership.company_id,
+      requested_permission: "human_resources.view",
+    },
+  );
+  if (permissionError) return { error: "Unable to verify Human Resource access.", status: 503 as const };
+  if (!canAccessHr) return { error: "You do not have permission to access Human Resource self-service.", status: 403 as const };
+
   const admin = createAdminClient();
   if (!admin) return { error: "Personal HR updates are unavailable because server storage is not configured.", status: 503 as const };
   const { data: company, error: companyError } = await admin.from("companies")

@@ -41,10 +41,10 @@ export function isMedicalOnlyUser(permissions: string[]): boolean {
  */
 export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   // Candidates permissions
-  "candidates.view": new Set(["candidates"]),
+  "candidates.view": new Set(["candidates", "reports"]),
   "candidates.create": new Set(["candidates"]),
   "candidates.register": new Set(["candidates"]),
-  "candidate_inquiries.view": new Set(["candidate-inquiries"]),
+  "candidate_inquiries.view": new Set(["candidate-inquiries", "reports"]),
   "candidate_inquiries.create": new Set(["candidate-inquiries"]),
   "candidates.edit": new Set(["candidates"]),
   "candidates.delete": new Set(["candidates"]),
@@ -108,7 +108,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "audit.view": new Set(["auditlog", "reports"]),
 
   // Tasks permissions
-  "tasks.view": new Set(["tasks"]),
+  "tasks.view": new Set(["tasks", "reports"]),
   "tasks.create": new Set(["tasks"]),
   "tasks.edit": new Set(["tasks"]),
   "tasks.delete": new Set(["tasks"]),
@@ -125,13 +125,13 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "roles.manage": new Set(["users", "settings"]),
 
   // Employers & Contractors
-  "employers.view": new Set(["contractors", "projects"]),
+  "employers.view": new Set(["contractors", "projects", "reports"]),
   "employers.create": new Set(["contractors", "projects"]),
   "employers.edit": new Set(["contractors", "projects"]),
   "employers.delete": new Set(["contractors", "projects"]),
 
   // Suppliers
-  "suppliers.view": new Set(["suppliers"]),
+  "suppliers.view": new Set(["suppliers", "reports"]),
   "suppliers.create": new Set(["suppliers"]),
   "suppliers.edit": new Set(["suppliers"]),
   "suppliers.delete": new Set(["suppliers"]),

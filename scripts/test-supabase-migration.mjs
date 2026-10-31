@@ -484,6 +484,14 @@ const browserPushNotificationsMigration = await readFile(
   "utf8",
 )
 
+const workspaceNotificationEventsMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261031140816_workspace_notification_events.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const database = new PGlite()
 
 const companyA = "10000000-0000-4000-8000-000000000001"
@@ -3207,6 +3215,121 @@ try {
     rolePermissionRealtimeMigration,
     /alter publication supabase_realtime add table public\.role_permissions/i,
   )
+
+  await database.exec("reset role")
+  await database.exec(`
+    alter table public.medical_appointments add column if not exists exam_result text;
+    create table public.company_branches (
+      id uuid primary key,
+      company_id uuid not null,
+      manager_user_id uuid
+    );
+    create table public.branch_approval_requests (
+      id uuid primary key,
+      company_id uuid not null,
+      branch_id uuid not null,
+      status text not null,
+      current_level text not null,
+      title text not null,
+      submitted_by uuid not null
+    );
+    create function public.notify_next_approver()
+    returns trigger language plpgsql as $$ begin return new; end $$;
+  `)
+  await database.exec(workspaceNotificationEventsMigration)
+
+  const notificationRls = await database.query(`
+    select relrowsecurity
+    from pg_class
+    where oid = 'public.workspace_notifications'::regclass
+  `)
+  assert.equal(notificationRls.rows[0]?.relrowsecurity, true)
+
+  const notificationPrivileges = await database.query(`
+    select
+      has_table_privilege('anon', 'public.workspace_notifications', 'select') as anon_select,
+      has_table_privilege('authenticated', 'public.workspace_notifications', 'select') as authenticated_select,
+      has_table_privilege('authenticated', 'public.workspace_notifications', 'insert') as authenticated_insert,
+      has_function_privilege('authenticated', 'public.list_pending_workspace_push_notifications(uuid, uuid)', 'execute') as authenticated_dispatch
+  `)
+  assert.deepEqual(notificationPrivileges.rows[0], {
+    anon_select: false,
+    authenticated_select: true,
+    authenticated_insert: false,
+    authenticated_dispatch: false,
+  })
+
+  await database.query(
+    `select private.queue_workspace_notification(
+      $1, array[$2::uuid, $3::uuid], 'candidates.view', 'candidates',
+      'Candidate updated', 'A candidate was updated.',
+      'candidate.stage', $4
+    )`,
+    [companyA, userA, userB, candidateA],
+  )
+
+  await database.exec("set role authenticated")
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userA],
+  )
+  const permittedNotifications = await database.query(
+    "select count(*)::integer as count from public.workspace_notifications",
+  )
+  assert.equal(permittedNotifications.rows[0].count, 1)
+
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userB],
+  )
+  const restrictedNotifications = await database.query(
+    "select count(*)::integer as count from public.workspace_notifications",
+  )
+  assert.equal(restrictedNotifications.rows[0].count, 0)
+  await database.exec("reset role")
+
+  await database.query(
+    "update public.candidates set agent_user_id = $1 where id = $2",
+    [userD, candidateA],
+  )
+  const candidateEventRecipients = await database.query(
+    `select recipient_id from public.workspace_notifications
+      where source_type = 'candidate.assignment' and source_id = $1`,
+    [candidateA],
+  )
+  assert(candidateEventRecipients.rows.some((row) => row.recipient_id === userA))
+  assert(!candidateEventRecipients.rows.some((row) => row.recipient_id === userB))
+
+  const insertedNotificationCandidate = await database.query(
+    `insert into public.candidates (
+      company_id, file_number, first_name, last_name, created_by, agent_user_id, agent_name
+    ) values ($1, 'NOTIFY-001', 'Notification', 'Candidate', $2, $3, 'Assigned agent')
+    returning id`,
+    [companyA, userB, userD],
+  )
+  const createdCandidateRecipients = await database.query(
+    `select recipient_id from public.workspace_notifications
+      where source_type = 'candidate.created' and source_id = $1`,
+    [insertedNotificationCandidate.rows[0].id],
+  )
+  assert(createdCandidateRecipients.rows.some((row) => row.recipient_id === userA))
+  assert(createdCandidateRecipients.rows.some((row) => row.recipient_id === userD))
+  assert(!createdCandidateRecipients.rows.some((row) => row.recipient_id === userB))
+
+  await database.query(
+    `select private.queue_workspace_notification(
+      $1, array[$2::uuid], 'finance.view', 'finance',
+      'Finance event', 'Finance event details.',
+      'finance.test', $3
+    )`,
+    [companyA, userB, candidateA],
+  )
+  const unauthorizedFinanceNotification = await database.query(
+    `select count(*)::integer as count from public.workspace_notifications
+      where recipient_id = $1 and source_type = 'finance.test'`,
+    [userB],
+  )
+  assert.equal(unauthorizedFinanceNotification.rows[0].count, 0)
 
   console.log("Supabase migration and tenant RLS checks passed.")
 } finally {

@@ -62,6 +62,12 @@ function getPeriod(range: string, now: Date) {
   return { start: `${today.slice(0, 7)}-01`, end: today }
 }
 
+function isCalendarDate(value: string | null): value is string {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
 function isInPeriod(
   value: string | null | undefined,
   period: FinancePeriod,
@@ -283,19 +289,29 @@ export async function GET(request: Request) {
 
     const requestedRange = url.searchParams.get("range") ?? "This Month"
 
-    const range = [
+    const supportedRanges = [
       "Today",
       "This Week",
       "This Month",
       "This Year",
       "All Time",
-    ].includes(requestedRange)
-      ? requestedRange
-      : "This Month"
+      "Custom Range",
+    ]
+    if (!supportedRanges.includes(requestedRange)) {
+      return NextResponse.json({ error: "Unsupported finance report range." }, { status: 400, headers })
+    }
+    const range = requestedRange
+    const requestedStart = url.searchParams.get("start")
+    const requestedEnd = url.searchParams.get("end")
+    if (range === "Custom Range" && (!isCalendarDate(requestedStart) || !isCalendarDate(requestedEnd) || requestedStart > requestedEnd)) {
+      return NextResponse.json({ error: "A valid custom finance date range is required." }, { status: 400, headers })
+    }
 
     const now = new Date()
 
-    const period = getPeriod(range, now)
+    const period = range === "Custom Range"
+      ? { start: requestedStart, end: requestedEnd! }
+      : getPeriod(range, now)
 
     const paymentsByInvoice = new Map<string, number>()
 

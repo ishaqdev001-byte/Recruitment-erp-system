@@ -329,30 +329,6 @@ export async function POST(request: Request) {
           }
         }
 
-        // Notify the candidate's agent via task_notification if agent_user_id is known
-        if (admin) {
-          const { data: inquiry } = await admin.from("candidate_inquiries")
-            .select("agent_user_id")
-            .eq("company_id", membership.company_id)
-            .ilike("first_name", candidate.first_name)
-            .ilike("last_name", candidate.last_name)
-            .not("agent_user_id", "is", null)
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (inquiry?.agent_user_id) {
-            logBackgroundInsert(() => admin.from("task_notifications").insert({
-              company_id: membership.company_id,
-              task_id: null,
-              recipient_id: inquiry.agent_user_id,
-              title: `Visa received — ${name}`,
-              body: `${name} has received a visa for ${position} (${country}). Invoice ${invoices.at(-1) ? (invoices.at(-1) as Record<string, unknown>).invoiceNumber : ""} has been raised.`,
-              remind_at: new Date().toISOString(),
-              sms_status: "not_requested",
-            }), "Visa task notification insert failed");
-          }
-        }
       }
 
       return NextResponse.json({ updated, rejected, invoices }, { headers });
@@ -497,27 +473,6 @@ export async function POST(request: Request) {
           send_at: thanksAt.toISOString(),
         });
 
-        // Notify agent
-        const { data: inquiry } = await admin.from("candidate_inquiries")
-          .select("agent_user_id")
-          .eq("company_id", membership.company_id)
-          .ilike("first_name", candidate.first_name)
-          .ilike("last_name", candidate.last_name)
-          .not("agent_user_id", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (inquiry?.agent_user_id) {
-          logBackgroundInsert(() => admin.from("task_notifications").insert({
-            company_id: membership.company_id,
-            task_id: null,
-            recipient_id: inquiry.agent_user_id,
-            title: `Ticket issued — ${name}`,
-            body: `${name} is travelling to ${country} on ${travelDate} at ${travelTime}. Ticket: ${ticketNumber}.`,
-            remind_at: new Date().toISOString(),
-            sms_status: "not_requested",
-          }), "Ticket task notification insert failed");
-        }
       }
 
       return NextResponse.json({ updated, rejected }, { headers });

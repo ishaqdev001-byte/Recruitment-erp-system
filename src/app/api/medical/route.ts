@@ -52,76 +52,32 @@ async function sendSystemAlertEmail(opts: {
   }
 }
 
-// ─── Collect alert-recipient emails (Supervisor / Agent, GM, CEO) ─────────────
-async function collectAlertRecipients(admin: ReturnType<typeof createAdminClient>, companyId: string, candidateId: string | null) {
+async function collectAlertRecipients(admin: ReturnType<typeof createAdminClient>, companyId: string) {
   if (!admin) return [];
-  const recipients = new Set<string>();
-
-  // Always include GM and CEO from memberships
-  const { data: managers } = await admin
-    .from("company_memberships")
-    .select("user_id, role:company_roles!inner(name)")
+  const { data: rolePermissions, error: permissionError } = await admin
+    .from("role_permissions")
+    .select("role_id")
     .eq("company_id", companyId)
-    .eq("status", "active");
+    .eq("permission_code", "medical.view");
+  if (permissionError) throw permissionError;
 
-  for (const m of managers ?? []) {
-    const roleValue = m.role as unknown as { name: string } | { name: string }[] | null;
-    const roleName = Array.isArray(roleValue) ? roleValue[0]?.name : roleValue?.name;
-    if (
-      roleName === "General Manager" ||
-      roleName === "CEO" ||
-      roleName === "Company Owner / Primary Administrator" ||
-      roleName === "Administrator"
-    ) {
-      const { data: authUser } = await admin.auth.admin.getUserById(m.user_id);
-      if (authUser.user?.email) recipients.add(authUser.user.email);
-    }
-  }
+  const roleIds = [...new Set((rolePermissions ?? []).map((item) => item.role_id))];
+  if (!roleIds.length) return [];
 
-  // Also include the candidate's agent supervisor if the candidate is linked
-  if (candidateId) {
-    const { data: inquiry } = await admin
-      .from("candidate_inquiries")
-      .select("agent_user_id")
-      .eq("company_id", companyId)
-      .not("agent_user_id", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+  const { data: memberships, error: membershipError } = await admin
+    .from("company_memberships")
+    .select("user_id")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .in("role_id", roleIds);
+  if (membershipError) throw membershipError;
 
-    if (inquiry?.agent_user_id) {
-      // Fetch the agent's supervisor
-      const { data: agentMembership } = await admin
-        .from("company_memberships")
-        .select("user_id")
-        .eq("user_id", inquiry.agent_user_id)
-        .eq("company_id", companyId)
-        .maybeSingle();
-
-      if (agentMembership) {
-        const { data: agentAuth } = await admin.auth.admin.getUserById(inquiry.agent_user_id);
-        if (agentAuth.user?.email) recipients.add(agentAuth.user.email);
-      }
-
-      // Also find recruitment managers / supervisors
-      const { data: supervisors } = await admin
-        .from("company_memberships")
-        .select("user_id, role:company_roles!inner(name)")
-        .eq("company_id", companyId)
-        .eq("status", "active");
-
-      for (const s of supervisors ?? []) {
-        const roleValue = s.role as unknown as { name: string } | { name: string }[] | null;
-        const roleName = Array.isArray(roleValue) ? roleValue[0]?.name : roleValue?.name;
-        if (roleName === "Recruitment Manager" || roleName === "Branch Manager") {
-          const { data: su } = await admin.auth.admin.getUserById(s.user_id);
-          if (su.user?.email) recipients.add(su.user.email);
-        }
-      }
-    }
-  }
-
-  return [...recipients];
+  const recipientEmails = await Promise.all((memberships ?? []).map(async ({ user_id }) => {
+    const { data, error } = await admin.auth.admin.getUserById(user_id);
+    if (error) throw error;
+    return data.user?.email ?? null;
+  }));
+  return [...new Set(recipientEmails.filter((email): email is string => Boolean(email)))];
 }
 
 // ─── Access helper ────────────────────────────────────────────────────────────
@@ -381,7 +337,7 @@ export async function POST(request: Request) {
 
       // ── Send urgent alert if unfit ─────────────────────────────────────────
       if (examResult === "unfit") {
-        const recipients = await collectAlertRecipients(access.admin, access.companyId, appt.candidate_id ?? null);
+        const recipients = await collectAlertRecipients(access.admin, access.companyId);
 
         if (recipients.length) {
           const subject = `🚨 URGENT: Medically Unfit – ${candidateName}`;
@@ -465,59 +421,6 @@ export async function POST(request: Request) {
             console.error("Medical unfit alert email failed (non-fatal)", err);
           });
 
-          // Also insert task_notifications for each recipient
-          const notifRows = recipients.map((email) => {
-            // We can't easily map email→user_id here without another lookup;
-            // use the managers list we already have
-            return null; // placeholder — will insert below
-          });
-          void notifRows; // suppress lint
-
-          const { data: managerRows } = await access.admin
-            .from("company_memberships")
-            .select("user_id, role:company_roles!inner(name)")
-            .eq("company_id", access.companyId)
-            .eq("status", "active");
-
-          const notifInserts: {
-            company_id: string;
-            task_id: null;
-            recipient_id: string;
-            title: string;
-            body: string;
-            remind_at: string;
-            sms_status: string;
-          }[] = [];
-
-          for (const m of managerRows ?? []) {
-            const roleValue = m.role as unknown as { name: string } | { name: string }[] | null;
-            const rn = Array.isArray(roleValue) ? roleValue[0]?.name : roleValue?.name;
-            if (
-              rn === "General Manager" ||
-              rn === "CEO" ||
-              rn === "Company Owner / Primary Administrator" ||
-              rn === "Administrator" ||
-              rn === "Recruitment Manager" ||
-              rn === "Branch Manager"
-            ) {
-              notifInserts.push({
-                company_id: access.companyId,
-                task_id: null,
-                recipient_id: m.user_id,
-                title: `🚨 Medically Unfit — ${candidateName}`,
-                body: `${candidateName} has been declared MEDICALLY UNFIT. Immediate review required.${examNotes ? ` Doctor's notes: ${examNotes.slice(0, 120)}` : ""}`,
-                remind_at: now,
-                sms_status: "not_requested",
-              });
-            }
-          }
-
-          if (notifInserts.length) {
-            const { error: notifError } = await access.admin
-              .from("task_notifications")
-              .insert(notifInserts);
-            if (notifError) console.error("Notif insert failed", notifError);
-          }
         }
       }
 

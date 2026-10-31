@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js"
 
 import webPush from "web-push"
 
-type NotificationType = "task" | "candidate_inquiry" | "leave" | "requisition"
+type NotificationType = "task" | "candidate_inquiry" | "leave" | "requisition" | "workspace"
 
 type PushNotification = {
   id: string
@@ -16,6 +16,10 @@ type PushNotification = {
   title: string
 
   body: string
+
+  required_permission?: string
+
+  destination?: string
 
   type: NotificationType
 }
@@ -48,12 +52,30 @@ type PendingNotificationRow = {
   body: string
 }
 
+type PendingWorkspaceNotificationRow = {
+  id: string
+
+  company_id: string
+
+  recipient_id: string
+
+  required_permission: string
+
+  category: string
+
+  title: string
+
+  body: string
+}
+
 const permissionCodes: Record<NotificationType, string[]> = {
   task: ["tasks.view"],
 
   candidate_inquiry: ["candidates.view"],
 
   leave: ["leave.view", "leave.create", "leave.manage"],
+
+  workspace: [],
 
   requisition: [
     "requisitions.create",
@@ -99,6 +121,10 @@ function isPermissionAllowed(
 
   permissions: Set<string>,
 ) {
+  if (notification.type === "workspace") {
+    return Boolean(notification.required_permission && permissions.has(notification.required_permission))
+  }
+
   if (roleName.trim().toLowerCase() === "recruitment agent") return false
 
   return permissionCodes[notification.type].some((code) =>
@@ -106,7 +132,23 @@ function isPermissionAllowed(
   )
 }
 
-function getNotificationPath(type: NotificationType) {
+function getNotificationPath(notification: PushNotification) {
+  if (notification.type === "workspace") {
+    const destinations: Record<string, string> = {
+      candidates: "candidates",
+      "candidate-inquiries": "candidate-inquiries",
+      tasks: "tasks",
+      approvals: "approvals",
+      finance: "finance",
+      "agent-finance": "agent-invoices",
+      "human-resources": "human-resources",
+      communications: "communications",
+      medical: "medical-management",
+    }
+    return `/?notification=${destinations[notification.destination ?? ""] ?? "dashboard"}`
+  }
+
+  const { type } = notification
   if (type === "leave") return "/?notification=leave"
 
   if (type === "requisition") return "/?notification=requisitions"
@@ -123,20 +165,26 @@ async function loadUnreadNotifications(
 
   companyId?: string,
 ): Promise<PushNotification[]> {
-  const { data, error } = await admin.rpc("list_pending_push_notifications", {
-    requested_user_id: userId ?? null,
+  const [legacyResult, workspaceResult] = await Promise.all([
+    admin.rpc("list_pending_push_notifications", {
+      requested_user_id: userId ?? null,
+      requested_company_id: companyId ?? null,
+    }),
+    admin.rpc("list_pending_workspace_push_notifications", {
+      requested_user_id: userId ?? null,
+      requested_company_id: companyId ?? null,
+    }),
+  ])
+  if (legacyResult.error) {
+    throw new Error(`Unable to load pending push notifications: ${legacyResult.error.message}`)
+  }
+  if (workspaceResult.error) {
+    throw new Error(`Unable to load pending workspace notifications: ${workspaceResult.error.message}`)
+  }
 
-    requested_company_id: companyId ?? null,
-  })
-
-  if (error)
-    throw new Error(
-      `Unable to load pending push notifications: ${error.message}`,
-    )
-
-  const rows: unknown[] = data ?? []
-
-  return rows.map((row): PushNotification => {
+  const legacyRows: unknown[] = legacyResult.data ?? []
+  const workspaceRows: unknown[] = workspaceResult.data ?? []
+  const legacyNotifications = legacyRows.map((row): PushNotification => {
     if (
       typeof row !== "object" ||
       row === null ||
@@ -183,6 +231,57 @@ async function loadUnreadNotifications(
       type: pending.notification_type,
     }
   })
+  const workspaceNotifications = workspaceRows.map((row): PushNotification => {
+    if (
+      typeof row !== "object" ||
+      row === null ||
+      !("id" in row) ||
+      !("company_id" in row) ||
+      !("recipient_id" in row) ||
+      !("required_permission" in row) ||
+      !("category" in row) ||
+      !("title" in row) ||
+      !("body" in row)
+    ) {
+      throw new Error("The pending workspace notification query returned an invalid row.")
+    }
+
+    const pending = row as PendingWorkspaceNotificationRow
+    const categories = [
+      "candidates",
+      "candidate-inquiries",
+      "tasks",
+      "approvals",
+      "finance",
+      "agent-finance",
+      "human-resources",
+      "communications",
+      "medical",
+    ]
+    if (
+      typeof pending.id !== "string" ||
+      typeof pending.company_id !== "string" ||
+      typeof pending.recipient_id !== "string" ||
+      typeof pending.required_permission !== "string" ||
+      !categories.includes(pending.category) ||
+      typeof pending.title !== "string" ||
+      typeof pending.body !== "string"
+    ) {
+      throw new Error("The pending workspace notification query returned invalid data.")
+    }
+    return {
+      id: pending.id,
+      company_id: pending.company_id,
+      recipient_id: pending.recipient_id,
+      title: pending.title,
+      body: pending.body,
+      type: "workspace",
+      required_permission: pending.required_permission,
+      destination: pending.category,
+    }
+  })
+
+  return [...legacyNotifications, ...workspaceNotifications]
 }
 
 export async function dispatchPushNotifications(options: {
@@ -382,7 +481,7 @@ export async function dispatchPushNotifications(options: {
 
               body: notification.body.slice(0, 500),
 
-              url: getNotificationPath(notification.type),
+              url: getNotificationPath(notification),
             }),
           )
 

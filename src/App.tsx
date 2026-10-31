@@ -95,6 +95,7 @@ const CompanyDrive = dynamic(() => import("./components/CompanyDrive"), { loadin
 const Tasks = dynamic(() => import("./components/TaskWorkspace"), { loading: PageLoading });
 const Communications = dynamic(() => import("./components/Communications"), { loading: PageLoading });
 const AIAssistant = dynamic(() => import("./components/AIAssistant"), { loading: PageLoading });
+const Reports = dynamic(() => import("./components/Reports"), { loading: PageLoading });
 const DepartmentsSettings = dynamic(() => import("./components/settings/DepartmentsSettings"), { loading: PageLoading });
 const CurrenciesSettings = dynamic(() => import("./components/settings/CurrenciesSettings"), { loading: PageLoading });
 const ServiceProvidersSettings = dynamic(() => import("./components/settings/ServiceProvidersSettings"), { loading: PageLoading });
@@ -123,6 +124,7 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
   approvals: () => import("./components/BranchApprovals"),
   requisitions: () => import("./components/RequisitionsWorkspace"),
   tasks: () => import("./components/TaskWorkspace"),
+  reports: () => import("./components/Reports"),
   communications: () => import("./components/Communications"),
   ai: () => import("./components/AIAssistant"),
   passport: () => import("./components/PassportCustodyWorkspace"),
@@ -201,6 +203,7 @@ type CompanyAccountStatus = "Active" | "Pending Verification" | "Suspended" | "D
 type CompanyProfile = {
   id: string;
   name: string;
+  slug: string;
   registrationNumber: string;
   country: string;
   city: string;
@@ -228,6 +231,7 @@ type CompanyUser = {
 
 type Session = {
   companyId: string;
+  companySlug: string;
   userId: string;
   roleId: string;
   userName: string;
@@ -329,7 +333,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   const supabase = createSupabaseBrowserClient();
   let membershipQuery = supabase
     .from("company_memberships")
-    .select("company_id, company:companies!inner(id, name, status, logo_url, registration_number, country, city, office_address, phone, email, website), role:company_roles!inner(id, name)")
+    .select("company_id, company:companies!inner(id, name, slug, status, logo_url, registration_number, country, city, office_address, phone, email, website), role:company_roles!inner(id, name)")
     .eq("user_id", user.id)
     .eq("status", "active");
   if (targetCompanyId) membershipQuery = membershipQuery.eq("company_id", targetCompanyId);
@@ -338,7 +342,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   if (error) throw new Error("Unable to load your company membership. Check the Supabase migration and RLS policies.");
   if (!membership) throw new Error("Your Supabase account has no active company membership yet.");
 
-  const companyValue = membership.company as unknown as { id: string; name: string; status: string; logo_url: string; registration_number: string; country: string; city: string; office_address: string; phone: string; email: string; website: string } | { id: string; name: string; status: string; logo_url: string; registration_number: string; country: string; city: string; office_address: string; phone: string; email: string; website: string }[];
+  const companyValue = membership.company as unknown as { id: string; name: string; slug: string; status: string; logo_url: string; registration_number: string; country: string; city: string; office_address: string; phone: string; email: string; website: string } | { id: string; name: string; slug: string; status: string; logo_url: string; registration_number: string; country: string; city: string; office_address: string; phone: string; email: string; website: string }[];
   const companyRecord = Array.isArray(companyValue) ? companyValue[0] : companyValue;
   const roleValue = membership.role as unknown as { id: string; name: string } | { id: string; name: string }[];
   const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue;
@@ -383,6 +387,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   const company: CompanyProfile = {
     id: companyRecord.id,
     name: companyRecord.name,
+    slug: companyRecord.slug,
     registrationNumber: companyRecord.registration_number ?? "",
     country: companyRecord.country ?? "",
     city: companyRecord.city ?? "",
@@ -413,6 +418,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     user: companyUser,
     session: {
       companyId: company.id,
+      companySlug: company.slug,
       userId: user.id,
       roleId: roleRecord.id,
       userName,
@@ -490,6 +496,7 @@ export default function App() {
   const [unlockPassword, setUnlockPassword] = useState("");
   const [unlockError, setUnlockError] = useState("");
   const [unlockSaving, setUnlockSaving] = useState(false);
+  const [idleCancelSaving, setIdleCancelSaving] = useState(false);
   const idleLockedRef = useRef(false);
   const lastActivityAt = useRef(Date.now());
 
@@ -971,7 +978,7 @@ export default function App() {
   // Uses pushState so the browser back button navigates between views.
   useEffect(() => {
     if (!session) return;
-    const slug = toCompanySlug(session.companyName);
+    const slug = session.companySlug;
     const targetPath = view === "dashboard" ? `/${slug}` : `/${slug}/${view}`;
 
     // Human-readable view titles for the browser tab
@@ -1353,6 +1360,34 @@ export default function App() {
     }
   };
 
+  const handleCancelIdleLock = async () => {
+    if (!session) return;
+    setUnlockError("");
+    setIdleCancelSaving(true);
+    try {
+      await removeBrowserPushSubscription().catch((error: unknown) =>
+        console.error("Push subscription cleanup failed during session cancellation.", error),
+      );
+      const { error } = await createSupabaseBrowserClient().auth.signOut();
+      if (error) throw error;
+      window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`);
+      idleLockedRef.current = false;
+      setIdleLocked(false);
+      setUnlockPassword("");
+      setCompanies([]);
+      setUsers([]);
+      setSession(null);
+      setView("dashboard");
+      setAuthView("login");
+      window.location.replace(`/${encodeURIComponent(session.companySlug)}/login`);
+    } catch (error) {
+      console.error("Unable to cancel the expired session.", error);
+      setUnlockError("Unable to sign out. Check your connection and try again.");
+    } finally {
+      setIdleCancelSaving(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await removeBrowserPushSubscription().catch((error: unknown) =>
@@ -1451,6 +1486,8 @@ export default function App() {
         return <Communications userName={session?.userName ?? "Team"} companyName={session?.companyName ?? ""} userEmail={activeUser?.email ?? ""} />;
       case "ai":
         return <AIAssistant />;
+      case "reports":
+        return <Reports permissions={session?.permissions ?? []} />;
       case "passport":
         return <PassportCustody companyName={session?.companyName ?? ""} onRegisterCandidate={() => handleNavigate("candidates")} />;
       case "settings":
@@ -1725,7 +1762,7 @@ export default function App() {
               )}
               <button
                 type="submit"
-                disabled={unlockSaving || !unlockPassword}
+                disabled={unlockSaving || idleCancelSaving || !unlockPassword}
                 className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
                 style={{
                   background: "var(--primary)",
@@ -1733,6 +1770,19 @@ export default function App() {
                 }}
               >
                 {unlockSaving ? "Verifying…" : "Continue to workspace"}
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelIdleLock}
+                disabled={unlockSaving || idleCancelSaving}
+                className="w-full rounded border px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              >
+                {idleCancelSaving ? "Signing out…" : "Cancel"}
               </button>
             </form>
           </div>

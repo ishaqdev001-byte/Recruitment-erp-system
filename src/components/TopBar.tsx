@@ -39,12 +39,14 @@ type NotificationItem = {
   title: string;
   body: string;
   time: string;
+  sortAt: string;
   read: boolean;
   view?: View;
   taskNotificationId?: string;
   candidateInquiryNotificationId?: string;
   leaveNotificationId?: string;
   requisitionNotificationId?: string;
+  workspaceNotificationId?: string;
 };
 
 type PushSettings = {
@@ -62,6 +64,25 @@ function decodeVapidPublicKey(value: string) {
   const padded = value + "=".repeat((4 - value.length % 4) % 4);
   const base64 = padded.replace(/-/g, "+").replace(/_/g, "/");
   return Uint8Array.from(window.atob(base64), (character) => character.charCodeAt(0));
+}
+
+function getPushSubscriptionError(error: unknown) {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return {
+      message: "This browser could not reach its push notification service. Check your connection or browser push settings and try again. Notifications will still appear in the app.",
+      expected: true,
+    };
+  }
+  if (error instanceof DOMException && error.name === "NotAllowedError") {
+    return {
+      message: "Allow notifications for this site in your browser settings, then try again.",
+      expected: true,
+    };
+  }
+  return {
+    message: error instanceof Error ? error.message : "Unable to enable browser alerts.",
+    expected: false,
+  };
 }
 
 export default function TopBar({
@@ -99,6 +120,7 @@ export default function TopBar({
   const [showProfile, setShowProfile] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [notifs, setNotifs] = useState<NotificationItem[]>([]);
+  const [notificationError, setNotificationError] = useState("");
   const [notificationPanelTop, setNotificationPanelTop] = useState(60);
   const [pushSettings, setPushSettings] = useState<PushSettings | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
@@ -106,6 +128,7 @@ export default function TopBar({
   const topbarRef = useRef<HTMLDivElement>(null);
   const notificationButtonRef = useRef<HTMLButtonElement>(null);
   const notificationPanelRef = useRef<HTMLDivElement>(null);
+  const workspaceNotificationsUnavailable = useRef(false);
   const canViewTaskReminders = permissions.includes("tasks.view");
   const canViewLeaveNotifications = permissions.some((permission) =>
     permission.startsWith("leave."),
@@ -184,7 +207,8 @@ export default function TopBar({
     let cancelled = false;
     const loadReminders = async () => {
       try {
-        const [taskResponse, inquiryResponse, leaveResponse, requisitionResponse] = await Promise.all([
+        if (!workspaceNotificationsUnavailable.current) setNotificationError("");
+        const [taskResponse, inquiryResponse, leaveResponse, requisitionResponse, workspaceResponse] = await Promise.all([
           canViewTaskReminders
             ? fetch("/api/tasks/reminders", { cache: "no-store" })
             : Promise.resolve(null),
@@ -197,7 +221,15 @@ export default function TopBar({
           canViewRequisitionNotifications
             ? fetch("/api/requisitions/notifications", { cache: "no-store" })
             : Promise.resolve(null),
+          workspaceNotificationsUnavailable.current
+            ? Promise.resolve(null)
+            : fetch("/api/notifications", { cache: "no-store" }),
         ]);
+        const failedResponses = [taskResponse, inquiryResponse, leaveResponse, requisitionResponse]
+          .filter((response): response is Response => response !== null && !response.ok);
+        if (failedResponses.length) {
+          throw new Error(`Notification history request failed (${failedResponses.map((response) => response.status).join(", ")}).`);
+        }
         const payload = taskResponse?.ok
           ? await taskResponse.json() as { reminders?: { id: string; title: string; body: string; sent_at: string; read_at: string | null }[] }
           : { reminders: [] };
@@ -210,11 +242,43 @@ export default function TopBar({
         const requisitionPayload = requisitionResponse?.ok
           ? await requisitionResponse.json() as { notifications?: { id: string; title: string; body: string; created_at: string; is_read: boolean }[] }
           : { notifications: [] };
+        const workspacePayload = workspaceResponse?.ok
+          ? await workspaceResponse.json() as {
+              available?: boolean;
+              warning?: string;
+              notifications?: { id: string; category: string; title: string; body: string; created_at: string; read_at: string | null }[];
+            }
+          : { notifications: [] };
+        if (workspacePayload.available === false) {
+          workspaceNotificationsUnavailable.current = true;
+          if (!cancelled) setNotificationError(workspacePayload.warning ?? "Workspace alerts are unavailable. Reload the app after notification setup is restored.");
+        }
+        if (workspaceResponse && !workspaceResponse.ok) {
+          workspaceNotificationsUnavailable.current = true;
+          const errorPayload = await workspaceResponse.json().catch(() => null) as { error?: string } | null;
+          if (!cancelled) {
+            setNotificationError(errorPayload?.error ?? "Workspace alerts are unavailable. Reload the app after the notification setup is restored.");
+          }
+        }
         if (cancelled) return;
         const reminders = payload.reminders ?? [];
         const inquiryReminders = inquiryPayload.reminders ?? [];
         const leaveNotifications = leavePayload.notifications ?? [];
         const requisitionNotifications = requisitionPayload.notifications ?? [];
+        const workspaceNotifications = workspacePayload.notifications ?? [];
+        const workspaceView = (category: string): View => {
+          switch (category) {
+            case "candidate-inquiries": return "candidate-inquiries";
+            case "tasks": return "tasks";
+            case "approvals": return "approvals";
+            case "finance": return "finance";
+            case "agent-finance": return "agent-invoices";
+            case "human-resources": return "human-resources";
+            case "communications": return "communications";
+            case "medical": return "medical-management";
+            default: return "candidates";
+          }
+        };
 
         // Determine leave notification priority by stage
         const leaveNotifPriority = (stage: string): NotificationPriority => {
@@ -240,6 +304,7 @@ export default function TopBar({
             title: notification.title,
             body: notification.body,
             time: new Date(notification.created_at).toLocaleString(),
+            sortAt: notification.created_at,
             read: notification.is_read,
           })),
           ...leaveNotifications.map((n) => ({
@@ -251,6 +316,7 @@ export default function TopBar({
             title: n.title,
             body: n.body,
             time: new Date(n.sent_at).toLocaleString(),
+            sortAt: n.sent_at,
             read: Boolean(n.read_at),
           })),
           ...inquiryReminders.map((reminder) => ({
@@ -262,6 +328,7 @@ export default function TopBar({
             title: reminder.title,
             body: reminder.body,
             time: new Date(reminder.sent_at).toLocaleString(),
+            sortAt: reminder.sent_at,
             read: Boolean(reminder.read_at),
           })),
           ...reminders.map((reminder) => ({
@@ -273,9 +340,22 @@ export default function TopBar({
             title: reminder.title,
             body: reminder.body,
             time: new Date(reminder.sent_at).toLocaleString(),
+            sortAt: reminder.sent_at,
             read: Boolean(reminder.read_at),
           })),
-        ]);
+          ...workspaceNotifications.map((notification) => ({
+            id: `workspace-${notification.id}`,
+            workspaceNotificationId: notification.id,
+            view: workspaceView(notification.category),
+            priority: "Important" as const,
+            type: "info" as const,
+            title: notification.title,
+            body: notification.body,
+            time: new Date(notification.created_at).toLocaleString(),
+            sortAt: notification.created_at,
+            read: Boolean(notification.read_at),
+          })),
+        ].sort((left, right) => Date.parse(right.sortAt) - Date.parse(left.sortAt)));
         if (pushSettings?.configured && pushSettings.subscribed) {
           const dispatchResponse = await fetch("/api/notifications/push/dispatch", { method: "POST" });
           if (!dispatchResponse.ok) {
@@ -284,6 +364,7 @@ export default function TopBar({
         }
       } catch (error) {
         console.error("Loading notification history failed", error);
+        if (!cancelled) setNotificationError("Notifications could not be loaded. Please try again.");
       }
     };
     const refreshReminders = () => { void loadReminders(); };
@@ -333,6 +414,9 @@ export default function TopBar({
 
   const markAllRead = async () => {
     const requests: Promise<Response>[] = [];
+    if (!workspaceNotificationsUnavailable.current) {
+      requests.push(fetch("/api/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }));
+    }
     if (canViewCandidateInquiries)
       requests.push(fetch("/api/candidate-inquiries/reminders", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) }));
     if (canViewTaskReminders)
@@ -366,6 +450,8 @@ export default function TopBar({
         response = await fetch("/api/leave/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.leaveNotificationId }) });
       } else if (notification.requisitionNotificationId) {
         response = await fetch("/api/requisitions/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.requisitionNotificationId }) });
+      } else if (notification.workspaceNotificationId) {
+        response = await fetch("/api/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notification.workspaceNotificationId }) });
       }
       if (response && !response.ok) {
         console.error("Notification read update failed", response.status);
@@ -393,7 +479,8 @@ export default function TopBar({
       if (permission !== "granted") {
         throw new Error("Allow notifications in your browser settings to receive alerts.");
       }
-      const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" });
+      await navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" });
+      const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription()
         ?? await registration.pushManager.subscribe({
           userVisibleOnly: true,
@@ -411,9 +498,13 @@ export default function TopBar({
       setPushSettings((current) => current ? { ...current, subscribed: true } : current);
       setPushMessage("Browser alerts are enabled.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to enable browser alerts.";
-      setPushMessage(message);
-      console.error("Enabling browser push notifications failed", error);
+      const pushError = getPushSubscriptionError(error);
+      setPushMessage(pushError.message);
+      if (pushError.expected) {
+        console.warn("Browser push subscription is unavailable.", pushError.message);
+      } else {
+        console.error("Enabling browser push notifications failed", error);
+      }
     } finally {
       setPushBusy(false);
     }
@@ -620,7 +711,12 @@ export default function TopBar({
                   {pushMessage && <div className="mt-2 text-[11px]" role="status" style={{ color: "var(--muted-foreground)" }}>{pushMessage}</div>}
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto">
-                  {visibleNotifs.length === 0 ? (
+                  {notificationError && (
+                    <div className="px-4 py-3 text-xs" role="alert" style={{ color: "var(--destructive, #ef4444)" }}>
+                      {notificationError}
+                    </div>
+                  )}
+                  {visibleNotifs.length === 0 && !notificationError ? (
                     <div className="px-4 py-8 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>You are all caught up.</div>
                   ) : groupedNotifications.map((group) => group.items.length > 0 && (
                     <div key={group.priority} className="border-b last:border-b-0" style={{ borderColor: "var(--border)" }}>

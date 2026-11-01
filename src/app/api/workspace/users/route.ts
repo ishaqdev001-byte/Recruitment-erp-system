@@ -1264,11 +1264,11 @@ export async function POST(request: Request) {
 
       const { data: company, error: companyError } = await admin
         .from("companies")
-        .select("name")
+        .select("name, slug")
         .eq("id", access.companyId)
         .maybeSingle()
 
-      if (companyError || !company)
+      if (companyError || !company || !company.slug)
         return NextResponse.json(
           { error: "Unable to load the inviting company." },
           { status: 500, headers: responseHeaders },
@@ -1279,7 +1279,7 @@ export async function POST(request: Request) {
       const siteUrl =
         process.env.NEXT_PUBLIC_SITE_URL?.trim() || new URL(request.url).origin
 
-      const redirectUrl = new URL("/", siteUrl)
+      const redirectUrl = new URL(`/${encodeURIComponent(company.slug)}`, siteUrl)
 
       redirectUrl.searchParams.set("invite", "1")
 

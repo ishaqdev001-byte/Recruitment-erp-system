@@ -41,10 +41,11 @@ export function isMedicalOnlyUser(permissions: string[]): boolean {
  */
 export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   // Candidates permissions
-  "candidates.view": new Set(["candidates", "reports"]),
+  "candidates.view": new Set(["candidates"]),
+  "reports.view": new Set(["reports"]),
   "candidates.create": new Set(["candidates"]),
   "candidates.register": new Set(["candidates"]),
-  "candidate_inquiries.view": new Set(["candidate-inquiries", "reports"]),
+  "candidate_inquiries.view": new Set(["candidate-inquiries"]),
   "candidate_inquiries.create": new Set(["candidate-inquiries"]),
   "candidates.edit": new Set(["candidates"]),
   "candidates.delete": new Set(["candidates"]),
@@ -78,7 +79,6 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
     "invoices",
     "payments",
     "paychecks",
-    "reports",
     "medical-appointments",
   ]),
   "agent_finance.view": new Set(["agent-invoices"]),
@@ -105,10 +105,10 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "users.edit": new Set(["users"]),
 
   // Audit permissions
-  "audit.view": new Set(["auditlog", "reports"]),
+  "audit.view": new Set(["auditlog"]),
 
   // Tasks permissions
-  "tasks.view": new Set(["tasks", "reports"]),
+  "tasks.view": new Set(["tasks"]),
   "tasks.create": new Set(["tasks"]),
   "tasks.edit": new Set(["tasks"]),
   "tasks.delete": new Set(["tasks"]),
@@ -125,13 +125,13 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "roles.manage": new Set(["users", "settings"]),
 
   // Employers & Contractors
-  "employers.view": new Set(["contractors", "projects", "reports"]),
+  "employers.view": new Set(["contractors", "projects"]),
   "employers.create": new Set(["contractors", "projects"]),
   "employers.edit": new Set(["contractors", "projects"]),
   "employers.delete": new Set(["contractors", "projects"]),
 
   // Suppliers
-  "suppliers.view": new Set(["suppliers", "reports"]),
+  "suppliers.view": new Set(["suppliers"]),
   "suppliers.create": new Set(["suppliers"]),
   "suppliers.edit": new Set(["suppliers"]),
   "suppliers.delete": new Set(["suppliers"]),

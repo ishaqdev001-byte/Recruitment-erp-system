@@ -155,10 +155,10 @@ export default function CompanyResetPasswordPage({
             <h1 className="text-xl font-700 text-center text-slate-100 mb-2">{error}</h1>
             <p className="text-center text-slate-400 text-sm mb-6">Please check the URL and try again.</p>
             <button
-              onClick={() => router.push("/")}
+              onClick={() => router.push(`/${companySlug}/login`)}
               className="w-full px-4 py-3 rounded-lg font-600 text-sm transition-all duration-200 bg-blue-600 hover:bg-blue-700 text-white"
             >
-              Return to Home
+              Return to Company Login
             </button>
           </div>
         </div>

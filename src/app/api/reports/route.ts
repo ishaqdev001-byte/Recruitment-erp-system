@@ -105,6 +105,20 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Active company membership not found." }, { status: 403, headers });
     }
 
+    const { data: canViewReports, error: reportsPermissionError } = await supabase.rpc(
+      "current_user_has_company_permission",
+      {
+        requested_company_id: membership.company_id,
+        requested_permission: "reports.view",
+      },
+    );
+    if (reportsPermissionError) {
+      return NextResponse.json({ error: "Unable to verify report permissions." }, { status: 503, headers });
+    }
+    if (!canViewReports) {
+      return NextResponse.json({ error: "You do not have permission to access reports." }, { status: 403, headers });
+    }
+
     const [
       { data: canViewCandidates, error: candidatesPermissionError },
       { data: canViewInquiries, error: inquiriesPermissionError },
@@ -159,11 +173,6 @@ export async function GET(request: Request) {
     const canReadSuppliers = Boolean(canViewSuppliers);
     const canReadEmployers = Boolean(canViewEmployers);
     const canReadProjects = Boolean(canViewProjects);
-    if (!canReadCandidates && !canReadInquiries && !canReadTasks && !canViewFinance && !canViewAudit
-      && !canReadSuppliers && !canReadEmployers) {
-      return NextResponse.json({ error: "You do not have permission to access reports." }, { status: 403, headers });
-    }
-
     const url = new URL(request.url);
     const requestedStart = url.searchParams.get("start");
     const requestedEnd = url.searchParams.get("end");

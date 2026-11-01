@@ -1547,7 +1547,13 @@ export default function App() {
     return (
       <AuthenticationExperience
         authView={authView}
-        onSwitchView={setAuthView}
+        onSwitchView={(nextView) => {
+          if (nextView === "landing") {
+            window.location.assign("/");
+            return;
+          }
+          setAuthView(nextView);
+        }}
         companyForm={companyForm}
         onCompanyFormChange={setCompanyForm}
         onRegister={handleRegisterSubmit}
@@ -1578,7 +1584,6 @@ export default function App() {
         onInvitePasswordChange={setInvitePassword}
         onInvitePasswordConfirmChange={setInvitePasswordConfirm}
         onAcceptInvitation={handleAcceptInvitation}
-        onContinueDemo={() => setAuthView("login")}
       />
     );
   }
@@ -1872,7 +1877,6 @@ function AuthenticationExperience({
   onInvitePasswordChange,
   onInvitePasswordConfirmChange,
   onAcceptInvitation,
-  onContinueDemo,
 }: {
   authView: "landing" | "login" | "register" | "verify" | "invite" | "reset-password";
   onSwitchView: (view: "landing" | "login" | "register" | "verify" | "invite" | "reset-password") => void;
@@ -1906,7 +1910,6 @@ function AuthenticationExperience({
   onInvitePasswordChange: (password: string) => void;
   onInvitePasswordConfirmChange: (password: string) => void;
   onAcceptInvitation: (event: FormEvent) => void;
-  onContinueDemo: () => void;
 }) {
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
@@ -1984,71 +1987,6 @@ function AuthenticationExperience({
               Back to login
             </button>
           </form>
-        </div>
-      </div>
-    );
-  }
-
-  if (authView === "landing") {
-    return (
-      <div className="min-h-screen w-full flex items-center justify-center p-6" style={{ background: "radial-gradient(circle at top, rgba(0,100,255,0.10), transparent 30%), var(--background)" }}>
-        <div className="w-full max-w-6xl grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="rounded-3xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <div className="mb-6">
-              <KilaxWordmark />
-            </div>
-            <div className="mb-6 inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-700 uppercase tracking-[0.22em]" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--primary)" }}>
-              Multi-tenant ERP platform
-            </div>
-            <h1 className="text-4xl font-700 leading-tight" style={{ color: "var(--foreground)" }}>
-              Every company gets its own secure workspace.
-            </h1>
-            <p className="mt-4 max-w-xl text-base leading-7" style={{ color: "var(--muted-foreground)" }}>
-              Recruit and manage talent across independent recruitment companies without data mixing. One registration creates one company workspace and one primary administrator.
-            </p>
-            <div className="mt-8 grid gap-4 sm:grid-cols-3">
-              {[
-                { label: "Company isolation", value: "100%" },
-                { label: "Role-based access", value: "Granular" },
-                { label: "Finance & visa ops", value: "Unified" },
-              ].map((item) => (
-                <div key={item.label} className="rounded border p-4" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}>
-                  <div className="text-2xl font-700 mono" style={{ color: "var(--primary)" }}>{item.value}</div>
-                  <div className="mt-1 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>{item.label}</div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <button onClick={() => onSwitchView("register")} className="px-5 py-3 rounded font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-                Register Your Company
-              </button>
-              <button onClick={() => onSwitchView("login")} className="px-5 py-3 rounded border font-600" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
-                Log In
-              </button>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border p-8" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <div className="mb-5 flex items-center justify-between">
-              <span className="text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Platform access</span>
-              <span className="rounded-full border px-2 py-1 text-[10px] font-700 uppercase tracking-widest" style={{ borderColor: "var(--border)", color: "var(--primary)" }}>Secure</span>
-            </div>
-            <div className="space-y-4">
-              <div className="rounded border p-4" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
-                <div className="text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Primary admin</div>
-                <div className="mt-2 text-lg font-700" style={{ color: "var(--foreground)" }}>Aisha Khan</div>
-                <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>Owner / Primary Admin</div>
-              </div>
-              <div className="rounded border p-4" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
-                <div className="text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Workspace</div>
-                <div className="mt-2 text-lg font-700" style={{ color: "var(--foreground)" }}>Kilax Smart Recruit Demo</div>
-                <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>Status: Active</div>
-              </div>
-              <button onClick={onContinueDemo} className="w-full px-4 py-3 rounded font-600" style={{ background: "var(--secondary)", border: "1px solid var(--border)", color: "var(--foreground)" }}>
-                Continue to demo owner workspace
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     );

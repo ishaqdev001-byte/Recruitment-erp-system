@@ -1,5 +1,5 @@
-import App from "../App";
+import MarketingLanding from "../components/MarketingLanding"
 
 export default function Page() {
-  return <App />;
+  return <MarketingLanding />
 }

@@ -516,6 +516,14 @@ const candidateRegistrationSourcesMigration = await readFile(
   "utf8",
 )
 
+const reportsAnalyticsPermissionMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261101105601_reports_analytics_view_permission.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const database = new PGlite()
 
 const companyA = "10000000-0000-4000-8000-000000000001"
@@ -3296,6 +3304,28 @@ try {
   await database.exec(workspaceNotificationEventsMigration)
 
   await database.exec(candidateRegistrationSourcesMigration)
+
+  await database.exec(reportsAnalyticsPermissionMigration)
+  await database.exec(reportsAnalyticsPermissionMigration)
+  await database.query("select public.seed_company_default_roles($1)", [
+    companyA,
+  ])
+
+  const reportsViewRoles = await database.query(
+    `select role.name
+     from public.role_permissions role_permission
+     join public.company_roles role
+       on role.id = role_permission.role_id
+      and role.company_id = role_permission.company_id
+     where role.company_id = $1
+       and role_permission.permission_code = 'reports.view'
+     order by role.name`,
+    [companyA],
+  )
+  assert.deepEqual(
+    reportsViewRoles.rows.map((role) => role.name),
+    ["CEO", "Chairman", "Company Owner / Primary Administrator"],
+  )
 
   const candidateSourcesRls = await database.query(`
     select relrowsecurity

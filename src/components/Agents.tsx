@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, Eye, Plus, Search, UserRound, Users, UserCheck, UserX } from "lucide-react";
+import { matchesSearch } from "@/lib/search";
 
 type AgentRecord = {
   id: string;
@@ -116,7 +117,7 @@ export default function Agents() {
   const activeCount = agents.filter((agent) => agent.status === "active").length;
   const inactiveCount = agents.filter((agent) => agent.status === "disabled").length;
   const filtered = agents.filter((agent) =>
-    `${agent.name} ${agent.phone} ${agent.email} ${agent.branch}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+    matchesSearch(search, agent.name, agent.phone, agent.email, agent.branch),
   );
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const selectedMetrics = selectedAgent ? candidateMetrics(selectedAgent, candidates) : null;

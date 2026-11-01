@@ -1,12 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 /**
- * Middleware to detect company subdomain/slug and set it in request headers
+ * Proxy to detect company subdomain/slug and set it in request headers
  * Supports patterns like:
  * - https://recruit.kilaxtech.com/kilax-dammy-recruit/... -> company slug: kilax-dammy-recruit
  * - http://localhost:3000/kilax-dammy-recruit/... -> company slug: kilax-dammy-recruit
  */
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   
   // Extract company slug from URL path
@@ -36,7 +36,7 @@ export function middleware(request: NextRequest) {
   });
 }
 
-// Configure which routes to run middleware on
+// Configure which routes to run the proxy on
 export const config = {
   matcher: [
     /*

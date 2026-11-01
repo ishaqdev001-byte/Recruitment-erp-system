@@ -31,6 +31,22 @@ const candidateSeed = await readFile(
   "utf8",
 )
 
+const candidateAttributionMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261101045552_candidate_edit_attribution.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const candidateEditorNameLookupMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261101050525_candidate_editor_name_lookup.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const companyBrandingMigration = await readFile(
   new URL(
     "../supabase/migrations/202610040003_company_branding.sql",
@@ -492,6 +508,14 @@ const workspaceNotificationEventsMigration = await readFile(
   "utf8",
 )
 
+const candidateRegistrationSourcesMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261101083540_candidate_registration_sources_and_passport_uniqueness.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const database = new PGlite()
 
 const companyA = "10000000-0000-4000-8000-000000000001"
@@ -548,6 +572,24 @@ try {
   await database.exec(companySeed)
 
   await database.exec(candidateSeed)
+
+  await database.exec(candidateAttributionMigration)
+
+  await database.exec(`
+    begin;
+    insert into auth.users (id) values ('20000000-0000-4000-8000-000000000099');
+    select set_config('request.jwt.claim.sub', '20000000-0000-4000-8000-000000000099', true);
+    update public.candidates
+    set first_name = first_name
+    where id = (select id from public.candidates limit 1);
+  `)
+  const candidateEditor = await database.query(`
+    select updated_by from public.candidates
+    where updated_by = '20000000-0000-4000-8000-000000000099'
+    limit 1
+  `)
+  assert.equal(candidateEditor.rows.length, 1, "candidate updates record the authenticated editor")
+  await database.exec("rollback")
 
   await database.exec(companyBrandingMigration)
 
@@ -837,6 +879,7 @@ try {
   await database.exec(`
     alter table public.candidates add column if not exists branch_id uuid;
     alter table public.candidate_inquiries add column if not exists branch_id uuid;
+    alter table public.company_memberships add column if not exists branch_id uuid;
     create or replace function public.current_user_can_see_branch(requested_company_id uuid, requested_branch_id uuid)
       returns boolean language sql stable as $$ select true $$;
     create or replace function public.can_access_candidate_document(requested_company_id uuid, requested_document_type text, requested_action text, requested_candidate_id uuid)
@@ -846,6 +889,20 @@ try {
   await database.exec(recruitmentAgentAccessControlsMigration)
 
   await database.exec(recruitmentAgentAccessControlsMigration)
+
+  await database.exec(candidateEditorNameLookupMigration)
+
+  await database.exec(candidateEditorNameLookupMigration)
+
+  assert.match(
+    candidateEditorNameLookupMigration,
+    /current_user_has_company_permission\(requested_company_id, 'candidates\.edit'\)/,
+  )
+
+  assert.match(
+    candidateEditorNameLookupMigration,
+    /current_user_can_see_branch\(requested_company_id,\s*membership\.branch_id\)/,
+  )
 
   await database.exec(recruitmentAgentWorkforceAccessMigration)
 
@@ -3237,6 +3294,47 @@ try {
     returns trigger language plpgsql as $$ begin return new; end $$;
   `)
   await database.exec(workspaceNotificationEventsMigration)
+
+  await database.exec(candidateRegistrationSourcesMigration)
+
+  const candidateSourcesRls = await database.query(`
+    select relrowsecurity
+    from pg_class
+    where oid = 'public.candidate_source_options'::regclass
+  `)
+  assert.equal(candidateSourcesRls.rows[0]?.relrowsecurity, true)
+
+  const sourceManagementPermission = await database.query(
+    `select count(*)::integer as count
+     from public.role_permissions role_permission
+     join public.company_roles role
+       on role.id = role_permission.role_id
+      and role.company_id = role_permission.company_id
+     where role.company_id = $1
+       and role.name = 'Company Owner / Primary Administrator'
+       and role_permission.permission_code = 'candidates.sources.manage'`,
+    [companyA],
+  )
+  assert.equal(sourceManagementPermission.rows[0].count, 1)
+
+  await database.query(
+    `insert into public.candidates (company_id, file_number, first_name, last_name, details)
+     values ($1, 'PASSPORT-UNIQUE-TEST-1', 'Unique', 'Passport', '{"passportNumber":"UNIQUE-PASSPORT-TEST"}')`,
+    [companyA],
+  )
+  await assert.rejects(
+    () =>
+      database.query(
+        `insert into public.candidates (company_id, file_number, first_name, last_name, details)
+         values ($1, 'PASSPORT-UNIQUE-TEST-2', 'Duplicate', 'Passport', '{"passportNumber":"unique-passport-test"}')`,
+        [companyA],
+      ),
+    (error) => {
+      assert.equal(error.code, "23505")
+      return true
+    },
+    "passport number uniqueness is case-insensitive",
+  )
 
   const notificationRls = await database.query(`
     select relrowsecurity

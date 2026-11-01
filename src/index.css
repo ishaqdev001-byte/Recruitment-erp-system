@@ -131,7 +131,13 @@ body {
   min-width: 0;
 }
 
+.app-shell > .contents > .flex-1 {
+  min-width: 0;
+  min-height: 0;
+}
+
 .app-shell main {
+  width: 100%;
   min-width: 0;
   min-height: 0;
   overscroll-behavior: contain;
@@ -146,6 +152,72 @@ body {
 
 .app-shell main :where(input, select, textarea) {
   max-width: 100%;
+}
+
+.app-shell main :where([role='tablist']) {
+  max-width: 100%;
+  min-width: 0;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-shell main :where(.overflow-x-auto, .overflow-auto, [role='tablist']) {
+  max-width: 100%;
+  min-width: 0;
+  overscroll-behavior-x: contain;
+  scroll-behavior: smooth;
+  scrollbar-color: var(--muted-foreground) transparent;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-shell main :where(.overflow-x-auto, .overflow-auto) > table {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+}
+
+.app-shell main .candidate-detail-section-tabs {
+  width: max-content;
+  min-width: max-content;
+  max-width: none;
+}
+
+.app-shell main :where([role='tab']) {
+  position: relative;
+  border-radius: 0.65rem;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.app-shell main :where([role='tab']:hover) {
+  background-color: color-mix(in srgb, var(--primary) 9%, var(--card));
+}
+
+.app-shell main :where([role='tab'][aria-selected='true']) {
+  border-radius: 0.65rem;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+.app-shell main :where(table tbody tr) {
+  transition:
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.app-shell main :where(table tbody tr[data-row-selected='true']),
+.app-shell main :where(table tbody tr:has(input[type='checkbox']:checked)) {
+  background-color: color-mix(in srgb, var(--primary) 10%, var(--card));
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.app-shell main :where(table tbody tr:focus-within) {
+  outline: 2px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  outline-offset: -2px;
 }
 
 [data-scroll-reveal='pending'] {
@@ -166,6 +238,10 @@ body {
 }
 
 @media (max-width: 1023px) {
+  .app-shell main :where(.flex, .grid) {
+    min-width: 0;
+  }
+
   .grid-cols-6 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -202,10 +278,11 @@ body {
   }
 
   main table {
-    display: block;
-    width: 100%;
-    max-width: 100%;
-    overflow-x: auto;
+    display: table;
+    width: max-content;
+    min-width: 100%;
+    max-width: none;
+    overflow: visible;
     white-space: nowrap;
   }
 }
@@ -267,8 +344,35 @@ body {
     scrollbar-gutter: auto;
   }
 
+  .app-shell main :where(.overflow-x-auto, .overflow-auto) {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .app-shell main :where(.grid > .col-span-2, .grid > .col-span-3, .grid > .col-span-4) {
+    grid-column: 1 / -1;
+  }
+
   .app-shell main :where(button, input, select, textarea) {
     scroll-margin: 1rem;
+  }
+
+  .app-shell main :where([role='tablist']) {
+    padding-inline: 0.75rem;
+  }
+
+  .app-shell main :where(table th, table td) {
+    max-width: min(18rem, 72vw);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .app-shell main :where([role='tab']:hover) {
+    transform: translateY(-1px);
+  }
+
+  .app-shell main :where(table tbody tr:hover) {
+    background-color: color-mix(in srgb, var(--primary) 6%, var(--card));
   }
 }
 
@@ -283,6 +387,10 @@ body {
   [data-scroll-reveal='visible'] {
     opacity: 1;
     transform: none;
+    transition: none;
+  }
+
+  .app-shell main :where([role='tab'], table tbody tr) {
     transition: none;
   }
 }

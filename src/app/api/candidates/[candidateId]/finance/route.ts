@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { canViewCandidateFinance } from "@/lib/server/candidate-finance-access";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -38,12 +39,27 @@ export async function GET(
       return NextResponse.json({ error: "Candidate not found." }, { status: 404, headers: responseHeaders });
     }
 
-    // Verify finance.view permission
+    const { data: membership, error: membershipError } = await supabase
+      .from("company_memberships")
+      .select("role:company_roles!company_memberships_role_id_fkey(name)")
+      .eq("company_id", candidate.company_id)
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .maybeSingle();
+    if (membershipError || !membership) {
+      return NextResponse.json({ error: "You do not have permission to view finance records." }, { status: 403, headers: responseHeaders });
+    }
+
+    const role = membership.role as { name: string } | { name: string }[] | null;
+    const roleName = Array.isArray(role) ? role[0]?.name ?? "" : role?.name ?? "";
     const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
       requested_company_id: candidate.company_id,
       requested_permission: "finance.view",
     });
-    if (permissionError || !allowed) {
+    if (permissionError) {
+      return NextResponse.json({ error: "Unable to verify your finance permissions." }, { status: 503, headers: responseHeaders });
+    }
+    if (!canViewCandidateFinance(roleName, Boolean(allowed))) {
       return NextResponse.json({ error: "You do not have permission to view finance records." }, { status: 403, headers: responseHeaders });
     }
 

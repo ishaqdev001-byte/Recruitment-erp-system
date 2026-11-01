@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { LockKeyhole } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
+import { matchesSearch } from "@/lib/search";
 
 const logs = [
   { id: 1, user: "Aisha Khan", action: "Updated passport status", module: "Passport Custody", candidate: "Godfrey Kamuhangire", prev: "Candidate Has Passport", next: "In Company Custody", date: "Aug 26, 2026", time: "09:14 AM", sensitive: true },
@@ -33,7 +34,7 @@ export default function AuditLog() {
     const mm = moduleFilter === "All" || l.module === moduleFilter;
     const mu = userFilter === "All" || l.user === userFilter;
     const ms = !sensitiveOnly || l.sensitive;
-    const mq = !search || l.action.toLowerCase().includes(search.toLowerCase()) || l.candidate.toLowerCase().includes(search.toLowerCase()) || l.user.toLowerCase().includes(search.toLowerCase());
+    const mq = matchesSearch(search, l.action, l.candidate, l.user);
     return mm && mu && ms && mq;
   });
 

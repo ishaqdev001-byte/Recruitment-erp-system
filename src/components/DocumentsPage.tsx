@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { matchesSearch } from "@/lib/search";
 
 const docs = [
   { id: 1, candidate: "Godfrey Kamuhangire", fileNo: "CRSL-957214073", type: "Passport", name: "passport_scan.pdf", status: "Verified", date: "Aug 10, 2026", uploadedBy: "Aisha Khan" },
@@ -23,7 +24,7 @@ export default function DocumentsPage() {
   const [search, setSearch] = useState("");
 
   const filtered = docs.filter((d) => {
-    const ms = !search || d.candidate.toLowerCase().includes(search.toLowerCase()) || d.name.toLowerCase().includes(search.toLowerCase());
+    const ms = matchesSearch(search, d.candidate, d.name);
     const mt = typeFilter === "All" || d.type === typeFilter;
     const mst = statusFilter === "All" || d.status === statusFilter;
     return ms && mt && mst;

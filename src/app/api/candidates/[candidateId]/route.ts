@@ -91,6 +91,22 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       const assignedAgent = typeof updates.agent_name === "string" ? updates.agent_name : "";
       const passportError = passportSetupError(details, assignedAgent);
       if (passportError) return NextResponse.json({ error: passportError }, { status: 400, headers });
+      const source = typeof details.source === "string" ? details.source.trim() : "";
+      if (source) {
+        const { data: sourceOption, error: sourceError } = await supabase
+          .from("candidate_source_options")
+          .select("id")
+          .eq("company_id", currentCandidate.company_id)
+          .eq("source", source)
+          .maybeSingle();
+        if (sourceError) {
+          console.error("Candidate source validation failed", sourceError);
+          return NextResponse.json({ error: "Unable to verify the selected candidate source." }, { status: 503, headers });
+        }
+        if (!sourceOption) {
+          return NextResponse.json({ error: "Select a source configured for this company." }, { status: 400, headers });
+        }
+      }
       const currentDetails = currentCandidate.details && typeof currentCandidate.details === "object" && !Array.isArray(currentCandidate.details)
         ? currentCandidate.details as Record<string, unknown>
         : {};
@@ -129,21 +145,44 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
     }
     if (!Object.keys(updates).length) return NextResponse.json({ error: "Provide at least one candidate field to update." }, { status: 400, headers });
 
+    const { data: people, error: peopleError } = await supabase.rpc(
+      "list_candidate_inquiry_people",
+      { requested_company_id: currentCandidate.company_id },
+    );
+    if (peopleError) {
+      console.error("Candidate attribution lookup failed", peopleError);
+      return NextResponse.json({ error: "Unable to verify candidate editors." }, { status: 503, headers });
+    }
+
     const { data, error } = await supabase
       .from("candidates")
       .update(updates as never)
       .eq("id", candidateId)
-      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details")
+      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
       .maybeSingle();
     if (error || !data) {
       console.error("Candidate update failed", error);
       if (error?.message.includes("Visa invoice could not be created:")) {
         return NextResponse.json({ error: error.message }, { status: 400, headers });
       }
+      const duplicateError = `${error?.message ?? ""} ${error?.details ?? ""}`.toLocaleLowerCase();
+      if (error?.code === "23505" && (
+        duplicateError.includes("passportnumber") ||
+        duplicateError.includes("passport_number_unique_idx")
+      )) {
+        return NextResponse.json({ error: "That passport number is already registered to a candidate." }, { status: 409, headers });
+      }
       return NextResponse.json({ error: "Unable to update this candidate. Check your edit permission." }, { status: 403, headers });
     }
 
-    return NextResponse.json({ candidate: data }, { headers });
+    const names = new Map((people ?? []).map((person: { user_id: string; display_name: string }) => [person.user_id, person.display_name]));
+    return NextResponse.json({
+      candidate: {
+        ...data,
+        created_by_name: data.created_by ? names.get(data.created_by) ?? "Former team member" : null,
+        updated_by_name: data.updated_by ? names.get(data.updated_by) ?? "Former team member" : null,
+      },
+    }, { headers });
   } catch (error) {
     console.error("Candidate update request failed", error);
     return NextResponse.json({ error: "Candidate update is unavailable." }, { status: 503, headers });

@@ -66,10 +66,13 @@ export async function GET(request: Request) {
     if (!isMainBranch) query = query.eq("branch_id", membership.branch_id);
 
     if (q) {
-      // ilike search across name and file number
-      query = query.or(
-        `first_name.ilike.%${q}%,last_name.ilike.%${q}%,file_number.ilike.%${q}%`,
-      );
+      const searchTokens = q.normalize("NFKC").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+      if (!searchTokens.length) query = query.eq("id", "00000000-0000-0000-0000-000000000000");
+      for (const token of searchTokens) {
+        query = query.or(
+          `first_name.ilike.%${token}%,last_name.ilike.%${token}%,file_number.ilike.%${token}%,phone.ilike.%${token}%`,
+        );
+      }
     }
 
     const { data: candidates, error: candidateError } = await query;

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowDownLeft, ArrowUpRight, Plus, Search, WalletCards } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
 import OtherIncomeWorkspace from "./OtherIncomeWorkspace";
+import { matchesSearch } from "@/lib/search";
 
 type AccountType = "cash" | "bank" | "mobile_money" | "project" | "other";
 type Account = { id: string; name: string; account_type: AccountType; account_number: string; description: string; status: string; balance: number };
@@ -64,9 +65,7 @@ export default function AccountsWorkspace() {
 
   const activeAccounts = accounts.filter((account) => account.status === "active");
   const visibleTransactions = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    if (!query) return transactions;
-    return transactions.filter((item) => `${item.account_name} ${item.transaction_type} ${item.reference} ${item.description} ${item.payment_method}`.toLocaleLowerCase().includes(query));
+    return transactions.filter((item) => matchesSearch(search, item.account_name, item.transaction_type, item.reference, item.description, item.payment_method));
   }, [search, transactions]);
   const accountOptions = activeAccounts.map((account) => ({ value: account.id, label: account.name, description: `${accountTypeLabel[account.account_type]} · ${money(account.balance)}`, searchText: account.account_number }));
 

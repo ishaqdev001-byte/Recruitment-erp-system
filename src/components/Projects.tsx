@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { BriefcaseBusiness, Eye, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
+import { matchesSearch } from "@/lib/search";
 
 type ProjectStatus = "active" | "inactive" | "cancelled";
 type ProjectRecord = {
@@ -122,9 +123,8 @@ export default function Projects() {
     return () => { cancelled = true; };
   }, [reloadKey]);
 
-  const normalizedSearch = search.trim().toLocaleLowerCase();
   const filteredProjects = projects.filter((project) =>
-    `${project.project_name} ${project.contractor_name} ${project.country}`.toLocaleLowerCase().includes(normalizedSearch),
+    matchesSearch(search, project.project_name, project.contractor_name, project.country),
   );
 
   const closeForm = () => {

@@ -821,6 +821,8 @@ export default function App() {
     let refreshing = false;
     let refreshAgain = false;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let retryDelay = 1_000;
     let lastRefreshError = "";
 
     const clearWorkspace = async () => {
@@ -839,6 +841,10 @@ export default function App() {
     };
 
     const refreshAccess = async () => {
+      if (retryTimer) {
+        refreshAgain = true;
+        return;
+      }
       if (refreshing) {
         refreshAgain = true;
         return;
@@ -891,6 +897,12 @@ export default function App() {
         const nextIsMainBranch = !branchRecord || Boolean(branchRecord.is_main_branch);
 
         if (cancelled) return;
+        if (retryTimer) {
+          clearTimeout(retryTimer);
+          retryTimer = undefined;
+        }
+        retryDelay = 1_000;
+        refreshAgain = false;
         lastRefreshError = "";
         setSession((current) => {
           if (!current || current.userId !== session.userId || current.companyId !== session.companyId) return current;
@@ -922,13 +934,32 @@ export default function App() {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (message !== lastRefreshError) {
+        const isRetryableNetworkError =
+          error instanceof Error &&
+          (error.name === "AuthRetryableFetchError" ||
+            (error instanceof TypeError && /fetch/i.test(error.message)));
+
+        if (isRetryableNetworkError) {
+          if (message !== lastRefreshError) {
+            console.warn(
+              "[Access Refresh] Supabase is temporarily unreachable; retrying access refresh.",
+              error,
+            );
+            lastRefreshError = message;
+          }
+          retryTimer = setTimeout(() => {
+            retryTimer = undefined;
+            refreshAgain = false;
+            void refreshAccess();
+          }, retryDelay);
+          retryDelay = Math.min(retryDelay * 2, 30_000);
+        } else if (message !== lastRefreshError) {
           console.error("[Access Refresh] Unable to refresh role and permissions:", error);
           lastRefreshError = message;
         }
       } finally {
         refreshing = false;
-        if (refreshAgain && !cancelled) {
+        if (refreshAgain && !cancelled && !retryTimer) {
           refreshAgain = false;
           void refreshAccess();
         }
@@ -968,6 +999,7 @@ export default function App() {
     return () => {
       cancelled = true;
       if (refreshTimer) clearTimeout(refreshTimer);
+      if (retryTimer) clearTimeout(retryTimer);
       clearInterval(interval);
       window.removeEventListener("focus", handleFocus);
       void supabase.removeChannel(channel);
@@ -1674,7 +1706,22 @@ export default function App() {
           </div>
         )}
 
-        <main className="min-w-0 flex-1 overflow-auto">
+        <main
+          className="min-w-0 flex-1 overflow-auto"
+          onClick={(event) => {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            if (target.closest("button, a, input, select, textarea, [role='button']")) return;
+
+            const row = target.closest("tbody > tr");
+            if (!(row instanceof HTMLTableRowElement) || row.querySelector("[colspan]")) return;
+
+            row.parentElement
+              ?.querySelectorAll(":scope > tr[data-row-selected='true']")
+              .forEach((selectedRow) => selectedRow.removeAttribute("data-row-selected"));
+            row.setAttribute("data-row-selected", "true");
+          }}
+        >
           {renderView()}
         </main>
       </div>

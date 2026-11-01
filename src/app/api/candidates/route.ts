@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { isUuid } from "@/lib/server/documents";
+import { canViewCandidateFinance } from "@/lib/server/candidate-finance-access";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ensureInterServerCandidateFolders } from "@/lib/storage/interserver";
 
@@ -76,12 +77,13 @@ export async function GET() {
     }
 
     const [
-      { data: canViewFinance, error: financePermissionError },
+      { data: hasFinancePermission, error: financePermissionError },
       { data: canEditCandidates, error: editPermissionError },
       { data: canRegisterCandidates, error: registerPermissionError },
       { data: canCreateCandidates, error: legacyCreatePermissionError },
       { data: candidateScope, error: scopeError },
       { data: canViewAgentFinance, error: agentFinancePermissionError },
+      { data: canManageCandidateSources, error: sourcePermissionError },
     ] = await Promise.all([
       supabase.rpc("current_user_has_company_permission", {
         requested_company_id: membership.company_id,
@@ -107,8 +109,12 @@ export async function GET() {
       supabase.rpc("current_user_can_view_agent_finance", {
         requested_company_id: membership.company_id,
       }),
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "candidates.sources.manage",
+      }),
     ]);
-    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || scopeError || agentFinancePermissionError) {
+    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || scopeError || agentFinancePermissionError || sourcePermissionError) {
       return NextResponse.json({ error: "Unable to verify candidate access." }, { status: 503, headers });
     }
     const { data: candidateRegistration, error: registrationSettingError } = await supabase.rpc(
@@ -125,29 +131,39 @@ export async function GET() {
 
     const roleName = roleData?.name || "";
     const canViewActivityLogs = roleName.includes("Chairman") || roleName.includes("General Manager");
+    const canViewFinance = canViewCandidateFinance(roleName, Boolean(hasFinancePermission));
     const isAgent = candidateScope === "assigned";
     const canRegister = Boolean(canRegisterCandidates) && candidateRegistration === "true";
 
     let query = supabase
       .from("candidates")
-      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by")
+      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
       .eq("company_id", membership.company_id)
       .order("created_at", { ascending: false });
 
-    const { data, error } = await query;
-    if (error) {
-      console.error("Candidate list query failed", error);
+    const [{ data, error }, { data: people, error: peopleError }] = await Promise.all([
+      query,
+      supabase.rpc("list_candidate_inquiry_people", { requested_company_id: membership.company_id }),
+    ]);
+    if (error || peopleError) {
+      console.error("Candidate list query failed", error ?? peopleError);
       return NextResponse.json({ error: "Unable to load candidates." }, { status: 403, headers });
     }
+    const names = new Map((people ?? []).map((person: { user_id: string; display_name: string }) => [person.user_id, person.display_name]));
 
     return NextResponse.json({
-      candidates: data,
+      candidates: (data ?? []).map((candidate) => ({
+        ...candidate,
+        created_by_name: candidate.created_by ? names.get(candidate.created_by) ?? "Former team member" : null,
+        updated_by_name: candidate.updated_by ? names.get(candidate.updated_by) ?? "Former team member" : null,
+      })),
       permissions: {
         canViewFinance: Boolean(canViewFinance),
         canViewAgentFinance: Boolean(canViewAgentFinance),
         canViewActivityLogs,
         canEditCandidates: Boolean(canEditCandidates),
         canRegisterCandidates: (Boolean(canRegisterCandidates) || Boolean(canCreateCandidates)) && canRegister,
+        canManageCandidateSources: Boolean(canManageCandidateSources),
         isAgent,
       },
     }, { headers });
@@ -224,6 +240,25 @@ export async function POST(request: Request) {
     }
     if (!(canRegister || canCreate) || registrationSetting !== "true") {
       return NextResponse.json({ error: "You do not have permission to register candidates." }, { status: 403, headers });
+    }
+    const source = typeof details.source === "string" ? details.source.trim() : "";
+    if (candidateScope !== "assigned" && !source) {
+      return NextResponse.json({ error: "Select a candidate source before registering." }, { status: 400, headers });
+    }
+    if (source) {
+      const { data: sourceOption, error: sourceError } = await supabase
+        .from("candidate_source_options")
+        .select("id")
+        .eq("company_id", membership.company_id)
+        .eq("source", source)
+        .maybeSingle();
+      if (sourceError) {
+        console.error("Candidate source validation failed", sourceError);
+        return NextResponse.json({ error: "Unable to verify the selected candidate source." }, { status: 503, headers });
+      }
+      if (!sourceOption) {
+        return NextResponse.json({ error: "Select a source configured for this company." }, { status: 400, headers });
+      }
     }
 
     let inquiryAgentUserId: string | null = null;
@@ -310,13 +345,31 @@ export async function POST(request: Request) {
       father_name: typeof body.fatherName === "string" ? body.fatherName.trim() : "",
       mother_name: typeof body.motherName === "string" ? body.motherName.trim() : "",
       details,
-    }).select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details").single();
+    }).select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by").single();
 
     if (error || !data) {
       console.error("Candidate registration failed", error);
-      return NextResponse.json({ error: error?.code === "23505" ? "That file number already exists in this company." : "Unable to register this candidate. Check your create permission." }, { status: 403, headers });
+      const duplicateError = `${error?.message ?? ""} ${error?.details ?? ""}`.toLocaleLowerCase();
+      const duplicatePassport = error?.code === "23505" && (
+        duplicateError.includes("passportnumber") ||
+        duplicateError.includes("passport_number_unique_idx")
+      );
+      return NextResponse.json({
+        error: duplicatePassport
+          ? "That passport number is already registered to a candidate."
+          : error?.code === "23505"
+            ? "That file number already exists in this company."
+            : "Unable to register this candidate. Check your create permission.",
+      }, { status: error?.code === "23505" ? 409 : 403, headers });
     }
-    return NextResponse.json({ candidate: data }, { status: 201, headers });
+    const actorNames = new Map((people ?? []).map((person: { user_id: string; display_name: string }) => [person.user_id, person.display_name]));
+    return NextResponse.json({
+      candidate: {
+        ...data,
+        created_by_name: data.created_by ? actorNames.get(data.created_by) ?? "Former team member" : null,
+        updated_by_name: data.updated_by ? actorNames.get(data.updated_by) ?? "Former team member" : null,
+      },
+    }, { status: 201, headers });
   } catch (error) {
     console.error("Candidate registration request failed", error);
     return NextResponse.json({ error: "Candidate registration is unavailable." }, { status: 503, headers });

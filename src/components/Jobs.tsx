@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
+import { matchesSearch } from "@/lib/search";
 
 const jobs = [
   { id: 1, title: "Staff Backend Engineer", dept: "Engineering", location: "San Francisco / Remote", type: "Full-time", status: "Active", posted: "Jun 28, 2026", daysOpen: 47, candidates: 34, target: 1 },
@@ -29,7 +30,7 @@ export default function Jobs() {
   const [showNew, setShowNew] = useState(false);
 
   const filtered = jobs.filter((j) => {
-    const ms = j.title.toLowerCase().includes(search.toLowerCase());
+    const ms = matchesSearch(search, j.title, j.dept, j.location, j.type, j.status);
     const md = deptFilter === "All" || j.dept === deptFilter;
     const mst = statusFilter === "All" || j.status === statusFilter;
     return ms && md && mst;

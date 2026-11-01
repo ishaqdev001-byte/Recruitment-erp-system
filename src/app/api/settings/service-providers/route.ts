@@ -60,7 +60,13 @@ export async function GET(request: NextRequest) {
       .order("name");
 
     if (search) {
-      query = query.ilike("name", `%${search}%`);
+      const searchTokens = search.normalize("NFKC").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+      if (!searchTokens.length) query = query.eq("id", "00000000-0000-0000-0000-000000000000");
+      for (const token of searchTokens) {
+        query = query.or(
+          `name.ilike.%${token}%,contact_name.ilike.%${token}%,phone.ilike.%${token}%,email.ilike.%${token}%,address.ilike.%${token}%,notes.ilike.%${token}%`,
+        );
+      }
     }
 
     const { data, error } = await query;

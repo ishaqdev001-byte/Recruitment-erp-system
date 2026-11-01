@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowDownToLine, ArrowLeft, ArrowRight, Check, ChevronRight, Cloud, Eye, File, FilePlus2, Folder, FolderInput, FolderPlus, HardDriveDownload, LayoutGrid, List, Pencil, RefreshCw, Search, Trash2, Upload, Users, X } from "lucide-react";
+import { matchesSearch } from "@/lib/search";
 
 type DriveCategory = "shared" | "finance";
 type DriveItem = {
@@ -195,7 +196,7 @@ export default function CompanyDrive({ companyName, permissions: accessPermissio
   }, []);
 
   const normalizedSearch = search.trim().toLocaleLowerCase();
-  const filteredItems = useMemo(() => items.filter((item) => `${item.name} ${item.created_by_name} ${item.modified_by_name} ${item.file_type ?? ""} ${item.source_type ?? ""}`.toLocaleLowerCase().includes(normalizedSearch)), [items, normalizedSearch]);
+  const filteredItems = useMemo(() => items.filter((item) => matchesSearch(normalizedSearch, item.name, item.created_by_name, item.modified_by_name, item.file_type, item.source_type)), [items, normalizedSearch]);
   const canDelete = (item: DriveItem) => permissions.canDeleteAny
     || (item.category === "finance" && permissions.canManage)
     || (!item.is_system && permissions.canDeleteOwn && item.created_by === currentUserId);
@@ -597,7 +598,7 @@ export default function CompanyDrive({ companyName, permissions: accessPermissio
     source: document,
   }));
   const allExplorerEntries = browseSection === "drive" ? driveEntries : browseSection === "candidates" ? candidateEntries : documentEntries;
-  const explorerEntries = allExplorerEntries.filter((entry) => `${entry.name} ${entry.creator} ${entry.searchText ?? ""}`.toLocaleLowerCase().includes(normalizedSearch));
+  const explorerEntries = allExplorerEntries.filter((entry) => matchesSearch(normalizedSearch, entry.name, entry.creator, entry.searchText));
   const explorerLoading = browseSection === "drive" ? loading : browseSection === "candidates" ? candidateLoading : documentLoading;
   const sectionLabel = browseSection === "candidates" ? "Candidates" : browseSection === "candidate-documents" ? `${selectedCandidate?.first_name ?? ""} ${selectedCandidate?.last_name ?? ""}`.trim() : rootLabel;
 

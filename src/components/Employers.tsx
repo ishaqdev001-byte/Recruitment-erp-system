@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, Eye, Plus, Search, X } from "lucide-react";
+import { matchesSearch } from "@/lib/search";
 
 type Employer = {
   id: string;
@@ -58,8 +59,7 @@ export default function Employers() {
   }, [reloadKey]);
 
   const filtered = employers.filter((e) =>
-    `${e.company_name} ${e.contact_persons.join(" ")} ${e.phone_numbers.join(" ")} ${e.email_addresses.join(" ")} ${e.countries.join(" ")}`
-      .toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
+    matchesSearch(search, e.company_name, e.contact_persons.join(" "), e.phone_numbers.join(" "), e.email_addresses.join(" "), e.countries.join(" ")),
   );
 
   const selected = employers.find((employer) => employer.id === selectedEmployerId) ?? null;

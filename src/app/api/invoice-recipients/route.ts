@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getInvoiceAccess } from "@/lib/server/invoices";
 import { createClient } from "@supabase/supabase-js";
+import { matchesSearch } from "@/lib/search";
 
 function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -50,11 +51,11 @@ export async function GET(request: Request) {
       console.error("Agent query failed", agentError);
     }
 
-    const query = new URL(request.url).searchParams.get("q")?.trim().toLocaleLowerCase() ?? "";
+    const query = new URL(request.url).searchParams.get("q")?.trim() ?? "";
     
     // Filter recipients from RPC
-    const recipients = (recipientData ?? []).filter((recipient: { recipient_name: string }) => 
-      recipient.recipient_name.toLocaleLowerCase().includes(query)
+    const recipients = (recipientData ?? []).filter((recipient: { recipient_name: string }) =>
+      matchesSearch(query, recipient.recipient_name)
     );
 
     // Format agents and filter
@@ -64,7 +65,7 @@ export async function GET(request: Request) {
         name: `${agent.profile?.first_name || ""} ${agent.profile?.last_name || ""}`.trim() || "Agent",
         phone: agent.profile?.phone || "",
       }))
-      .filter((agent) => agent.name.toLocaleLowerCase().includes(query));
+      .filter((agent) => matchesSearch(query, agent.name));
     
     return NextResponse.json(
       {

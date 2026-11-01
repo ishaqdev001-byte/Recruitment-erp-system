@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { matchesSearch } from "@/lib/search";
 
 const stages = [
   "Applied",
@@ -115,9 +116,7 @@ export default function Pipeline() {
 
       <div className="flex gap-4 flex-1 overflow-x-auto pb-2">
         {stages.map((stage) => {
-          const candidates = data[stage].filter(
-            (c) => !filter || c.name.toLowerCase().includes(filter.toLowerCase()) || c.role.toLowerCase().includes(filter.toLowerCase())
-          );
+          const candidates = data[stage].filter((candidate) => matchesSearch(filter, candidate.name, candidate.role));
           return (
             <div
               key={stage}

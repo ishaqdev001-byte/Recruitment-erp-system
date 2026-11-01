@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, BarChart3, ContactRound, FileSpreadsheet, FileText, LayoutDashboard, MessageSquare, Plus, Search, Send, Trash2, Upload, Users, Wallet, X } from "lucide-react";
 import { SearchableMultiSelect } from "./SearchableSelect";
+import { matchesSearch } from "@/lib/search";
 
 type View = "dashboard" | "sent" | "contacts";
 type Contact = { id: string; type: string; name: string; phone: string };
@@ -79,7 +80,7 @@ export default function SmsWorkspace({ userName, companyName, userEmail, onExit 
 
   useEffect(() => { void loadWorkspace(selectedMonth); }, [selectedMonth]);
 
-  const filteredContacts = contacts.filter((contact) => `${contact.name} ${contact.phone}`.toLowerCase().includes(search.toLowerCase()));
+  const filteredContacts = contacts.filter((contact) => matchesSearch(search, contact.name, contact.phone));
   const sendRecipients = [
     ...contacts.filter((contact) => selectedCandidateIds.includes(contact.id) && contact.phone).map((contact) => contact.phone),
     ...(selectedGroupId ? groups.find((group) => group.id === selectedGroupId)?.members.map((member) => member.phone) ?? [] : []),

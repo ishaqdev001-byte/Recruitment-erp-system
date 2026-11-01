@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, Eye, Plus, Search, UserRound } from "lucide-react";
+import { matchesSearch } from "@/lib/search";
 
 type SupplierRecord = {
   id: string;
@@ -44,8 +45,7 @@ export default function Suppliers() {
   }, [reloadKey]);
 
   const filtered = suppliers.filter((supplier) =>
-    `${supplier.supplier_name} ${supplier.contact_person} ${supplier.phone} ${supplier.email} ${supplier.branch}`
-      .toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+    matchesSearch(search, supplier.supplier_name, supplier.contact_person, supplier.phone, supplier.email, supplier.branch),
   );
   const selectedSupplier = suppliers.find((supplier) => supplier.id === selectedSupplierId);
 

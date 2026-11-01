@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowUpRight, CircleDollarSign, Plus, Search, X } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
+import { matchesSearch } from "@/lib/search";
 
 type ReceiptType = "candidate_deposit" | "other_income" | "invoice_payment";
 type CandidateOption = { candidate_id: string; file_number: string; candidate_name: string; account_id: string | null };
@@ -97,9 +98,7 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
   }, [reloadKey]);
 
   const filteredTransactions = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    if (!query) return transactions;
-    return transactions.filter((transaction) => `${transaction.reference} ${transaction.receivedFrom} ${transaction.category} ${transaction.externalReference} ${transaction.invoiceNumber ?? ""} ${transaction.notes}`.toLocaleLowerCase().includes(query));
+    return transactions.filter((transaction) => matchesSearch(search, transaction.reference, transaction.receivedFrom, transaction.category, transaction.externalReference, transaction.invoiceNumber, transaction.notes));
   }, [search, transactions]);
 
   const resetForm = () => {

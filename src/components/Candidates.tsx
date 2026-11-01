@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Paperclip, RefreshCw, Send, UserRoundCheck } from "lucide-react";
 import CandidateDetail from "./CandidateDetail";
 import AttachmentDrawer from "./AttachmentDrawer";
+import { matchesSearch } from "@/lib/search";
 
 export interface Candidate {
   id: string;
@@ -150,8 +151,7 @@ export default function Candidates() {
   }, []);
 
   const filtered = candidates.filter((c) => {
-    const name = `${c.firstName} ${c.lastName}`.toLowerCase();
-    const ms = !search || name.includes(search.toLowerCase()) || c.fileNumber.toLowerCase().includes(search.toLowerCase());
+    const ms = matchesSearch(search, c.firstName, c.lastName, c.fileNumber);
     const mStage = !filters.stage || c.stage === filters.stage;
     const mTravel = !filters.travelStatus || c.travelStatus === filters.travelStatus;
     const mVisa = !filters.visaStatus || c.visaStatus === filters.visaStatus;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, CircleAlert, CircleCheck, Info, Menu, Search, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
 import type { View, WorkspaceRole } from "../App";
+import { matchesSearch } from "@/lib/search";
 
 type CommandItem = {
   label: string;
@@ -387,17 +388,16 @@ export default function TopBar({
   ]);
 
   const results = useMemo(() => {
-    const normalized = query.toLowerCase();
-    if (!normalized) return [];
+    if (!query.trim()) return [];
 
     const matches = [
       ...searchIndex.filter((item) =>
         (canViewTaskReminders || item.view !== "tasks") &&
-        (item.label.toLowerCase().includes(normalized) || item.sub.toLowerCase().includes(normalized) || item.group.toLowerCase().includes(normalized)),
+        matchesSearch(query, item.label, item.sub, item.group),
       ),
       ...categoryActionItems.filter((item) =>
         (canViewTaskReminders || item.view !== "tasks") &&
-        (item.label.toLowerCase().includes(normalized) || item.sub.toLowerCase().includes(normalized) || item.group.toLowerCase().includes(normalized)),
+        matchesSearch(query, item.label, item.sub, item.group),
       ),
     ];
 

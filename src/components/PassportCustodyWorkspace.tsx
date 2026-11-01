@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Pencil, Plus, Search, X } from "lucide-react";
+import { matchesSearch } from "@/lib/search";
 
 type PassportStatus = "available" | "with_agent" | "withdrawn" | "transferred";
 type PassportRecord = {
@@ -85,12 +86,10 @@ export default function PassportCustodyWorkspace({ companyName, onRegisterCandid
     return () => { cancelled = true; };
   }, [reloadKey]);
 
-  const normalizedSearch = search.trim().toLocaleLowerCase();
   const filtered = useMemo(() => records.filter((record) => {
     const id = passportId(companyName, record.tracking_number);
-    return `${id} ${record.candidate_name} ${record.file_number} ${record.passport_number} ${record.agent_name} ${record.storage_branch} ${record.storage_location} ${record.passport_status}`
-      .toLocaleLowerCase().includes(normalizedSearch);
-  }), [companyName, normalizedSearch, records]);
+    return matchesSearch(search, id, record.candidate_name, record.file_number, record.passport_number, record.agent_name, record.storage_branch, record.storage_location, record.passport_status);
+  }), [companyName, search, records]);
   const counts = {
     available: records.filter((record) => record.passport_status === "available").length,
     withdrawn: records.filter((record) => record.passport_status === "withdrawn").length,

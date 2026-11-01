@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowDownToLine, ArrowLeft, Eye, FilePlus2, Search, X } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
+import { matchesSearch } from "@/lib/search";
 
 type InvoiceStatus = "draft" | "sent" | "partially_paid" | "paid" | "overdue";
 type RecipientType = "contractor" | "supplier" | "candidate";
@@ -104,18 +105,16 @@ export default function InvoiceWorkspace() {
 
   const selectedInvoice = invoices.find((invoice) => invoice.id === selectedInvoiceId) ?? null;
   const paymentInvoice = invoices.find((invoice) => invoice.id === paymentInvoiceId) ?? null;
-  const normalizedSearch = search.trim().toLocaleLowerCase();
   const filteredInvoices = invoices.filter((invoice) => {
     const matchesFilter = filter === "all" || invoice.display_status === filter;
-    const searchable = `${invoice.invoice_number} ${invoice.recipient_name} ${invoice.description}`.toLocaleLowerCase();
-    return matchesFilter && searchable.includes(normalizedSearch);
+    return matchesFilter && matchesSearch(search, invoice.invoice_number, invoice.recipient_name, invoice.description);
   });
   const totalInvoiced = invoices.reduce((sum, invoice) => sum + invoice.amount, 0);
   const totalCollected = invoices.reduce((sum, invoice) => sum + invoice.paid_amount, 0);
   const outstanding = invoices.reduce((sum, invoice) => sum + invoice.balance_due, 0);
   const overdueCount = invoices.filter((invoice) => invoice.display_status === "overdue").length;
   const filteredRecipients = recipients.filter((recipient) => recipient.recipient_type === recipientType
-    && recipient.recipient_name.toLocaleLowerCase().includes(recipientQuery.trim().toLocaleLowerCase()));
+    && matchesSearch(recipientQuery, recipient.recipient_name));
   const afterPaymentBalance = Math.max(0, (paymentInvoice?.balance_due ?? 0) - (Number(paymentAmount) || 0));
 
   const resetCreateForm = () => {

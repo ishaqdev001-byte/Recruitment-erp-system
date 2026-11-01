@@ -2,15 +2,15 @@
 
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { Check, ChevronDown, Plus as PlusIcon, Search, X } from "lucide-react";
+import { matchesSearch } from "@/lib/search";
 
 export type SearchOption = { value: string; label: string; description?: string; searchText?: string };
 
 const defaultStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 
 function filteredOptions(options: SearchOption[], query: string, selectedValues: string[]) {
-  const normalized = query.trim().toLocaleLowerCase();
   return options.filter((option) => !selectedValues.includes(option.value)
-    && (!normalized || `${option.label} ${option.description ?? ""} ${option.searchText ?? ""}`.toLocaleLowerCase().includes(normalized))).slice(0, 50);
+    && matchesSearch(query, option.label, option.description, option.searchText)).slice(0, 50);
 }
 
 export function SearchableSelect({

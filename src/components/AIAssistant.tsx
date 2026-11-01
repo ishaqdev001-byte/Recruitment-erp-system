@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, CircleCheck, Download, LoaderCircle, MessageSquarePlus, Search, Send, Sparkles } from "lucide-react";
 import AttachmentDrawer from "./AttachmentDrawer";
+import { matchesSearch } from "@/lib/search";
 
 type AITab = "candidates" | "chat";
 type DocumentType = "cv" | "medical" | "academic";
@@ -37,8 +38,7 @@ export default function AIAssistant() {
   const [chatSending, setChatSending] = useState(false);
 
   const filteredCandidates = candidates.filter((candidate) =>
-    `${candidate.first_name} ${candidate.last_name} ${candidate.file_number} ${candidate.position ?? ""} ${candidate.nationality ?? ""}`
-      .toLowerCase().includes(searchTerm.trim().toLowerCase()),
+    matchesSearch(searchTerm, candidate.first_name, candidate.last_name, candidate.file_number, candidate.position, candidate.nationality),
   );
 
   useEffect(() => {

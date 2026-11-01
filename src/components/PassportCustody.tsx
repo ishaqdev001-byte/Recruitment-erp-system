@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ArrowLeft, CircleAlert, CircleCheck, Landmark, LockKeyhole, UserRound, type LucideIcon } from "lucide-react";
+import { matchesSearch } from "@/lib/search";
 
 const custodyRecords = [
   { id: 1, candidate: "Godfrey Kamuhangire", fileNo: "CRSL-957214073", passportNo: "A00846507", expiry: "Sep 22, 2032", status: "In Company Custody", dateReceived: "Aug 10, 2026", timeReceived: "09:14 AM", receivedBy: "Aisha Khan", agent: "Director Vicent", location: "Safe Box A-3", dateReturned: "—", returnedBy: "—", notes: "Original passport collected for visa processing" },
@@ -35,7 +36,7 @@ export default function PassportCustody() {
   const [search, setSearch] = useState("");
 
   const filtered = records.filter((r) => {
-    const ms = !search || r.candidate.toLowerCase().includes(search.toLowerCase()) || r.passportNo.toLowerCase().includes(search.toLowerCase());
+    const ms = matchesSearch(search, r.candidate, r.passportNo);
     const ma = agentFilter === "All" || r.agent === agentFilter;
     const mst = statusFilter === "All" || r.status === statusFilter;
     return ms && ma && mst;

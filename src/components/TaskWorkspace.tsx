@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { AlarmClock, Bell, CalendarClock, Check, CircleCheck, ListPlus, Pencil, Plus, Search, Star, Trash2, X } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
+import { matchesSearch } from "@/lib/search";
 
 type Priority = "High" | "Medium" | "Low";
 type Recurrence = "none" | "daily" | "weekly" | "monthly" | "yearly";
@@ -132,10 +133,9 @@ export default function TaskWorkspace() {
   const activeList = lists.find((list) => list.id === activeListId) ?? null;
   const selected = tasks.find((task) => task.id === selectedId) ?? null;
   const listTasks = tasks.filter((task) => task.list_id === activeListId);
-  const normalizedSearch = search.trim().toLocaleLowerCase();
   const matches = (task: TaskRecord) => {
     const filterMatch = filter === "all" || (filter === "completed" ? task.is_completed : filter === "starred" ? task.is_starred : !task.is_completed);
-    return filterMatch && `${task.title} ${task.notes}`.toLocaleLowerCase().includes(normalizedSearch);
+    return filterMatch && matchesSearch(search, task.title, task.notes);
   };
   const visibleTasks = listTasks.filter((task) => !task.parent_task_id && matches(task));
   const completedCount = listTasks.filter((task) => task.is_completed).length;

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Download, Plus, Search } from "lucide-react";
 import { SearchableMultiSelect, SearchableSelect } from "./SearchableSelect";
+import { matchesSearch } from "@/lib/search";
 
 type StaffOption = {
   id: string;
@@ -118,9 +119,7 @@ export default function Paychecks() {
   }, [reloadKey]);
 
   const filteredPaychecks = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    if (!query) return paychecks;
-    return paychecks.filter((paycheck) => `${paycheck.employee.name} ${paycheck.employee.staff_id} ${paycheck.employee.position} ${paycheck.pay_period} ${paycheck.payment_reference}`.toLocaleLowerCase().includes(query));
+    return paychecks.filter((paycheck) => matchesSearch(search, paycheck.employee.name, paycheck.employee.staff_id, paycheck.employee.position, paycheck.pay_period, paycheck.payment_reference));
   }, [paychecks, search]);
   const payrollStaff = staff.filter((member) => member.pay_type === "payroll" && Number(member.base_salary) > 0);
   const staffOptions = payrollStaff.map((member) => ({ value: member.id, label: member.name, description: `${member.staff_id} · ${member.position}`, searchText: `${member.staff_id} ${member.position}` }));

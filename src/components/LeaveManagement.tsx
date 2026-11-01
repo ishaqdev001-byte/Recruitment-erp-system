@@ -6,6 +6,7 @@ import {
   Plus, Search, Tag, X, XCircle,
 } from "lucide-react";
 import LeaveTypes from "./LeaveTypes";
+import { matchesSearch } from "@/lib/search";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -299,12 +300,11 @@ export default function LeaveManagement() {
   const leaveTypes = data?.leaveTypes ?? [];
   const perms = data?.permissions ?? { canViewTeam: false, canCreate: false, canManage: false, canFinalize: false };
 
-  const normalizedSearch = search.trim().toLocaleLowerCase();
   const filtered = useMemo(() => requests.filter((r) => {
     const matchesStatus = filter === "all" || r.status === filter;
-    const matchesSearch = !normalizedSearch || `${r.employee_name} ${r.reason} ${r.leave_type_name}`.toLocaleLowerCase().includes(normalizedSearch);
-    return matchesStatus && matchesSearch;
-  }), [filter, normalizedSearch, requests]);
+    const searchMatches = matchesSearch(search, r.employee_name, r.reason, r.leave_type_name);
+    return matchesStatus && searchMatches;
+  }), [filter, search, requests]);
 
   const pendingCount = requests.filter((r) => ["pending", "supervisor_pending", "manager_pending", "final_pending"].includes(r.status)).length;
   const approvedDays = requests.filter((r) => r.status === "approved").reduce((t, r) => t + (r.days_count ?? dayCount(r.start_date, r.end_date)), 0);

@@ -21,6 +21,28 @@ const candidateDetailFields = new Set([
   "educationQualification", "educationInstitution", "educationYearCompleted", "educationField", "lastEmployer", "previousJobTitle", "employmentFrom", "employmentTo", "employmentDuties", "keySkills", "languagesSpoken", "certifications", "recruiterNotes",
 ]);
 
+const candidateWorkflowDetailFields = [
+  "stage",
+  "assignedProjectId",
+  "assignedContracts",
+  "contracts",
+  "offerLetter",
+  "wakalaReceived",
+  "molReceived",
+  "enjaz",
+  "visaStatus",
+  "visaProjectId",
+  "visaProjectName",
+  "visaReceivedAt",
+  "travelStatus",
+  "ticketNumber",
+  "bookingReference",
+  "travelDate",
+  "travelTime",
+  "departureUtc",
+  "connectingFlights",
+]
+
 function readCandidateDetails(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const details: Record<string, string | number | string[]> = {};
@@ -74,7 +96,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       return NextResponse.json({ error: "Candidate not found." }, { status: 404, headers });
     }
 
-    const updates: Record<string, string | null | Record<string, string | number | string[]>> = {};
+    const updates: Record<string, string | null | Record<string, unknown>> = {};
     for (const field of candidateFields) {
       if (!(field in body)) continue;
       const value = body[field];
@@ -115,14 +137,15 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       const currentDetails = currentCandidate.details && typeof currentCandidate.details === "object" && !Array.isArray(currentCandidate.details)
         ? currentCandidate.details as Record<string, unknown>
         : {};
-      details.stage = typeof currentDetails.stage === "string" && currentDetails.stage ? currentDetails.stage : "Registration";
-      details.assignedContracts = typeof currentDetails.assignedContracts === "string" ? currentDetails.assignedContracts : "";
-      details.contracts = typeof currentDetails.contracts === "string" ? currentDetails.contracts : "";
-      details.assignedProjectId = typeof currentDetails.assignedProjectId === "string" ? currentDetails.assignedProjectId : "";
-      for (const field of ["offerLetter", "wakalaReceived", "molReceived"] as const) {
-        if (currentDetails[field] === "Yes" || currentDetails[field] === "No") details[field] = currentDetails[field];
+      const mergedDetails: Record<string, unknown> = { ...details }
+      for (const field of candidateWorkflowDetailFields) {
+        if (Object.prototype.hasOwnProperty.call(currentDetails, field)) {
+          mergedDetails[field] = currentDetails[field]
+        } else {
+          delete mergedDetails[field]
+        }
       }
-      updates.details = details;
+      updates.details = mergedDetails;
     }
     if ("branchId" in body) {
       const branchId = typeof body.branchId === "string" && isUuid(body.branchId) ? body.branchId : "";

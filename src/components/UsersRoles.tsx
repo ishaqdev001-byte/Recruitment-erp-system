@@ -13,6 +13,7 @@ import {
   roleAccessSettings,
   type RoleAccessSettings,
 } from "@/lib/role-access-settings"
+import { clearClientApiCache } from "@/lib/client-api-cache"
 
 type UserRecord = {
   id: string
@@ -84,12 +85,114 @@ const fieldStyle = {
 
 const permissionModuleLabels: Record<string, string> = {
   ai: "AI Tools",
+  approvals: "Approvals",
+  attendance: "Attendance",
+  branches: "Branches",
+  candidate_documents: "Candidate Attachments",
   candidate_inquiries: "Candidate Inquiries",
   candidate_profiles: "Candidate Profiles",
-  candidate_documents: "Attachments",
+  candidates: "Candidate Pipeline",
   company_accounts: "Finance Accounts",
+  communications: "Communications",
+  documents: "Documents",
+  drive: "Company Drive",
+  employers: "Contractors",
+  finance: "Finance",
+  human_resources: "Human Resources",
+  invoices: "Invoices",
+  leave: "Leave",
+  medical: "Medical Examinations",
   medical_documents: "Medical Documents",
+  passport: "Passport Information",
   passport_custody: "Passport Custody",
+  projects: "Projects",
+  requisitions: "Requisitions",
+  reports: "Reports & Analytics",
+  roles: "Role Management",
+  settings: "Settings",
+  suppliers: "Partners",
+  tasks: "Tasks",
+  users: "Users",
+}
+
+const permissionActionLabels: Record<string, string> = {
+  approve: "Approve",
+  authorize: "Authorize",
+  clock: "Record attendance",
+  connect: "Connect",
+  create: "Create",
+  delete: "Delete",
+  download: "Download",
+  edit: "Edit",
+  finalize: "Finalize",
+  manage: "Manage",
+  read: "Read",
+  register: "Register",
+  review: "Review",
+  send: "Send",
+  status: "Change status",
+  types: "Manage types",
+  update: "Update",
+  verify: "Verify",
+  view: "View",
+  upload: "Upload",
+}
+
+const permissionCodeLabels: Record<string, string> = {
+  "candidates.project_submit": "Submit candidates to projects",
+  "candidates.stage": "Update candidate stages",
+}
+
+const permissionModuleOrder = [
+  "candidates",
+  "candidate_inquiries",
+  "candidate_profiles",
+  "candidate_documents",
+  "documents",
+  "drive",
+  "projects",
+  "employers",
+  "suppliers",
+  "passport",
+  "passport_custody",
+  "medical",
+  "medical_documents",
+  "finance",
+  "company_accounts",
+  "invoices",
+  "users",
+  "roles",
+  "branches",
+  "approvals",
+  "requisitions",
+  "tasks",
+  "communications",
+  "attendance",
+  "leave",
+  "human_resources",
+  "reports",
+  "settings",
+  "ai",
+]
+
+function permissionActionLabel(permissionCode: string): string {
+  const explicitLabel = permissionCodeLabels[permissionCode]
+  if (explicitLabel) return explicitLabel
+
+  const actionParts = permissionCode.split(".").slice(1)
+  const action = actionParts.pop() ?? permissionCode
+  const subject = actionParts
+    .map((part) =>
+      part.toLowerCase() === "whatsapp"
+        ? "WhatsApp"
+        : part.charAt(0).toUpperCase() + part.slice(1),
+    )
+    .join(" ")
+  const label =
+    permissionActionLabels[action] ??
+    action.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
+
+  return subject ? `${label} ${subject}` : label
 }
 
 function RolePermissionsEditor({
@@ -113,6 +216,16 @@ function RolePermissionsEditor({
     group.push(permission)
     groupedPermissions.set(module, group)
   }
+  const sortedModules = [...groupedPermissions.entries()].sort(
+    ([left], [right]) => {
+      const leftOrder = permissionModuleOrder.indexOf(left)
+      const rightOrder = permissionModuleOrder.indexOf(right)
+      if (leftOrder < 0 && rightOrder < 0) return left.localeCompare(right)
+      if (leftOrder < 0) return 1
+      if (rightOrder < 0) return -1
+      return leftOrder - rightOrder
+    },
+  )
 
   return (
     <fieldset>
@@ -147,7 +260,7 @@ function RolePermissionsEditor({
           </button>
         </div>
       </div>
-      {Array.from(groupedPermissions.entries()).map(
+      {sortedModules.map(
         ([module, modulePermissions]) => {
           const moduleCodes = modulePermissions.map(
             (permission) => permission.code,
@@ -156,19 +269,37 @@ function RolePermissionsEditor({
             selectedPermissionCodes.has(code),
           )
           return (
-            <section key={module} className="mb-4 last:mb-0">
-              <div className="mb-2 flex items-center gap-2">
-                <h3
-                  className="text-xs font-700 uppercase tracking-wider"
-                  style={{ color: "var(--muted-foreground)" }}
-                >
-                  {permissionModuleLabels[module] ??
-                    module.replace(/_/g, " ")}
-                </h3>
+            <section
+              key={module}
+              className="mb-3 rounded border p-3 last:mb-0"
+              style={{ borderColor: "var(--border)" }}
+            >
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div>
+                  <h3
+                    className="text-sm font-700"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    {permissionModuleLabels[module] ??
+                      module.replace(/_/g, " ")}
+                  </h3>
+                  <p
+                    className="mt-0.5 text-[11px]"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    {modulePermissions.filter((permission) =>
+                      selectedPermissionCodes.has(permission.code),
+                    ).length}{" "}
+                    of {modulePermissions.length} actions enabled
+                  </p>
+                </div>
                 <button
                   type="button"
-                  className="text-[10px]"
-                  style={{ color: "var(--muted-foreground)" }}
+                  className="shrink-0 rounded border px-2 py-1 text-[11px] font-600"
+                  style={{
+                    color: "var(--primary)",
+                    borderColor: "var(--border)",
+                  }}
                   onClick={() =>
                     onChange(
                       allSelected
@@ -184,16 +315,17 @@ function RolePermissionsEditor({
                     )
                   }
                 >
-                  {allSelected ? "deselect module" : "select module"}
+                  {allSelected ? "Clear module" : "Select module"}
                 </button>
               </div>
-              <div className="grid gap-1.5 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-2">
                 {modulePermissions.map((permission) => {
                   const checked = selectedPermissionCodes.has(permission.code)
                   return (
                     <label
                       key={permission.code}
-                      className="flex cursor-pointer items-start gap-2 rounded border p-2.5 text-xs"
+                      className="flex cursor-pointer items-start gap-2.5 rounded border p-2.5 text-xs"
+                      aria-label={`${permissionActionLabel(permission.code)}: ${permission.description}`}
                       style={{
                         borderColor: checked
                           ? "var(--primary)"
@@ -227,7 +359,7 @@ function RolePermissionsEditor({
                       />
                       <span>
                         <span className="block font-600">
-                          {permission.code.split(".").slice(1).join(".")}
+                          {permissionActionLabel(permission.code)}
                         </span>
                         <span style={{ color: "var(--muted-foreground)" }}>
                           {permission.description}
@@ -579,6 +711,7 @@ export default function UsersRoles({
         )
       }
       setShowNewRole(false)
+      clearClientApiCache()
       setRoleName("")
       setRoleDescription("")
       setSelectedPermissions([])
@@ -616,6 +749,11 @@ export default function UsersRoles({
           role.id,
       )
       .map((rp) => rp.permission_code)
+      .filter(
+        (permission) =>
+          permission !== "agent_finance.view" ||
+          isRecruitmentAgentRole(role.name),
+      )
     setEditingRole(role)
     setRoleEditName(role.name)
     setRoleEditDescription(role.description)
@@ -665,6 +803,7 @@ export default function UsersRoles({
 
       setShowEditRole(false)
       setEditingRole(null)
+      clearClientApiCache()
       setNotice(
         `"${
           result.role?.name ??
@@ -714,6 +853,7 @@ export default function UsersRoles({
         role.id
       )
         setSelectedRoleId("")
+      clearClientApiCache()
       setNotice(`"${role.name}" deleted.`)
       setReloadKey(
         (key) =>
@@ -2233,7 +2373,21 @@ export default function UsersRoles({
                   required
                   maxLength={100}
                   value={roleName}
-                  onChange={(event) => setRoleName(event.target.value)}
+                  onChange={(event) => {
+                    const nextName = event.target.value
+                    setRoleName(nextName)
+                    setSelectedPermissions((current) =>
+                      current.filter(
+                        (permission) =>
+                          (permission !== "agent_finance.view" ||
+                            isRecruitmentAgentRole(nextName)) &&
+                          (!isRecruitmentAgentRole(nextName) ||
+                            !isRecruitmentAgentRestrictedPermission(
+                              permission,
+                            )),
+                      ),
+                    )
+                  }}
                   className="mt-1 w-full rounded border px-3 py-2.5 text-sm outline-none"
                   style={fieldStyle}
                   placeholder="e.g. Branch Supervisor"
@@ -2259,14 +2413,15 @@ export default function UsersRoles({
               </div>
               <RolePermissionsEditor
                 permissions={
-                  isRecruitmentAgentRole(roleName)
-                    ? data.permissions.filter(
-                        (permission) =>
-                          !isRecruitmentAgentRestrictedPermission(
-                            permission.code,
-                          ),
-                      )
-                    : data.permissions
+                  data.permissions.filter(
+                    (permission) =>
+                      (permission.code !== "agent_finance.view" ||
+                        isRecruitmentAgentRole(roleName)) &&
+                      (!isRecruitmentAgentRole(roleName) ||
+                        !isRecruitmentAgentRestrictedPermission(
+                          permission.code,
+                        )),
+                  )
                 }
                 selectedPermissions={selectedPermissions}
                 onChange={setSelectedPermissions}
@@ -2474,7 +2629,13 @@ export default function UsersRoles({
                 {([
                   ["candidate_registration", "Allow registering candidates from inquiries"],
                   ["agent_visa_finance", "Allow agent-specific invoices and candidate receipts"],
-                ] as const).map(([key, label]) => (
+                ] as const)
+                  .filter(
+                    ([key]) =>
+                      key !== "agent_visa_finance" ||
+                      isRecruitmentAgentRole(editingRole.name),
+                  )
+                  .map(([key, label]) => (
                   <label key={key} className="flex items-start gap-2 text-xs" style={{ color: "var(--foreground)" }}>
                     <input
                       type="checkbox"
@@ -2487,18 +2648,19 @@ export default function UsersRoles({
                     />
                     <span>{label}</span>
                   </label>
-                ))}
+                  ))}
               </section>
               <RolePermissionsEditor
                 permissions={
-                  selectedRole && isRecruitmentAgentRole(selectedRole.name)
-                    ? data.permissions.filter(
-                        (permission) =>
-                          !isRecruitmentAgentRestrictedPermission(
-                            permission.code,
-                          ),
-                      )
-                    : data.permissions
+                  data.permissions.filter(
+                    (permission) =>
+                      (permission.code !== "agent_finance.view" ||
+                        isRecruitmentAgentRole(editingRole.name)) &&
+                      (!isRecruitmentAgentRole(editingRole.name) ||
+                        !isRecruitmentAgentRestrictedPermission(
+                          permission.code,
+                        )),
+                  )
                 }
                 selectedPermissions={roleEditPermissions}
                 onChange={setRoleEditPermissions}

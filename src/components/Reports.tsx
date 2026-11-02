@@ -92,7 +92,7 @@ const sections: { id: ReportSection; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "staff", label: "Staff" },
   { id: "agents", label: "Agents" },
-  { id: "suppliers", label: "Suppliers" },
+  { id: "suppliers", label: "Partners" },
   { id: "contractors", label: "Contractors" },
   { id: "growth", label: "Growth Analytics" },
   { id: "stages", label: "Candidate Stages" },
@@ -283,7 +283,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
     }
     if (activeSection === "suppliers") {
       return [
-        { value: "All", label: "All Suppliers" },
+        { value: "All", label: "All Partners" },
         ...(reportData?.suppliers?.items ?? []).map((item) => ({ value: item.id, label: item.name })),
       ];
     }
@@ -339,7 +339,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
       ...(reportData.growth.candidates ? [["Candidate registrations", reportData.growth.candidates] as [string, GrowthComparison]] : []),
       ...(reportData.growth.inquiries ? [["Candidate inquiries", reportData.growth.inquiries] as [string, GrowthComparison]] : []),
       ...(reportData.growth.tasks ? [["Follow-ups created", reportData.growth.tasks] as [string, GrowthComparison]] : []),
-      ...(reportData.growth.suppliers ? [["Suppliers registered", reportData.growth.suppliers] as [string, GrowthComparison]] : []),
+      ...(reportData.growth.suppliers ? [["Partners registered", reportData.growth.suppliers] as [string, GrowthComparison]] : []),
       ...(reportData.growth.contractors ? [["Contractors registered", reportData.growth.contractors] as [string, GrowthComparison]] : []),
       ...(reportData.growth.projects ? [["Projects created", reportData.growth.projects] as [string, GrowthComparison]] : []),
     ] : [];
@@ -377,7 +377,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
       for (const item of selectedAgents) rows.push([item.name, item.totalCandidates, item.newCandidates, item.previousCandidates, item.placements]);
     }
     if (reportData?.suppliers) {
-      rows.push([], ["Supplier", "Status", "Registered"]);
+      rows.push([], ["Partner", "Status", "Registered"]);
       for (const item of selectedSuppliers) rows.push([item.name, item.status, item.registeredAt]);
     }
     if (reportData?.contractors) {
@@ -426,7 +426,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
       format: (value: number) => value.toLocaleString(),
     }] : []),
     ...(reportData?.growth.suppliers ? [{
-      label: "Suppliers registered",
+      label: "Partners registered",
       comparison: reportData.growth.suppliers,
       format: (value: number) => value.toLocaleString(),
     }] : []),
@@ -457,7 +457,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
         <div>
           <h1 className="text-xl font-700" style={{ color: "var(--foreground)" }}>Reports & Analytics</h1>
           <p className="mt-0.5 text-sm" style={{ color: "var(--muted-foreground)" }}>
-            Recruitment, staff, supplier, contractor, and finance reports · {period.start} to {period.end}
+            Recruitment, staff, partner, contractor, and finance reports · {period.start} to {period.end}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -616,14 +616,14 @@ export default function Reports({ permissions }: { permissions: string[] }) {
         {activeSection === "suppliers" && reportData?.suppliers && (
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-3">
-              <CountMetric label="Total suppliers" value={reportData.suppliers.total} color="#2563eb" />
-              <CountMetric label="Active suppliers" value={reportData.suppliers.active} color="#059669" />
+              <CountMetric label="Total partners" value={reportData.suppliers.total} color="#2563eb" />
+              <CountMetric label="Active partners" value={reportData.suppliers.active} color="#059669" />
               <CountMetric label="New this period" value={reportData.suppliers.registered} color="#7c3aed" />
             </div>
             <div className="overflow-x-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
               <table className="w-full min-w-[480px] text-sm">
                 <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
-                  {["Supplier", "Status", "Registered"].map((heading) => <th key={heading} className="px-4 py-3 text-xs font-700 uppercase tracking-wide">{heading}</th>)}
+                  {["Partner", "Status", "Registered"].map((heading) => <th key={heading} className="px-4 py-3 text-xs font-700 uppercase tracking-wide">{heading}</th>)}
                 </tr></thead>
                 <tbody>
                   {selectedSuppliers.map((supplier) => (
@@ -633,7 +633,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
                       <td className="px-4 py-3">{new Date(supplier.registeredAt).toLocaleDateString()}</td>
                     </tr>
                   ))}
-                  {!selectedSuppliers.length && <EmptyRow colSpan={3} text="No suppliers are registered." />}
+                  {!selectedSuppliers.length && <EmptyRow colSpan={3} text="No partners are registered." />}
                 </tbody>
               </table>
             </div>

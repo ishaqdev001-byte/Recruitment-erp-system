@@ -19,6 +19,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ taskI
     const { data: current, error: currentError } = await access.supabase.from("tasks").select("*")
       .eq("id", taskId).eq("company_id", access.companyId).maybeSingle();
     if (currentError || !current) return NextResponse.json({ error: "Task not found." }, { status: 404, headers });
+    if (current.created_by !== access.userId && current.assigned_to !== access.userId) {
+      return NextResponse.json({ error: "You can only manage tasks created for you." }, { status: 403, headers });
+    }
 
     const update: Record<string, unknown> = {};
     if ("title" in body) {
@@ -44,13 +47,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ taskI
     if (update.reminder_at === null) update.sms_reminder_enabled = false;
     if ("assignedTo" in body) {
       const assignedTo = body.assignedTo === "" ? null : body.assignedTo;
-      if (assignedTo !== null && !isUuid(assignedTo)) return NextResponse.json({ error: "Choose an active company member." }, { status: 400, headers });
-      if (assignedTo) {
-        const { data: member } = await access.supabase.from("company_memberships").select("user_id")
-          .eq("company_id", access.companyId).eq("user_id", assignedTo).eq("status", "active").maybeSingle();
-        if (!member) return NextResponse.json({ error: "Choose an active company member." }, { status: 400, headers });
+      if (assignedTo !== current.assigned_to) {
+        return NextResponse.json({ error: "Tasks and their reminders cannot be reassigned to another user." }, { status: 400, headers });
       }
-      update.assigned_to = assignedTo;
     }
     if ("priority" in body) {
       if (!priorities.includes(String(body.priority))) return NextResponse.json({ error: "Choose a valid priority." }, { status: 400, headers });
@@ -102,7 +101,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ taskI
         notes: task.notes,
         due_at: nextDueAt,
         reminder_at: nextReminderAt,
-        assigned_to: task.assigned_to,
+        assigned_to: access.userId,
         priority: task.priority,
         recurrence: task.recurrence,
         sms_reminder_enabled: task.sms_reminder_enabled,
@@ -121,10 +120,21 @@ export async function DELETE(_request: Request, context: { params: Promise<{ tas
   try {
     const access = await getTaskAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
-    if (!await hasTaskPermission(access, "tasks.delete")) return NextResponse.json({ error: "You do not have permission to delete tasks." }, { status: 403, headers });
     const { taskId } = await context.params;
     if (!isUuid(taskId)) return NextResponse.json({ error: "Task not found." }, { status: 404, headers });
-    const { error } = await access.supabase.from("tasks").delete().eq("id", taskId).eq("company_id", access.companyId);
+    const { data: task, error: taskError } = await access.supabase.from("tasks").select("created_by, assigned_to")
+      .eq("id", taskId).eq("company_id", access.companyId).maybeSingle();
+    if (taskError || !task) return NextResponse.json({ error: "Task not found." }, { status: 404, headers });
+    const canDeleteAny = await hasTaskPermission(access, "tasks.delete");
+    if (task.created_by !== access.userId && task.assigned_to !== access.userId && !canDeleteAny) {
+      return NextResponse.json({ error: "You can only delete tasks created for you." }, { status: 403, headers });
+    }
+    if (!canDeleteAny && !await hasTaskPermission(access, "tasks.edit")) {
+      return NextResponse.json({ error: "You do not have permission to delete tasks." }, { status: 403, headers });
+    }
+    let deleteQuery = access.supabase.from("tasks").delete().eq("id", taskId).eq("company_id", access.companyId);
+    if (!canDeleteAny) deleteQuery = deleteQuery.or(`created_by.eq.${access.userId},assigned_to.eq.${access.userId}`);
+    const { error } = await deleteQuery;
     if (error) return NextResponse.json({ error: "Unable to delete this task." }, { status: 400, headers });
     return NextResponse.json({ ok: true }, { headers });
   } catch (error) {

@@ -39,13 +39,31 @@ export async function GET(_request: Request, context: { params: Promise<{ candid
       .select("id, event_type, label, occurred_at, metadata")
       .eq("company_id", membership.company_id)
       .eq("candidate_id", candidateId)
+      .in("event_type", ["stage", "medical_appointment"])
       .order("occurred_at", { ascending: true })
       .order("id", { ascending: true });
     if (error) {
       console.error("Candidate status history query failed", error);
       return NextResponse.json({ error: "Unable to load candidate processing history." }, { status: 500, headers });
     }
-    return NextResponse.json({ events: events ?? [] }, { headers });
+    const safeEvents = (events ?? []).map((event) => {
+      if (event.event_type === "stage") return event;
+
+      const metadata =
+        typeof event.metadata === "object" &&
+        event.metadata !== null &&
+        !Array.isArray(event.metadata)
+          ? event.metadata
+          : {};
+      const appointmentAt = metadata.appointmentAt;
+      return {
+        ...event,
+        label: "Medical appointment booked",
+        metadata:
+          typeof appointmentAt === "string" ? { appointmentAt } : {},
+      };
+    });
+    return NextResponse.json({ events: safeEvents }, { headers });
   } catch (error) {
     console.error("Candidate status history request failed", error);
     return NextResponse.json({ error: "Candidate processing history is unavailable." }, { status: 503, headers });

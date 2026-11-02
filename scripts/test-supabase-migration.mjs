@@ -119,6 +119,14 @@ const suppliersMigration = await readFile(
   "utf8",
 )
 
+const agentAndSupplierAccessMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102130106_align_agent_and_supplier_access.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const invoicesMigration = await readFile(
   new URL("../supabase/migrations/202610040012_invoices.sql", import.meta.url),
 
@@ -197,6 +205,22 @@ const recruitmentAgentWorkforceAccessMigration = await readFile(
 const recruitmentAgentFinanceNavigationMigration = await readFile(
   new URL(
     "../supabase/migrations/20261031113749_restrict_recruitment_agent_finance_navigation.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const recruitmentAgentFinanceOnlyMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102131202_restrict_agent_finance_to_recruitment_agents.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const nonAgentFinancePermissionCleanupMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102131944_remove_agent_finance_from_non_agent_roles.sql",
     import.meta.url,
   ),
   "utf8",
@@ -387,6 +411,14 @@ const googleTasksMigration = await readFile(
   "utf8",
 )
 
+const enableTasksForAllMembersMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102133528_enable_tasks_for_all_members.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const smsugCommunicationsMigration = await readFile(
   new URL(
     "../supabase/migrations/202610040026_smsug_communications.sql",
@@ -548,6 +580,14 @@ const financeCandidateReadRolePermissionMigration = await readFile(
   "utf8",
 )
 
+const financeReadOnlyMedicalAppointmentsMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102111623_finance_read_only_medical_appointments.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const candidatePassportValidationMigration = await readFile(
   new URL(
     "../supabase/migrations/20261101220355_candidate_passport_validation.sql",
@@ -559,6 +599,38 @@ const candidatePassportValidationMigration = await readFile(
 const candidatePassportWorkflowMigration = await readFile(
   new URL(
     "../supabase/migrations/20261102055732_candidate_passport_workflow.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const restrictMedicalExaminationAccessMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102135049_restrict_medical_examination_access.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const medicalUnfitAlertsAndBookingStageMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102142054_medical_unfit_alert_recipients_and_booking_stage.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const medicalAlertPermissionScopeMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102144946_medical_alert_permission_scope.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const candidateWorkflowPermissionsMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102141655_candidate_stage_and_project_submission_permissions.sql",
     import.meta.url,
   ),
   "utf8",
@@ -580,11 +652,27 @@ const userB = "20000000-0000-4000-8000-000000000002"
 
 const recruitmentAgentUser = "20000000-0000-4000-8000-000000000007"
 
+const medicalDoctorUser = "20000000-0000-4000-8000-000000000008"
+
+const medicalNonExaminerUser = "20000000-0000-4000-8000-000000000009"
+
+const medicalAlertAppointment = "60000000-0000-4000-8000-000000000201"
+
+const medicalHistoricalAppointment = "60000000-0000-4000-8000-000000000202"
+
+const medicalAlertAccount = "70000000-0000-4000-8000-000000000201"
+
+const medicalAlertIncomeType = "80000000-0000-4000-8000-000000000201"
+
 const userC = "20000000-0000-4000-8000-000000000003"
 
 const userD = "20000000-0000-4000-8000-000000000004"
 
 const userE = "20000000-0000-4000-8000-000000000005"
+
+const medicalAlertBookerUser = "20000000-0000-4000-8000-000000000201"
+
+const medicalAlertSupervisorUser = "20000000-0000-4000-8000-000000000202"
 
 const roleA = "30000000-0000-4000-8000-000000000001"
 
@@ -609,6 +697,7 @@ try {
       raw_user_meta_data jsonb not null default '{}'::jsonb
     );
     grant usage on schema auth to service_role;
+    grant usage on schema auth to authenticated;
     grant insert, select, update, delete on auth.users to service_role;
     create function auth.uid() returns uuid
       language sql stable
@@ -716,6 +805,10 @@ try {
   await database.exec(companyDriveAccessMigration);
 
   await database.exec(companyDriveAccessMigration)
+
+  await database.exec(agentAndSupplierAccessMigration)
+
+  await database.exec(agentAndSupplierAccessMigration)
 
   await database.exec(companyDriveMountsMigration)
 
@@ -963,6 +1056,14 @@ try {
   await database.exec(recruitmentAgentFinanceNavigationMigration)
 
   await database.exec(recruitmentAgentFinanceNavigationMigration)
+
+  await database.exec(recruitmentAgentFinanceOnlyMigration)
+
+  await database.exec(recruitmentAgentFinanceOnlyMigration)
+
+  await database.exec(nonAgentFinancePermissionCleanupMigration)
+
+  await database.exec(nonAgentFinancePermissionCleanupMigration)
 
   const legacyProjectAccount = await database.query(
     "select account_id from public.projects where id = $1",
@@ -1216,6 +1317,32 @@ try {
     ["suppliers.create", "suppliers.view"],
   )
 
+  await database.query(
+    "insert into public.company_roles (id, company_id, name, is_system_default) values ($1, $2, 'Chairman', true)",
+    ["80000000-0000-4000-8000-000000000002", companyC],
+  )
+
+  const chairmanSupplierPermissions = await database.query(
+    `select role_permission.permission_code
+      from public.role_permissions role_permission
+      join public.company_roles role
+        on role.id = role_permission.role_id
+       and role.company_id = role_permission.company_id
+      where role.company_id = $1
+        and role.name = 'Chairman'
+        and role_permission.permission_code like 'suppliers.%'
+      order by role_permission.permission_code`,
+    [companyC],
+  )
+
+  assert.deepEqual(
+    chairmanSupplierPermissions.rows.map(
+      (permission) => permission.permission_code,
+    ),
+    ["suppliers.create", "suppliers.view"],
+    "future Chairman roles receive the supplier permissions",
+  )
+
   await database.exec(`insert into auth.users (id) values ('${userC}')`)
 
   await database.query(
@@ -1450,7 +1577,60 @@ try {
     [seededAgentRole.rows[0].id, companyA],
   )
 
+  await database.query(
+    `update public.company_roles
+      set access_settings = access_settings || '{"agent_visa_finance": true}'::jsonb
+      where id = $1`,
+    [roleA],
+  )
+  await database.query(
+    `insert into public.role_permissions (role_id, company_id, permission_code)
+      values ($1, $2, 'agent_finance.view')
+      on conflict (role_id, permission_code) do nothing`,
+    [roleA, companyA],
+  )
+  await database.exec(nonAgentFinancePermissionCleanupMigration)
+  await database.exec(nonAgentFinancePermissionCleanupMigration)
+  const cleanedStaffAgentFinancePermission = await database.query(
+    `select permission_code from public.role_permissions
+      where role_id = $1 and permission_code = 'agent_finance.view'`,
+    [roleA],
+  )
+  assert.deepEqual(
+    cleanedStaffAgentFinancePermission.rows,
+    [],
+    "non-agent roles do not retain agent finance permissions",
+  )
+  await database.query(
+    `insert into public.role_permissions (role_id, company_id, permission_code)
+      values ($1, $2, 'agent_finance.view')
+      on conflict (role_id, permission_code) do nothing`,
+    [roleA, companyA],
+  )
+
   await database.exec("set role authenticated")
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [recruitmentAgentUser],
+  )
+  const allowedAgentFinanceAccess = await database.query(
+    "select public.current_user_can_view_agent_finance($1) as allowed",
+    [companyA],
+  )
+  assert.equal(allowedAgentFinanceAccess.rows[0].allowed, true)
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userA],
+  )
+  const deniedStaffAgentFinanceAccess = await database.query(
+    "select public.current_user_can_view_agent_finance($1) as allowed",
+    [companyA],
+  )
+  assert.equal(
+    deniedStaffAgentFinanceAccess.rows[0].allowed,
+    false,
+    "staff roles cannot view agent finance even if the setting and permission are granted",
+  )
   await database.query(
     "select set_config('request.jwt.claim.sub', $1, false)",
     [recruitmentAgentUser],
@@ -3509,6 +3689,19 @@ try {
     ["Finance Manager", "Finance Officer", "Finance User"],
   )
 
+  assert.match(
+    financeReadOnlyMedicalAppointmentsMigration,
+    /create policy "Medical appointments are tenant and permission scoped"[\s\S]*?for select to authenticated[\s\S]*?permission\(company_id, 'finance\.view'\)[\s\S]*?permission\(company_id, 'medical\.view'\)/i,
+  )
+  assert.match(
+    financeReadOnlyMedicalAppointmentsMigration,
+    /create policy "Authorized users can book medical appointments"[\s\S]*?for insert to authenticated[\s\S]*?permission\(company_id, 'candidates\.create'\)[\s\S]*?permission\(company_id, 'medical\.update'\)/i,
+  )
+  assert.doesNotMatch(
+    financeReadOnlyMedicalAppointmentsMigration,
+    /for insert to authenticated[\s\S]*?permission\(company_id, 'finance\.create'\)/i,
+  )
+
   const editableRoleId = "30000000-0000-4000-8000-000000000099"
   await database.query(
     "insert into public.company_roles (id, company_id, name) values ($1, $2, 'Permission Editor Test')",
@@ -3907,6 +4100,841 @@ try {
     [agedCandidate],
   )
   assert.equal(restoredStage.rows[0].stage, "Registration", "eligible passports restore candidate registration")
+
+  const medicalAppointmentRlsTestMigration =
+    financeReadOnlyMedicalAppointmentsMigration.replaceAll(
+      "public.medical_appointments",
+      "public.medical_appointments_permission_test",
+    )
+  await database.exec(`
+    create table public.medical_appointments_permission_test (
+      id uuid primary key default gen_random_uuid(),
+      company_id uuid not null,
+      branch_id uuid,
+      created_by uuid not null
+    );
+    alter table public.medical_appointments_permission_test enable row level security;
+    grant select, insert on public.medical_appointments_permission_test to authenticated;
+    insert into public.medical_appointments_permission_test (company_id, branch_id, created_by) values
+      ('${companyA}', null, '${userE}'),
+      ('${companyB}', null, '${userB}');
+  `)
+  await database.exec(medicalAppointmentRlsTestMigration)
+  await database.exec(medicalAppointmentRlsTestMigration)
+  await database.exec("set role authenticated")
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [
+    userE,
+  ])
+  const financeAppointmentCount = await database.query(
+    `select count(*)::integer as count
+     from public.medical_appointments_permission_test
+     where company_id = $1`,
+    [companyA],
+  )
+  assert.equal(financeAppointmentCount.rows[0].count, 1)
+  const crossCompanyAppointmentCount = await database.query(
+    `select count(*)::integer as count
+     from public.medical_appointments_permission_test
+     where company_id = $1`,
+    [companyB],
+  )
+  assert.equal(crossCompanyAppointmentCount.rows[0].count, 0)
+  const financeBookingPermissions = await database.query(
+    `select
+       public.current_user_has_company_permission($1, 'candidates.create') as can_create_candidates,
+       public.current_user_has_company_permission($1, 'medical.update') as can_update_medical`,
+    [companyA],
+  )
+  assert.deepEqual(financeBookingPermissions.rows, [{
+    can_create_candidates: false,
+    can_update_medical: false,
+  }])
+  await assert.rejects(
+    database.query(
+      `insert into public.medical_appointments_permission_test (company_id, branch_id, created_by)
+       values ($1, null, $2)`,
+      [companyA, userE],
+    ),
+    /row-level security/i,
+  )
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [
+    userA,
+  ])
+  await database.query(
+    `insert into public.medical_appointments_permission_test (company_id, branch_id, created_by)
+     values ($1, null, $2)`,
+    [companyA, userA],
+  )
+  await database.exec("reset role")
+  await database.query("select set_config('request.jwt.claim.sub', '', false)")
+
+  await database.exec(enableTasksForAllMembersMigration)
+
+  const taskPermissionsByRole = await database.query(
+    `select role.name, count(role_permission.permission_code)::integer as permission_count
+     from public.company_roles role
+     left join public.role_permissions role_permission
+       on role_permission.role_id = role.id
+      and role_permission.company_id = role.company_id
+      and role_permission.permission_code in ('tasks.view', 'tasks.create', 'tasks.edit')
+     where role.company_id = $1
+     group by role.name
+     order by role.name`,
+    [companyA],
+  )
+  assert.ok(taskPermissionsByRole.rows.length > 0)
+  assert.ok(taskPermissionsByRole.rows.every((role) => role.permission_count === 3))
+
+  const newRoleId = "30000000-0000-4000-8000-000000000198"
+  await database.query(
+    "insert into public.company_roles (id, company_id, name) values ($1, $2, 'Future Tasks Role')",
+    [newRoleId, companyA],
+  )
+  const futureRoleTaskPermissions = await database.query(
+    `select permission_code from public.role_permissions
+     where role_id = $1 and permission_code like 'tasks.%'
+     order by permission_code`,
+    [newRoleId],
+  )
+  assert.deepEqual(
+    futureRoleTaskPermissions.rows.map((permission) => permission.permission_code),
+    ["tasks.create", "tasks.edit", "tasks.view"],
+  )
+
+  await database.exec("set role authenticated")
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [recruitmentAgentUser],
+  )
+  const agentTaskPermissions = await database.query(
+    `select
+       public.current_user_has_company_permission($1, 'tasks.view') as can_view,
+       public.current_user_has_company_permission($1, 'tasks.create') as can_create,
+       public.current_user_has_company_permission($1, 'tasks.edit') as can_edit`,
+    [companyA],
+  )
+  assert.deepEqual(agentTaskPermissions.rows[0], {
+    can_view: true,
+    can_create: true,
+    can_edit: true,
+  })
+  await database.exec("reset role")
+
+  const taskPolicyNames = await database.query(
+    `select policyname from pg_policies
+     where schemaname = 'public' and tablename = 'tasks'
+       and policyname in ('Members can create personal tasks', 'Members can edit their own tasks', 'Members can delete their own tasks')
+     order by policyname`,
+  )
+  assert.deepEqual(
+    taskPolicyNames.rows.map((policy) => policy.policyname),
+    ["Members can create personal tasks", "Members can delete their own tasks", "Members can edit their own tasks"],
+  )
+
+  const personalTaskListId = "30000000-0000-4000-8000-000000000197"
+  const personalTaskId = "30000000-0000-4000-8000-000000000196"
+  const completedTaskId = "30000000-0000-4000-8000-000000000195"
+  await database.query(
+    `insert into public.task_lists (id, company_id, name, created_by)
+     values ($1, $2, 'Personal Reminder Test', $3)`,
+    [personalTaskListId, companyA, userA],
+  )
+  await database.query(
+    `insert into public.tasks (id, company_id, list_id, title, due_at, reminder_at, assigned_to, created_by)
+     values ($1, $2, $3, 'Personal reminder test', now() - interval '1 minute', now() - interval '2 minutes', $4, $4)`,
+    [personalTaskId, companyA, personalTaskListId, userA],
+  )
+  await database.query(
+    `insert into public.tasks (id, company_id, list_id, title, due_at, reminder_at, assigned_to, created_by, is_completed)
+     values ($1, $2, $3, 'Completed reminder test', now() - interval '1 minute', now() - interval '2 minutes', $4, $4, true)`,
+    [completedTaskId, companyA, personalTaskListId, userA],
+  )
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userA],
+  )
+  await assert.rejects(
+    database.query(
+      "update public.tasks set assigned_to = $1 where id = $2",
+      [userB, personalTaskId],
+    ),
+    /ownership cannot be transferred/i,
+  )
+  await assert.rejects(
+    database.query(
+      "update public.tasks set created_by = $1 where id = $2",
+      [userB, personalTaskId],
+    ),
+    /ownership cannot be transferred/i,
+  )
+  await database.query(
+    "select set_config('request.jwt.claim.sub', '', false)",
+  )
+  await database.query("select public.dispatch_due_task_notifications()")
+  const personalReminder = await database.query(
+    "select recipient_id from public.task_notifications where task_id = $1",
+    [personalTaskId],
+  )
+  assert.deepEqual(personalReminder.rows, [{ recipient_id: userA }])
+  const completedReminder = await database.query(
+    "select id from public.task_notifications where task_id = $1",
+    [completedTaskId],
+  )
+  assert.deepEqual(completedReminder.rows, [])
+
+  await database.exec(`
+    alter table public.medical_appointments
+      add column if not exists branch_id uuid,
+      add column if not exists candidate_id uuid,
+      add column if not exists transaction_id uuid,
+      add column if not exists payment_reference text not null default '',
+      add column if not exists doctor_user_id uuid,
+      add column if not exists hospital_id uuid,
+      add column if not exists doctor_fee_amount numeric,
+      add column if not exists candidate_amount_after_doctor_fee numeric,
+      add column if not exists appointment_slip_generated boolean not null default false,
+      add column if not exists invoice_id uuid,
+      add column if not exists remarks text,
+      add column if not exists received_by_name text,
+      add column if not exists booked_by_name text,
+      add column if not exists exam_notes text,
+      add column if not exists examined_at timestamptz,
+      add column if not exists examined_by uuid;
+    create or replace function public.current_user_can_see_branch(
+      requested_company_id uuid,
+      requested_branch_id uuid
+    )
+    returns boolean language sql stable as $$ select true $$;
+    insert into auth.users (id) values
+      ('${medicalDoctorUser}'),
+      ('${medicalNonExaminerUser}');
+    insert into public.permissions (code, description) values
+      ('medical.view', 'View medical examinations'),
+      ('medical.update', 'Record medical results'),
+      ('medical_documents.view', 'View medical reports')
+    on conflict (code) do nothing;
+    alter table public.candidates disable trigger user;
+    update public.candidates
+    set details = coalesce(details, '{}'::jsonb) || jsonb_build_object(
+      'medicalExamResult', 'unfit',
+      'medicalExamNotes', 'sensitive test value'
+    )
+    where id = '${candidateA}';
+    alter table public.candidates enable trigger user;
+    insert into public.candidate_stage_events (
+      company_id, candidate_id, event_type, label, metadata
+    ) values (
+      '${companyA}', '${candidateA}', 'medical_result',
+      'Medical result: Unfit', '{"examResult":"unfit"}'::jsonb
+    ), (
+      '${companyA}', '${candidateA}', 'medical_appointment',
+      'Medical appointment', '{"status":"booked"}'::jsonb
+    );
+  `)
+  await database.exec(`
+    insert into public.company_roles (company_id, name, is_system_default)
+    values ('${companyA}', 'Doctor', true), ('${companyA}', 'Medical Officer', true)
+    on conflict (company_id, name) do update set is_system_default = true;
+  `)
+  const medicalRoleIds = await database.query(
+    `select name, id from public.company_roles
+     where company_id = $1 and name in ('Doctor', 'Medical Officer')`,
+    [companyA],
+  )
+  const medicalDoctorRole = medicalRoleIds.rows.find((role) => role.name === "Doctor")?.id
+  const medicalNonExaminerRole = medicalRoleIds.rows.find((role) => role.name === "Medical Officer")?.id
+  assert.ok(medicalDoctorRole)
+  assert.ok(medicalNonExaminerRole)
+  await database.query(
+    `insert into public.role_permissions (role_id, company_id, permission_code)
+     values
+       ($1, $3, 'medical.view'),
+       ($1, $3, 'medical.update'),
+       ($1, $3, 'medical_documents.view'),
+       ($2, $3, 'medical.view'),
+       ($2, $3, 'medical.update'),
+       ($2, $3, 'medical_documents.view')
+     on conflict (role_id, permission_code) do nothing`,
+    [medicalDoctorRole, medicalNonExaminerRole, companyA],
+  )
+  await database.query(
+    `insert into public.company_memberships (company_id, user_id, role_id)
+     values ($1, $2, $3), ($1, $4, $5)`,
+    [companyA, medicalDoctorUser, medicalDoctorRole, medicalNonExaminerUser, medicalNonExaminerRole],
+  )
+
+  await database.exec(restrictMedicalExaminationAccessMigration)
+  await database.exec(restrictMedicalExaminationAccessMigration)
+  await database.exec(`
+    insert into public.company_accounts (
+      id, company_id, name, account_type, created_by
+    ) values (
+      '${medicalAlertAccount}', '${companyA}', 'Medical Alert Test Account', 'cash', '${userA}'
+    );
+    insert into public.company_income_types (
+      id, company_id, name, income_kind, fee, account_id, created_by
+    ) values (
+      '${medicalAlertIncomeType}', '${companyA}', 'Medical Alert Test Service',
+      'medical', 100, '${medicalAlertAccount}', '${userA}'
+    );
+    insert into public.medical_appointments (
+      id, company_id, candidate_id, income_type_id, account_id,
+      candidate_first_name, candidate_last_name, candidate_date_of_birth,
+      candidate_age, candidate_passport_number, candidate_phone,
+      appointment_at, fee_amount, status, created_by
+    ) values (
+      '${medicalHistoricalAppointment}', '${companyA}', '${candidateA}',
+      '${medicalAlertIncomeType}', '${medicalAlertAccount}',
+      'Candidate', 'A', '1995-03-04', 31, 'MEDICAL-HISTORY-PASSPORT',
+      '+256700000001', now() - interval '1 day', 100, 'booked', '${userD}'
+    );
+  `)
+  await database.exec(medicalUnfitAlertsAndBookingStageMigration)
+  await database.exec(medicalUnfitAlertsAndBookingStageMigration)
+  await database.exec(medicalAlertPermissionScopeMigration)
+  await database.exec(medicalAlertPermissionScopeMigration)
+  const backfilledMedicalBookingHistory = await database.query(
+    `select label, metadata
+     from public.candidate_stage_events
+     where candidate_id = $1
+       and event_type = 'medical_appointment'
+       and occurred_at = (
+         select appointment_at from public.medical_appointments where id = $2
+       )`,
+    [candidateA, medicalHistoricalAppointment],
+  )
+  assert.equal(backfilledMedicalBookingHistory.rows.length, 1)
+  assert.equal(backfilledMedicalBookingHistory.rows[0].label, "Medical appointment booked")
+  assert.deepEqual(Object.keys(backfilledMedicalBookingHistory.rows[0].metadata), ["appointmentAt"])
+
+  const restrictedMedicalPermissions = await database.query(
+    `select role.name, role_permission.permission_code
+     from public.role_permissions role_permission
+     join public.company_roles role
+       on role.id = role_permission.role_id
+      and role.company_id = role_permission.company_id
+     where role.company_id = $1
+       and role.name in ('Doctor', 'Medical Officer')
+       and role_permission.permission_code like 'medical%'
+     order by role.name, role_permission.permission_code`,
+    [companyA],
+  )
+  assert.deepEqual(
+    restrictedMedicalPermissions.rows,
+    [
+      { name: "Doctor", permission_code: "medical.update" },
+      { name: "Doctor", permission_code: "medical.view" },
+      { name: "Doctor", permission_code: "medical_documents.view" },
+    ],
+    "medical permissions remain assigned only to the Doctor role",
+  )
+
+  await database.query(
+    `insert into public.role_permissions (role_id, company_id, permission_code)
+     values ($1, $2, 'medical.view')`,
+    [medicalNonExaminerRole, companyA],
+  )
+  const blockedMedicalPermission = await database.query(
+    `select count(*)::integer as count
+     from public.role_permissions
+     where role_id = $1 and permission_code = 'medical.view'`,
+    [medicalNonExaminerRole],
+  )
+  assert.equal(blockedMedicalPermission.rows[0].count, 0)
+
+  const sanitizedCandidateDetails = await database.query(
+    `select details ? 'medicalExamResult' as has_result,
+       details ? 'medicalExamNotes' as has_notes
+     from public.candidates where id = $1`,
+    [candidateA],
+  )
+  assert.deepEqual(sanitizedCandidateDetails.rows[0], {
+    has_result: false,
+    has_notes: false,
+  })
+
+  await database.exec(`
+    create temporary table medical_candidate_details_trigger_test (details jsonb);
+    create trigger sanitize_medical_candidate_details_test
+      before insert or update of details
+      on medical_candidate_details_trigger_test
+      for each row execute function private.remove_medical_results_from_candidate_details();
+    insert into medical_candidate_details_trigger_test (details)
+    values ('{"medicalExamResult":"unfit","medicalExamNotes":"private"}'::jsonb);
+  `)
+  const sanitizedFutureCandidateDetails = await database.query(
+    `select details ? 'medicalExamResult' as has_result,
+       details ? 'medicalExamNotes' as has_notes
+     from medical_candidate_details_trigger_test`,
+  )
+  assert.deepEqual(sanitizedFutureCandidateDetails.rows[0], {
+    has_result: false,
+    has_notes: false,
+  })
+
+  const removedMedicalResultHistory = await database.query(
+    `select count(*)::integer as count
+     from public.candidate_stage_events
+     where candidate_id = $1 and event_type = 'medical_result'`,
+    [candidateA],
+  )
+  assert.equal(removedMedicalResultHistory.rows[0].count, 0)
+
+  const medicalColumnPrivileges = await database.query(`
+    select
+      has_column_privilege('authenticated', 'public.medical_appointments', 'candidate_first_name', 'select') as can_select_booking,
+      has_column_privilege('authenticated', 'public.medical_appointments', 'exam_result', 'select') as can_select_result,
+      has_column_privilege('authenticated', 'public.medical_appointments', 'exam_result', 'update') as can_update_result,
+      has_table_privilege('authenticated', 'public.medical_appointments', 'insert') as can_insert_appointments
+  `)
+  assert.deepEqual(medicalColumnPrivileges.rows[0], {
+    can_select_booking: true,
+    can_select_result: false,
+    can_update_result: true,
+    can_insert_appointments: false,
+  })
+
+  await database.exec("set role authenticated")
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [medicalDoctorUser],
+  )
+  const doctorMedicalPermissions = await database.query(
+    `select
+       public.current_user_has_company_permission($1, 'medical.view') as can_view,
+       public.current_user_has_company_permission($1, 'medical.update') as can_update,
+       public.current_user_has_company_permission($1, 'medical_documents.view') as can_view_reports`,
+    [companyA],
+  )
+  assert.deepEqual(doctorMedicalPermissions.rows[0], {
+    can_view: true,
+    can_update: true,
+    can_view_reports: true,
+  })
+  await database.query(
+    "select candidate_first_name from public.medical_appointments limit 1",
+  )
+  await assert.rejects(
+    database.query(
+      "select exam_result from public.medical_appointments limit 1",
+    ),
+    /permission denied/i,
+  )
+
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [medicalNonExaminerUser],
+  )
+  const nonExaminerMedicalPermissions = await database.query(
+    `select
+       public.current_user_has_company_permission($1, 'medical.view') as can_view,
+       public.current_user_has_company_permission($1, 'medical.update') as can_update,
+       public.current_user_has_company_permission($1, 'medical_documents.view') as can_view_reports`,
+    [companyA],
+  )
+  assert.deepEqual(nonExaminerMedicalPermissions.rows[0], {
+    can_view: false,
+    can_update: false,
+    can_view_reports: false,
+  })
+  await database.exec("reset role")
+  await database.query("select set_config('request.jwt.claim.sub', '', false)")
+
+  const medicalAlertSupervisorRoleResult = await database.query(
+    `select id from public.company_roles where company_id = $1 and lower(name) = 'supervisor'`,
+    [companyA],
+  )
+  assert.equal(medicalAlertSupervisorRoleResult.rows.length, 1)
+
+  await database.exec(`
+    update public.companies
+    set primary_admin_user_id = '${userA}'
+    where id = '${companyA}';
+  `)
+  await database.query(
+    `update public.company_memberships set role_id = $1
+     where company_id = $2 and user_id = $3`,
+    [medicalAlertSupervisorRoleResult.rows[0].id, companyA, userB],
+  )
+  await database.query(
+    `insert into public.role_permissions (role_id, company_id, permission_code)
+     values ($1, $2, 'medical.alerts.view')
+     on conflict (role_id, permission_code) do nothing`,
+    [medicalNonExaminerRole, companyA],
+  )
+  await database.exec(`
+    insert into public.medical_appointments (
+      id, company_id, candidate_id, income_type_id, account_id,
+      candidate_first_name, candidate_last_name, candidate_date_of_birth,
+      candidate_age, candidate_passport_number, candidate_phone,
+      appointment_at, fee_amount, status, created_by
+    ) values (
+      '${medicalAlertAppointment}', '${companyA}', '${candidateA}',
+      '${medicalAlertIncomeType}', '${medicalAlertAccount}',
+      'Candidate', 'A', '1995-03-04', 31, 'MEDICAL-TEST-PASSPORT',
+      '+256700000001', now() + interval '1 day', 100, 'booked', '${userD}'
+    );
+  `)
+
+  const medicalBookingHistory = await database.query(
+    `select label, metadata
+     from public.candidate_stage_events
+     where candidate_id = $1 and event_type = 'medical_appointment'
+     order by occurred_at desc limit 1`,
+    [candidateA],
+  )
+  assert.equal(medicalBookingHistory.rows[0]?.label, "Medical appointment booked")
+  assert.deepEqual(Object.keys(medicalBookingHistory.rows[0]?.metadata ?? {}), ["appointmentAt"])
+
+  await database.query(
+    `update public.medical_appointments
+     set exam_result = 'unfit', status = 'completed', examined_by = $1, examined_at = now()
+     where id = $2`,
+    [medicalDoctorUser, medicalAlertAppointment],
+  )
+
+  const unfitAlertRecipients = await database.query(
+    `select recipient_id from public.workspace_notifications
+     where company_id = $1
+       and source_type = 'medical.unfit-alert'
+       and source_id = $2
+     order by recipient_id`,
+    [companyA, medicalAlertAppointment],
+  )
+  const expectedMedicalAlertRecipients = [
+    userA,
+    userB,
+    userD,
+    medicalNonExaminerUser,
+  ].sort()
+  assert.deepEqual(
+    unfitAlertRecipients.rows.map((row) => row.recipient_id).sort(),
+    expectedMedicalAlertRecipients,
+    "unfit alerts reach the Chairman, booking user, Supervisor, and roles granted alert access",
+  )
+
+  await database.query(
+    `update public.medical_appointments set exam_result = 'fit' where id = $1`,
+    [medicalAlertAppointment],
+  )
+  const historicalAlertPermission = await database.query(
+    `select private.can_deliver_workspace_notification(
+       $1, $2, 'medical.alerts.view', 'medical.unfit-alert', $3
+     ) as can_receive`,
+    [companyA, userA, medicalAlertAppointment],
+  )
+  assert.equal(
+    historicalAlertPermission.rows[0].can_receive,
+    true,
+    "existing alert recipients retain access if a result is corrected",
+  )
+  const unrelatedMedicalNotificationPermission = await database.query(
+    `select private.can_deliver_workspace_notification(
+       $1, $2, 'medical.alerts.view', 'medical.exam-result', $3
+     ) as can_receive`,
+    [companyA, medicalNonExaminerUser, medicalAlertAppointment],
+  )
+  assert.equal(
+    unrelatedMedicalNotificationPermission.rows[0].can_receive,
+    false,
+    "alert-only permission does not expose other medical notifications",
+  )
+
+  const unfitAlertPushRecipients = await database.query(
+    `select recipient_id
+     from public.list_pending_workspace_push_notifications(null, $1)
+     where required_permission = 'medical.alerts.view'
+     order by recipient_id`,
+    [companyA],
+  )
+  assert.deepEqual(
+    unfitAlertPushRecipients.rows.map((row) => row.recipient_id).sort(),
+    expectedMedicalAlertRecipients,
+    "unread unfit alerts remain eligible for push delivery after a result correction",
+  )
+
+  await database.exec("set role authenticated")
+  for (const recipientId of expectedMedicalAlertRecipients) {
+    await database.query(
+      "select set_config('request.jwt.claim.sub', $1, false)",
+      [recipientId],
+    )
+    const visibleAlert = await database.query(
+      `select count(*)::integer as count
+       from public.workspace_notifications
+       where source_type = 'medical.unfit-alert' and source_id = $1`,
+      [medicalAlertAppointment],
+    )
+    assert.equal(visibleAlert.rows[0].count, 1, "each intended recipient can read their alert")
+  }
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [medicalDoctorUser],
+  )
+  const unauthorizedAlertCount = await database.query(
+    `select count(*)::integer as count
+     from public.workspace_notifications
+     where source_type = 'medical.unfit-alert' and source_id = $1`,
+    [medicalAlertAppointment],
+  )
+  assert.equal(unauthorizedAlertCount.rows[0].count, 0)
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [medicalNonExaminerUser],
+  )
+  const alertOnlyMedicalPermissions = await database.query(
+    `select
+       public.current_user_has_company_permission($1, 'medical.alerts.view') as can_receive_alerts,
+       public.current_user_has_company_permission($1, 'medical.view') as can_view_examinations,
+       public.current_user_has_company_permission($1, 'medical.update') as can_edit_examinations,
+       public.current_user_has_company_permission($1, 'medical_documents.view') as can_view_reports`,
+    [companyA],
+  )
+  assert.deepEqual(alertOnlyMedicalPermissions.rows[0], {
+    can_receive_alerts: true,
+    can_view_examinations: false,
+    can_edit_examinations: false,
+    can_view_reports: false,
+  })
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userA],
+  )
+  const markedAlert = await database.query(
+    `update public.workspace_notifications set read_at = now()
+     where source_type = 'medical.unfit-alert' and source_id = $1
+     returning id`,
+    [medicalAlertAppointment],
+  )
+  assert.equal(markedAlert.rows.length, 1, "alert recipients can mark their notification read")
+  await database.exec("reset role")
+  await database.query("select set_config('request.jwt.claim.sub', '', false)")
+  await database.query(
+    `update public.company_memberships set role_id = $1
+     where company_id = $2 and user_id = $3`,
+    [statusRole, companyA, userB],
+  )
+
+  await database.exec(candidateWorkflowPermissionsMigration)
+  await database.exec(candidateWorkflowPermissionsMigration)
+
+  const preservedCandidateWorkflowPermissions = await database.query(
+    `select permission_code
+     from public.role_permissions
+     where role_id = $1
+       and permission_code in ('candidates.stage', 'candidates.project_submit')
+     order by permission_code`,
+    [roleA],
+  )
+  assert.deepEqual(
+    preservedCandidateWorkflowPermissions.rows.map(
+      (permission) => permission.permission_code,
+    ),
+    ["candidates.project_submit", "candidates.stage"],
+    "roles with candidates.edit retain their existing workflow access",
+  )
+
+  const futureCandidatePermissionCompanyId =
+    "50000000-0000-4000-8000-000000000002"
+  await database.query(
+    "insert into public.companies (id, name) values ($1, 'Candidate permission trigger test')",
+    [futureCandidatePermissionCompanyId],
+  )
+  const futureRecruitmentManagerPermissions = await database.query(
+    `select role_permission.permission_code
+     from public.role_permissions role_permission
+     join public.company_roles role
+       on role.id = role_permission.role_id
+      and role.company_id = role_permission.company_id
+     where role.company_id = $1
+       and role.name = 'Recruitment Manager'
+       and role_permission.permission_code in (
+         'candidates.edit', 'candidates.stage', 'candidates.project_submit'
+       )
+     order by role_permission.permission_code`,
+    [futureCandidatePermissionCompanyId],
+  )
+  assert.deepEqual(
+    futureRecruitmentManagerPermissions.rows.map(
+      (permission) => permission.permission_code,
+    ),
+    [
+      "candidates.edit",
+      "candidates.project_submit",
+      "candidates.stage",
+    ],
+    "future default roles preserve their existing candidate workflow access",
+  )
+
+  await database.query(
+    "select public.replace_company_role_permissions($1, $2, $3)",
+    [
+      editableRoleId,
+      companyA,
+      ["candidates.view", "candidates.edit", "candidates.stage"],
+    ],
+  )
+  const independentlyConfiguredWorkflowPermissions = await database.query(
+    `select permission_code
+     from public.role_permissions
+     where role_id = $1
+       and permission_code like 'candidates.%'
+     order by permission_code`,
+    [editableRoleId],
+  )
+  assert.deepEqual(
+    independentlyConfiguredWorkflowPermissions.rows.map(
+      (permission) => permission.permission_code,
+    ),
+    ["candidates.edit", "candidates.stage", "candidates.view"],
+    "workflow permissions can be configured independently from candidate editing",
+  )
+
+  const workflowTestCandidateId = "f1000000-0000-4000-8000-000000000001"
+  await database.query(
+    `insert into public.candidates (
+       id, company_id, file_number, first_name, last_name, details
+     ) values ($1, $2, 'WORKFLOW-PERMISSION-TEST', 'Workflow', 'Candidate', '{"stage":"Registration"}')`,
+    [workflowTestCandidateId, companyA],
+  )
+
+  await database.exec("begin")
+  await database.query(
+    `delete from public.role_permissions
+     where role_id = $1 and permission_code = 'candidates.stage'`,
+    [roleA],
+  )
+  await database.exec("set role authenticated")
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userA],
+  )
+  await database.exec("savepoint deny_candidate_stage_without_grant")
+  await assert.rejects(
+    database.query(
+      `update public.candidates
+       set details = coalesce(details, '{}'::jsonb) || '{"stage":"Project Submission"}'::jsonb
+       where id = $1`,
+      [workflowTestCandidateId],
+    ),
+    /candidates\.stage/i,
+    "candidates.edit alone does not authorize stage changes",
+  )
+  await database.exec(
+    "rollback to savepoint deny_candidate_stage_without_grant; reset role",
+  )
+
+  await database.query(
+    `insert into public.role_permissions (role_id, company_id, permission_code)
+     values ($1, $2, 'candidates.stage')`,
+    [roleA, companyA],
+  )
+  await database.query(
+    `delete from public.role_permissions
+     where role_id = $1 and permission_code = 'candidates.edit'`,
+    [roleA],
+  )
+  await database.exec("set role authenticated")
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userA],
+  )
+  await database.query(
+    `update public.candidates
+     set details = coalesce(details, '{}'::jsonb)
+       || jsonb_build_object('stage', coalesce(details ->> 'stage', 'Registration') || ' test')
+     where id = $1`,
+    [workflowTestCandidateId],
+  )
+  await database.exec("savepoint deny_candidate_profile_edit_without_grant")
+  await assert.rejects(
+    database.query(
+      "update public.candidates set first_name = 'Unauthorized' where id = $1",
+      [workflowTestCandidateId],
+    ),
+    /candidate edit permission/i,
+    "stage permissions do not authorize candidate profile edits",
+  )
+  await database.exec(
+    "rollback to savepoint deny_candidate_profile_edit_without_grant",
+  )
+
+  await database.exec("reset role")
+  await database.query(
+    `delete from public.role_permissions
+     where role_id = $1 and permission_code = 'candidates.project_submit'`,
+    [roleA],
+  )
+  await database.exec("set role authenticated")
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userA],
+  )
+  await database.exec("savepoint deny_project_submission_without_grant")
+  await assert.rejects(
+    database.query(
+      "select public.record_candidate_project_submission($1, $2)",
+      [
+        workflowTestCandidateId,
+        "90000000-0000-4000-8000-000000000099",
+      ],
+    ),
+    /permission to submit candidates to projects/i,
+    "project submissions require their dedicated permission",
+  )
+  await database.exec(
+    "rollback to savepoint deny_project_submission_without_grant; reset role",
+  )
+  await database.query(
+    `insert into public.role_permissions (role_id, company_id, permission_code)
+     values ($1, $2, 'candidates.project_submit')`,
+    [roleA, companyA],
+  )
+  await database.exec("set role authenticated")
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userA],
+  )
+  await database.exec("savepoint deny_direct_project_assignment")
+  await assert.rejects(
+    database.query(
+      `update public.candidates
+       set details = coalesce(details, '{}'::jsonb) || jsonb_build_object(
+         'stage', 'Submitted to Project',
+         'assignedProjectId', '90000000-0000-4000-8000-000000000099'
+       )
+       where id = $1`,
+      [workflowTestCandidateId],
+    ),
+    /must use the candidate workflow action/i,
+    "direct project assignment cannot bypass the validated submission RPC",
+  )
+  await database.exec(
+    "rollback to savepoint deny_direct_project_assignment; rollback",
+  )
+
+  await database.exec("begin")
+  await database.exec("set role authenticated")
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userA],
+  )
+  await database.query(
+    "select public.record_candidate_project_submission($1, $2)",
+    [workflowTestCandidateId, workflowProject],
+  )
+  const submittedWorkflowCandidate = await database.query(
+    `select details ->> 'stage' as stage,
+       details ->> 'assignedProjectId' as project_id
+     from public.candidates
+     where id = $1`,
+    [workflowTestCandidateId],
+  )
+  assert.deepEqual(submittedWorkflowCandidate.rows[0], {
+    stage: "Submitted to Project",
+    project_id: workflowProject,
+  })
+  await database.exec("rollback")
 
   console.log("Supabase migration and tenant RLS checks passed.")
 } finally {

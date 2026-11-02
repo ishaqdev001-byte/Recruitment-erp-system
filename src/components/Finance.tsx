@@ -337,7 +337,7 @@ export default function Finance() {
                     label: "Unpaid invoices receivable",
                     value: UGX(overview.totals.invoiceDue),
                     detail:
-                      "Outstanding candidate, contractor, and supplier invoices",
+                      "Outstanding candidate, contractor, and partner invoices",
                     color: "#f59e0b",
                   },
                   {

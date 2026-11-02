@@ -729,6 +729,16 @@ export async function POST(request: Request) {
       }
 
       if (
+        !isRecruitmentAgentRole(name) &&
+        requestedPermissions.includes("agent_finance.view")
+      ) {
+        return NextResponse.json(
+          { error: "Agent finance access is restricted to the protected Recruitment Agent role." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      if (
         isRecruitmentAgentRole(name) &&
         requestedPermissions.some(isRecruitmentAgentRestrictedPermission)
       ) {
@@ -881,6 +891,16 @@ export async function POST(request: Request) {
         return NextResponse.json(
           { error: "The Recruitment Agent role name cannot be changed." },
           { status: 403, headers: responseHeaders },
+        )
+      }
+
+      if (
+        !isRecruitmentAgentRole(name) &&
+        requestedPermissions.includes("agent_finance.view")
+      ) {
+        return NextResponse.json(
+          { error: "Agent finance access is restricted to the protected Recruitment Agent role." },
+          { status: 400, headers: responseHeaders },
         )
       }
 

@@ -1,20 +1,73 @@
-"use client";
+"use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import dynamic from "next/dynamic";
-import { Eye, EyeOff } from "lucide-react";
-import type { User } from "@supabase/supabase-js";
+/** Kilax Smart Recruit logo — shown on all pre-auth screens. */
+
+/** Full wordmark used in auth card headers. */
+
+/** Convert a company name to a URL-safe slug, e.g. "Acme Corp Ltd" → "acme-corp-ltd" */
+
+/**
+ * Determines the default landing view for a user based on their permissions.
+ * Prioritizes views in order of common use: finance → candidates → users → dashboard.
+ */
+// Then finance views
+// Keep recruitment access available without displacing finance as the landing view.
+// Then user/role management
+// Then tasks
+// Default to dashboard
+
+// Load the user's role permissions from the database
+
+// Fetch branch info for the session
+
+/** After a successful login, check whether the user must change their password. */
+
+// Forced first-login password change (set by admin using default-password flow)
+// Restore active view from the URL path on load / hard refresh.
+// Supports /view, /company-slug/view, and legacy ?v= / ?view= params.
+// Handle both /view and /company-slug/view path formats
+// Also handle auth paths: /login → stay on login, /register → go to register, etc.
+
+// Set default view based on permissions on first session load
+// Only set if currently on dashboard
+// Only trigger on session change (new company/login)
+
+// Refresh access on database changes, with a short polling fallback if Realtime is unavailable.
+
+// Keep URL path and document title in sync with the active view.
+// Uses pushState so the browser back button navigates between views.
+
+// Human-readable view titles for the browser tab
+
+// Sync URL when not logged in (auth views get their own paths)
+// Don't overwrite special invite/recovery links that have query params
+
+// Handle browser back / forward buttons
+// Resolve the view from either state or URL path
+// Guard: Check if the current view is allowed for this user's permissions
+/* Forced password change overlay (first-login after admin creates user with default password) */ /* Settings header */ /* Tab bar */ /* Tab content */
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react"
+import dynamic from "next/dynamic"
+import { Eye, EyeOff } from "lucide-react"
+import type { User } from "@supabase/supabase-js"
 import {
   createSupabaseBrowserClient,
   createSupabasePasswordVerificationClient,
-} from "./lib/supabase/browser";
-import { canAccessView, isMedicalOnlyUser } from "./lib/permissionToViewMap";
+} from "./lib/supabase/browser"
+import { canAccessView, isMedicalOnlyUser } from "./lib/permissionToViewMap"
 import {
   isRecruitmentAgentRestrictedPermission,
   isRecruitmentAgentRole,
-} from "./lib/role-access-settings";
-
-/** Kilax Smart Recruit logo — shown on all pre-auth screens. */
+  roleAccessSettings,
+} from "./lib/role-access-settings"
 function KilaxLogo({ size = 64 }: { size?: number }) {
   return (
     <img
@@ -24,88 +77,184 @@ function KilaxLogo({ size = 64 }: { size?: number }) {
       height={size}
       style={{ display: "block", objectFit: "contain" }}
     />
-  );
+  )
 }
-
-
-
-/** Full wordmark used in auth card headers. */
 function KilaxWordmark() {
   return (
     <div className="flex items-center gap-3">
       <KilaxLogo size={52} />
       <div>
-        <div className="text-xl font-700 leading-tight" style={{ color: "var(--foreground)" }}>Kilax Smart Recruit</div>
-        <div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: "var(--muted-foreground)" }}>Recruitment ERP</div>
+        <div
+          className="text-xl font-700 leading-tight"
+          style={{ color: "var(--foreground)" }}
+        >
+          Kilax Smart Recruit
+        </div>
+        <div
+          className="text-[11px] uppercase tracking-[0.18em]"
+          style={{ color: "var(--muted-foreground)" }}
+        >
+          Recruitment ERP
+        </div>
       </div>
     </div>
-  );
+  )
 }
 
 const PageLoading = () => (
-  <div className="p-6 text-sm" style={{ color: "var(--muted-foreground)" }} aria-busy="true">
+  <div
+    className="p-6 text-sm"
+    style={{ color: "var(--muted-foreground)" }}
+    aria-busy="true"
+  >
     Loading page…
   </div>
-);
+)
 
 async function removeBrowserPushSubscription() {
-  if (!("serviceWorker" in navigator)) return;
-  const registration = await navigator.serviceWorker.getRegistration("/");
-  const subscription = await registration?.pushManager.getSubscription();
-  if (!subscription) return;
+  if (
+    !(
+      "serviceWorker" in
+      navigator
+    )
+  )
+    return
+  const registration = await navigator.serviceWorker.getRegistration("/")
+  const subscription = await registration?.pushManager.getSubscription()
+  if (!subscription) return
 
   try {
     const response = await fetch("/api/notifications/push", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpoint: subscription.endpoint }),
-    });
-    if (!response.ok) console.error("Unable to remove the signed-in user's push subscription.", response.status);
+    })
+    if (!response.ok)
+      console.error(
+        "Unable to remove the signed-in user's push subscription.",
+        response.status,
+      )
   } finally {
-    await subscription.unsubscribe();
+    await subscription.unsubscribe()
   }
 }
 
-const Sidebar = dynamic(() => import("./components/Sidebar"), { loading: PageLoading });
-const TopBar = dynamic(() => import("./components/TopBar"), { loading: PageLoading });
-const Dashboard = dynamic(() => import("./components/LiveDashboard"), { loading: PageLoading });
-const Candidates = dynamic(() => import("./components/CandidateRoster"), { loading: PageLoading });
-const UsersRoles = dynamic(() => import("./components/UsersRoles"), { loading: PageLoading });
-const Agents = dynamic(() => import("./components/Agents"), { loading: PageLoading });
-const Finance = dynamic(() => import("./components/Finance"), { loading: PageLoading });
-const Invoices = dynamic(() => import("./components/InvoiceWorkspace"), { loading: PageLoading });
-const AgentFinance = dynamic(() => import("./components/AgentFinanceWorkspace"), { loading: PageLoading });
-const Payments = dynamic(() => import("./components/Payments"), { loading: PageLoading });
-const Paychecks = dynamic(() => import("./components/Paychecks"), { loading: PageLoading });
-const AccountsWorkspace = dynamic(() => import("./components/AccountsWorkspace"), { loading: PageLoading });
-const Suppliers = dynamic(() => import("./components/Suppliers"), { loading: PageLoading });
-const Contractors = dynamic(() => import("./components/Employers"), { loading: PageLoading });
-const Projects = dynamic(() => import("./components/Projects"), { loading: PageLoading });
-const PassportCustody = dynamic(() => import("./components/PassportCustodyWorkspace"), { loading: PageLoading });
-const Attendance = dynamic(() => import("./components/Attendance"), { loading: PageLoading });
-const LeaveManagement = dynamic(() => import("./components/LeaveManagement"), { loading: PageLoading });
-const HumanResources = dynamic(() => import("./components/HumanResources"), { loading: PageLoading });
-const MedicalAppointments = dynamic(() => import("./components/MedicalAppointments"), { loading: PageLoading });
-const MedicalManagement = dynamic(() => import("./components/MedicalManagement"), { loading: PageLoading });
-const HospitalManagement = dynamic(() => import("./components/HospitalManagement"), { loading: PageLoading });
-const Branches = dynamic(() => import("./components/Branches"), { loading: PageLoading });
-const BranchApprovals = dynamic(() => import("./components/BranchApprovals"), { loading: PageLoading });
-const Requisitions = dynamic(() => import("./components/RequisitionsWorkspace"), { loading: PageLoading });
-const CompanyDrive = dynamic(() => import("./components/CompanyDrive"), { loading: PageLoading });
-const Tasks = dynamic(() => import("./components/TaskWorkspace"), { loading: PageLoading });
-const Communications = dynamic(() => import("./components/Communications"), { loading: PageLoading });
-const AIAssistant = dynamic(() => import("./components/AIAssistant"), { loading: PageLoading });
-const Reports = dynamic(() => import("./components/Reports"), { loading: PageLoading });
-const DepartmentsSettings = dynamic(() => import("./components/settings/DepartmentsSettings"), { loading: PageLoading });
-const CurrenciesSettings = dynamic(() => import("./components/settings/CurrenciesSettings"), { loading: PageLoading });
-const ServiceProvidersSettings = dynamic(() => import("./components/settings/ServiceProvidersSettings"), { loading: PageLoading });
+const Sidebar = dynamic(() => import("./components/Sidebar"), {
+  loading: PageLoading,
+})
+const TopBar = dynamic(() => import("./components/TopBar"), {
+  loading: PageLoading,
+})
+const Dashboard = dynamic(() => import("./components/LiveDashboard"), {
+  loading: PageLoading,
+})
+const Candidates = dynamic(() => import("./components/CandidateRoster"), {
+  loading: PageLoading,
+})
+const UsersRoles = dynamic(() => import("./components/UsersRoles"), {
+  loading: PageLoading,
+})
+const Agents = dynamic(() => import("./components/Agents"), {
+  loading: PageLoading,
+})
+const Finance = dynamic(() => import("./components/Finance"), {
+  loading: PageLoading,
+})
+const Invoices = dynamic(() => import("./components/InvoiceWorkspace"), {
+  loading: PageLoading,
+})
+const AgentFinance = dynamic(
+  () => import("./components/AgentFinanceWorkspace"),
+  { loading: PageLoading },
+)
+const Payments = dynamic(() => import("./components/Payments"), {
+  loading: PageLoading,
+})
+const Paychecks = dynamic(() => import("./components/Paychecks"), {
+  loading: PageLoading,
+})
+const AccountsWorkspace = dynamic(
+  () => import("./components/AccountsWorkspace"),
+  { loading: PageLoading },
+)
+const Partners = dynamic(() => import("./components/Partners"), {
+  loading: PageLoading,
+})
+const Contractors = dynamic(() => import("./components/Employers"), {
+  loading: PageLoading,
+})
+const Projects = dynamic(() => import("./components/Projects"), {
+  loading: PageLoading,
+})
+const PassportCustody = dynamic(
+  () => import("./components/PassportCustodyWorkspace"),
+  { loading: PageLoading },
+)
+const Attendance = dynamic(() => import("./components/Attendance"), {
+  loading: PageLoading,
+})
+const LeaveManagement = dynamic(() => import("./components/LeaveManagement"), {
+  loading: PageLoading,
+})
+const HumanResources = dynamic(() => import("./components/HumanResources"), {
+  loading: PageLoading,
+})
+const MedicalAppointments = dynamic(
+  () => import("./components/MedicalAppointments"),
+  { loading: PageLoading },
+)
+const MedicalManagement = dynamic(
+  () => import("./components/MedicalManagement"),
+  { loading: PageLoading },
+)
+const HospitalManagement = dynamic(
+  () => import("./components/HospitalManagement"),
+  { loading: PageLoading },
+)
+const Branches = dynamic(() => import("./components/Branches"), {
+  loading: PageLoading,
+})
+const BranchApprovals = dynamic(() => import("./components/BranchApprovals"), {
+  loading: PageLoading,
+})
+const Requisitions = dynamic(
+  () => import("./components/RequisitionsWorkspace"),
+  { loading: PageLoading },
+)
+const CompanyDrive = dynamic(() => import("./components/CompanyDrive"), {
+  loading: PageLoading,
+})
+const Tasks = dynamic(() => import("./components/TaskWorkspace"), {
+  loading: PageLoading,
+})
+const Communications = dynamic(() => import("./components/Communications"), {
+  loading: PageLoading,
+})
+const AIAssistant = dynamic(() => import("./components/AIAssistant"), {
+  loading: PageLoading,
+})
+const Reports = dynamic(() => import("./components/Reports"), {
+  loading: PageLoading,
+})
+const DepartmentsSettings = dynamic(
+  () => import("./components/settings/DepartmentsSettings"),
+  { loading: PageLoading },
+)
+const CurrenciesSettings = dynamic(
+  () => import("./components/settings/CurrenciesSettings"),
+  { loading: PageLoading },
+)
+const ServiceProvidersSettings = dynamic(
+  () => import("./components/settings/ServiceProvidersSettings"),
+  { loading: PageLoading },
+)
 
 const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
   dashboard: () => import("./components/LiveDashboard"),
   candidates: () => import("./components/CandidateRoster"),
   "candidate-inquiries": () => import("./components/CandidateRoster"),
   agents: () => import("./components/Agents"),
-  suppliers: () => import("./components/Suppliers"),
+  suppliers: () => import("./components/Partners"),
   finance: () => import("./components/Finance"),
   accounts: () => import("./components/AccountsWorkspace"),
   invoices: () => import("./components/InvoiceWorkspace"),
@@ -130,139 +279,90 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
   passport: () => import("./components/PassportCustodyWorkspace"),
   documents: () => import("./components/CompanyDrive"),
   users: () => import("./components/UsersRoles"),
-  settings: () => Promise.all([
-    import("./components/settings/DepartmentsSettings"),
-    import("./components/settings/CurrenciesSettings"),
-    import("./components/settings/ServiceProvidersSettings"),
-  ]),
-};
-
-function preloadView(view: View) {
-  void viewPreloaders[view]?.();
+  settings: () =>
+    Promise.all([
+      import("./components/settings/DepartmentsSettings"),
+      import("./components/settings/CurrenciesSettings"),
+      import("./components/settings/ServiceProvidersSettings"),
+    ]),
 }
 
-export type View =
-  | "dashboard"
-  | "candidates"
-  | "candidate-inquiries"
-  | "agents"
-  | "suppliers"
-  | "jobs"
-  | "interviews"
-  | "offers"
-  | "analytics"
-  | "finance"
-  | "accounts"
-  | "payments"
-  | "paychecks"
-  | "passport"
-  | "documents"
-  | "ai"
-  | "reports"
-  | "users"
-  | "settings"
-  | "contractors"
-  | "projects"
-  | "invoices"
-  | "agent-invoices"
-  | "tasks"
-  | "communications"
-  | "attendance"
-  | "leave"
-  | "human-resources"
-  | "medical-appointments"
-  | "medical-management"
-  | "hospital-management"
-  | "branches"
-  | "approvals"
-  | "requisitions"
-  | "drive";
+function preloadView(view: View) {
+  void viewPreloaders[view]?.()
+}
 
-export type WorkspaceRole =
-  | "Chairman"
-  | "General Manager"
-  | "CEO"
-  | "Recruitment Manager"
-  | "Recruitment Agent"
-  | "Finance Manager"
-  | "Finance Officer"
-  | "Document Officer"
-  | "Medical Officer"
-  | "Doctor"
-  | "Supervisor"
-  | "Viewer"
-  | "Administrator"
-  | "Manager"
-  | "Finance User";
+export type View = "dashboard" | "candidates" | "candidate-inquiries" | "agents" | "suppliers" | "jobs" | "interviews" | "offers" | "analytics" | "finance" | "accounts" | "payments" | "paychecks" | "passport" | "documents" | "ai" | "reports" | "users" | "settings" | "contractors" | "projects" | "invoices" | "agent-invoices" | "tasks" | "communications" | "attendance" | "leave" | "human-resources" | "medical-appointments" | "medical-management" | "hospital-management" | "branches" | "approvals" | "requisitions" | "drive"
 
-type Theme = "dark" | "light";
-type Density = "comfortable" | "compact";
-type CompanyAccountStatus = "Active" | "Pending Verification" | "Suspended" | "Deactivated" | "Trial" | "Subscription Required";
+export type WorkspaceRole = "Chairman" | "General Manager" | "CEO" | "Recruitment Manager" | "Recruitment Agent" | "Finance Manager" | "Finance Officer" | "Document Officer" | "Medical Officer" | "Doctor" | "Supervisor" | "Viewer" | "Administrator" | "Manager" | "Finance User"
+
+type Theme = "dark" | "light"
+type Density = "comfortable" | "compact"
+type CompanyAccountStatus = "Active" | "Pending Verification" | "Suspended" | "Deactivated" | "Trial" | "Subscription Required"
 
 type CompanyProfile = {
-  id: string;
-  name: string;
-  slug: string;
-  registrationNumber: string;
-  country: string;
-  city: string;
-  officeAddress: string;
-  phone: string;
-  email: string;
-  website: string;
-  logo: string;
-  status: CompanyAccountStatus;
-  currency: string;
-  timezone: string;
-};
+  id: string
+  name: string
+  slug: string
+  registrationNumber: string
+  country: string
+  city: string
+  officeAddress: string
+  phone: string
+  email: string
+  website: string
+  logo: string
+  status: CompanyAccountStatus
+  currency: string
+  timezone: string
+}
 
 type CompanyUser = {
-  id: string;
-  name: string;
-  title: string;
-  email: string;
-  phone: string;
-  password: string;
-  role: WorkspaceRole;
-  companyId: string;
-  status: "active" | "invited";
-};
+  id: string
+  name: string
+  title: string
+  email: string
+  phone: string
+  password: string
+  role: WorkspaceRole
+  companyId: string
+  status: "active" | "invited"
+}
 
 type Session = {
-  companyId: string;
-  companySlug: string;
-  userId: string;
-  roleId: string;
-  userName: string;
-  userAvatarUrl: string;
-  companyName: string;
-  companyLogo: string;
-  role: WorkspaceRole;
-  onboarded: boolean;
-  branchId: string | null;
-  branchName: string;
-  isMainBranchUser: boolean;
-  permissions: string[];
-};
+  companyId: string
+  companySlug: string
+  userId: string
+  roleId: string
+  userName: string
+  userAvatarUrl: string
+  companyName: string
+  companyLogo: string
+  role: WorkspaceRole
+  onboarded: boolean
+  branchId: string | null
+  branchName: string
+  isMainBranchUser: boolean
+  permissions: string[]
+}
 
 type CompanyForm = {
-  companyName: string;
-  registrationNumber: string;
-  country: string;
-  city: string;
-  officeAddress: string;
-  phone: string;
-  email: string;
-  website: string;
-  fullName: string;
-  position: string;
-  adminEmail: string;
-  adminPhone: string;
-  password: string;
-  confirmPassword: string;
-  logoFile?: File;
-  logoPreview?: string;
-};
+  companyName: string
+  registrationNumber: string
+  country: string
+  city: string
+  officeAddress: string
+  phone: string
+  email: string
+  website: string
+  fullName: string
+  position: string
+  adminEmail: string
+  adminPhone: string
+  password: string
+  confirmPassword: string
+  logoFile?: File
+  logoPreview?: string
+}
 
 const emptyCompanyForm: CompanyForm = {
   companyName: "",
@@ -281,96 +381,161 @@ const emptyCompanyForm: CompanyForm = {
   confirmPassword: "",
   logoFile: undefined,
   logoPreview: undefined,
-};
+}
 
 const formatInitials = (value: string) =>
   value
     .split(" ")
     .filter(Boolean)
     .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("") || "R";
+    .map(
+      (part) =>
+        part[0]?.toUpperCase() ??
+        "",
+    )
+    .join("") ||
+  "R"
 
-const IDLE_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
-
-/** Convert a company name to a URL-safe slug, e.g. "Acme Corp Ltd" → "acme-corp-ltd" */
+const IDLE_LOCK_TIMEOUT_MS = 10 * 60 * 1000
 const toCompanySlug = (name: string) =>
   name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "company";
-
-/**
- * Determines the default landing view for a user based on their permissions.
- * Prioritizes views in order of common use: finance → candidates → users → dashboard.
- */
-function getDefaultViewByPermissions(permissions: string[], roleName?: string): View {
+    .replace(/^-+|-+$/g, "") ||
+  "company"
+function getDefaultViewByPermissions(
+  permissions: string[],
+  roleName?: string,
+): View {
   if (isMedicalOnlyUser(permissions)) {
-    return "medical-management";
+    return "medical-management"
   }
-  // Then finance views
   if (permissions.some((p) => p.startsWith("finance."))) {
-    return "finance";
+    return "finance"
   }
-  // Keep recruitment access available without displacing finance as the landing view.
   if (permissions.some((p) => p.startsWith("candidates."))) {
-    return "candidates";
+    return "candidates"
   }
-  // Then user/role management
   if (permissions.includes("users.view")) {
-    return "users";
+    return "users"
   }
-  // Then tasks
   if (permissions.includes("tasks.view")) {
-    return "tasks";
+    return "tasks"
   }
-  // Default to dashboard
-  return "dashboard";
+  return "dashboard"
 }
 
 async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
-  const supabase = createSupabaseBrowserClient();
+  const supabase = createSupabaseBrowserClient()
   let membershipQuery = supabase
     .from("company_memberships")
-    .select("company_id, company:companies!inner(id, name, slug, status, logo_url, registration_number, country, city, office_address, phone, email, website), role:company_roles!inner(id, name)")
+    .select(
+      "company_id, company:companies!inner(id, name, slug, status, logo_url, registration_number, country, city, office_address, phone, email, website), role:company_roles!inner(id, name, access_settings)",
+    )
     .eq("user_id", user.id)
-    .eq("status", "active");
-  if (targetCompanyId) membershipQuery = membershipQuery.eq("company_id", targetCompanyId);
-  const { data: membership, error } = await membershipQuery.limit(1).maybeSingle();
+    .eq("status", "active")
+  if (targetCompanyId)
+    membershipQuery = membershipQuery.eq("company_id", targetCompanyId)
+  const { data: membership, error } = await membershipQuery
+    .limit(1)
+    .maybeSingle()
 
-  if (error) throw new Error("Unable to load your company membership. Check the Supabase migration and RLS policies.");
-  if (!membership) throw new Error("Your Supabase account has no active company membership yet.");
+  if (error)
+    throw new Error(
+      "Unable to load your company membership. Check the Supabase migration and RLS policies.",
+    )
+  if (!membership)
+    throw new Error(
+      "Your Supabase account has no active company membership yet.",
+    )
 
-  const companyValue = membership.company as unknown as { id: string; name: string; slug: string; status: string; logo_url: string; registration_number: string; country: string; city: string; office_address: string; phone: string; email: string; website: string } | { id: string; name: string; slug: string; status: string; logo_url: string; registration_number: string; country: string; city: string; office_address: string; phone: string; email: string; website: string }[];
-  const companyRecord = Array.isArray(companyValue) ? companyValue[0] : companyValue;
-  const roleValue = membership.role as unknown as { id: string; name: string } | { id: string; name: string }[];
-  const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue;
-  if (!companyRecord || !roleRecord) throw new Error("Your company membership is incomplete.");
-
-  // Load the user's role permissions from the database
+  const companyValue = membership.company as unknown as {
+    id: string
+    name: string
+    slug: string
+    status: string
+    logo_url: string
+    registration_number: string
+    country: string
+    city: string
+    office_address: string
+    phone: string
+    email: string
+    website: string
+  } | {
+    id: string
+    name: string
+    slug: string
+    status: string
+    logo_url: string
+    registration_number: string
+    country: string
+    city: string
+    office_address: string
+    phone: string
+    email: string
+    website: string
+  }[]
+  const companyRecord = Array.isArray(companyValue)
+    ? companyValue[0]
+    : companyValue
+  const roleValue = membership.role as unknown as {
+    id: string
+    name: string
+    access_settings: unknown
+  } | { id: string; name: string; access_settings: unknown }[]
+  const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue
+  if (!companyRecord || !roleRecord)
+    throw new Error("Your company membership is incomplete.")
   const { data: rolePerms, error: permsError } = await supabase
     .from("role_permissions")
     .select("permission_code")
     .eq("role_id", roleRecord.id)
-    .eq("company_id", companyRecord.id);
-  if (permsError) throw new Error("Unable to load your permissions.");
-  const permissions = (rolePerms ?? [])
+    .eq("company_id", companyRecord.id)
+  if (permsError) throw new Error("Unable to load your permissions.")
+  const permissions = (
+    rolePerms ??
+    []
+  )
     .map((rp) => rp.permission_code)
     .filter(
       (permission) =>
         !isRecruitmentAgentRole(roleRecord.name) ||
         !isRecruitmentAgentRestrictedPermission(permission),
-    );
+    )
+    .filter(
+      (permission) =>
+        permission !==
+          "agent_finance.view" ||
+        (isRecruitmentAgentRole(roleRecord.name) &&
+          roleAccessSettings(roleRecord.access_settings, roleRecord.name)
+            .agent_visa_finance),
+    )
 
   const knownRoles: WorkspaceRole[] = [
-    "Chairman", "General Manager", "CEO",
-    "Recruitment Manager", "Recruitment Agent",
-    "Finance Manager", "Finance Officer", "Document Officer", "Medical Officer", "Doctor", "Supervisor", "Viewer",
-    "Administrator", "Manager", "Finance User",
-  ];
-  const role = knownRoles.find((candidateRole) => candidateRole === roleRecord.name) ?? roleRecord.name as WorkspaceRole;
-
-  // Fetch branch info for the session
+    "Chairman",
+    "General Manager",
+    "CEO",
+    "Recruitment Manager",
+    "Recruitment Agent",
+    "Finance Manager",
+    "Finance Officer",
+    "Document Officer",
+    "Medical Officer",
+    "Doctor",
+    "Supervisor",
+    "Viewer",
+    "Administrator",
+    "Manager",
+    "Finance User",
+  ]
+  const role =
+    knownRoles.find(
+      (candidateRole) =>
+        candidateRole ===
+        roleRecord.name,
+    ) ??
+    roleRecord.name as WorkspaceRole
   const { data: membershipBranch } = await supabase
     .from("company_memberships")
     .select("branch_id, branch:company_branches(id, name, is_main_branch)")
@@ -378,39 +543,75 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     .eq("company_id", companyRecord.id)
     .eq("status", "active")
     .limit(1)
-    .maybeSingle();
-  const branchValue = membershipBranch?.branch as unknown as { id: string; name: string; is_main_branch: boolean } | { id: string; name: string; is_main_branch: boolean }[] | null;
-  const branchRecord = Array.isArray(branchValue) ? branchValue[0] : branchValue;
-  const branchName = branchRecord?.name ?? "Main Branch";
-  const isMainBranchUser = !branchRecord || Boolean(branchRecord.is_main_branch);
+    .maybeSingle()
+  const branchValue = membershipBranch?.branch as unknown as {
+    id: string
+    name: string
+    is_main_branch: boolean
+  } | { id: string; name: string; is_main_branch: boolean }[] | null
+  const branchRecord = Array.isArray(branchValue) ? branchValue[0] : branchValue
+  const branchName =
+    branchRecord?.name ??
+    "Main Branch"
+  const isMainBranchUser =
+    !branchRecord ||
+    Boolean(branchRecord.is_main_branch)
   const company: CompanyProfile = {
     id: companyRecord.id,
     name: companyRecord.name,
     slug: companyRecord.slug,
-    registrationNumber: companyRecord.registration_number ?? "",
-    country: companyRecord.country ?? "",
-    city: companyRecord.city ?? "",
-    officeAddress: companyRecord.office_address ?? "",
-    phone: companyRecord.phone ?? "",
-    email: companyRecord.email ?? "",
-    website: companyRecord.website ?? "",
-    logo: companyRecord.logo_url ?? "",
-    status: companyRecord.status === "trial" ? "Trial" : companyRecord.status === "active" ? "Active" : "Pending Verification",
+    registrationNumber:
+      companyRecord.registration_number ??
+      "",
+    country:
+      companyRecord.country ??
+      "",
+    city:
+      companyRecord.city ??
+      "",
+    officeAddress:
+      companyRecord.office_address ??
+      "",
+    phone:
+      companyRecord.phone ??
+      "",
+    email:
+      companyRecord.email ??
+      "",
+    website:
+      companyRecord.website ??
+      "",
+    logo:
+      companyRecord.logo_url ??
+      "",
+    status:
+      companyRecord.status ===
+      "trial"
+        ? "Trial"
+        : companyRecord.status ===
+            "active"
+          ? "Active"
+          : "Pending Verification",
     currency: "UGX",
     timezone: "Africa/Kampala",
-  };
-  const userName = String(user.user_metadata?.full_name ?? user.email ?? "User");
+  }
+  const userName = String(user.user_metadata?.full_name ?? user.email ?? "User")
   const companyUser: CompanyUser = {
     id: user.id,
     name: userName,
     title: role,
-    email: user.email ?? "",
-    phone: String(user.user_metadata?.phone ?? ""),
+    email:
+      user.email ??
+      "",
+    phone: String(
+      user.user_metadata?.phone ??
+        "",
+    ),
     password: "",
     role,
     companyId: company.id,
     status: "active",
-  };
+  }
 
   return {
     company,
@@ -421,39 +622,49 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
       userId: user.id,
       roleId: roleRecord.id,
       userName,
-      userAvatarUrl: String(user.user_metadata?.avatar_url ?? user.user_metadata?.picture ?? ""),
+      userAvatarUrl: String(
+        user.user_metadata?.avatar_url ?? user.user_metadata?.picture ?? "",
+      ),
       companyName: company.name,
       companyLogo: company.logo,
       role,
       onboarded: true,
-      branchId: membershipBranch?.branch_id ?? null,
+      branchId:
+        membershipBranch?.branch_id ??
+        null,
       branchName,
       isMainBranchUser,
       permissions,
     } satisfies Session,
-  };
+  }
 }
 
 type CompanyRegistrationResult = {
-  companyId: string;
-  registrationCompleted: boolean;
-  welcomeEmailSent: boolean;
-  welcomeEmailRecipientCount: number;
-  welcomeEmailError?: string;
-};
+  companyId: string
+  registrationCompleted: boolean
+  welcomeEmailSent: boolean
+  welcomeEmailRecipientCount: number
+  welcomeEmailError?: string
+}
 
-const pendingCompanyLogoStorageKey = "kilax.pendingCompanyRegistrationLogo";
+const pendingCompanyLogoStorageKey = "kilax.pendingCompanyRegistrationLogo"
 
 async function provisionPendingCompanyRegistration(
   user: User,
   options: { resendWelcomeEmail?: boolean } = {},
 ): Promise<CompanyRegistrationResult | null> {
-  if (!user.user_metadata?.company_registration) return null;
+  if (!user.user_metadata?.company_registration) return null
 
-  const supabase = createSupabaseBrowserClient();
-  const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) throw sessionError;
-  if (!currentSession) throw new Error("Sign in after verifying your email to finish setting up your company.");
+  const supabase = createSupabaseBrowserClient()
+  const {
+    data: { session: currentSession },
+    error: sessionError,
+  } = await supabase.auth.getSession()
+  if (sessionError) throw sessionError
+  if (!currentSession)
+    throw new Error(
+      "Sign in after verifying your email to finish setting up your company.",
+    )
 
   const response = await fetch("/api/company-registration/provision", {
     method: "POST",
@@ -462,164 +673,212 @@ async function provisionPendingCompanyRegistration(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      resendWelcomeEmail: options.resendWelcomeEmail ?? false,
+      resendWelcomeEmail:
+        options.resendWelcomeEmail ??
+        false,
       logoDataUrl: readPendingCompanyLogo(),
     }),
     cache: "no-store",
-  });
-  const result = await response.json() as Partial<CompanyRegistrationResult> & { error?: string };
+  })
+  const result =
+    (await response.json()) as Partial<CompanyRegistrationResult> & {
+      error?: string
+    }
   if (!response.ok || !result.companyId) {
-    throw new Error(result.error ?? "Unable to finish setting up your company workspace.");
+    throw new Error(
+      result.error ??
+        "Unable to finish setting up your company workspace.",
+    )
   }
   try {
-    window.localStorage.removeItem(pendingCompanyLogoStorageKey);
+    window.localStorage.removeItem(pendingCompanyLogoStorageKey)
   } catch (error) {
-    console.error("Unable to clear the pending company logo after registration.", error);
+    console.error(
+      "Unable to clear the pending company logo after registration.",
+      error,
+    )
   }
   return {
     companyId: result.companyId,
     registrationCompleted: Boolean(result.registrationCompleted),
     welcomeEmailSent: Boolean(result.welcomeEmailSent),
-    welcomeEmailRecipientCount: result.welcomeEmailRecipientCount ?? 0,
+    welcomeEmailRecipientCount:
+      result.welcomeEmailRecipientCount ??
+      0,
     welcomeEmailError: result.welcomeEmailError,
-  };
+  }
 }
 
 function readPendingCompanyLogo() {
   try {
-    const pendingLogo = window.localStorage.getItem(pendingCompanyLogoStorageKey);
-    if (!pendingLogo) return null;
-    const parsed: unknown = JSON.parse(pendingLogo);
-    if (!parsed || typeof parsed !== "object" || !("dataUrl" in parsed)) return null;
-    return typeof parsed.dataUrl === "string" ? parsed.dataUrl : null;
+    const pendingLogo = window.localStorage.getItem(
+      pendingCompanyLogoStorageKey,
+    )
+    if (!pendingLogo) return null
+    const parsed: unknown = JSON.parse(pendingLogo)
+    if (
+      !parsed ||
+      typeof parsed !==
+        "object" ||
+      !(
+        "dataUrl" in
+        parsed
+      )
+    )
+      return null
+    return typeof parsed.dataUrl ===
+      "string"
+      ? parsed.dataUrl
+      : null
   } catch (error) {
-    console.error("Unable to read the pending company logo.", error);
-    return null;
+    console.error("Unable to read the pending company logo.", error)
+    return null
   }
 }
-
-/** After a successful login, check whether the user must change their password. */
 async function checkMustChangePassword(userId: string): Promise<boolean> {
   try {
-    const supabase = createSupabaseBrowserClient();
+    const supabase = createSupabaseBrowserClient()
     const { data } = await supabase
       .from("profiles")
       .select("must_change_password")
       .eq("id", userId)
-      .maybeSingle();
-    return Boolean((data as { must_change_password?: boolean } | null)?.must_change_password);
+      .maybeSingle()
+    return Boolean(
+      (data as { must_change_password?: boolean } | null)?.must_change_password,
+    )
   } catch {
-    return false;
+    return false
   }
 }
 
 export default function App() {
-  const [view, setView] = useState<View>("dashboard");
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [role, setRole] = useState<WorkspaceRole>("Chairman");
-  const [theme, setTheme] = useState<Theme>("dark");
-  const [density, setDensity] = useState<Density>("comfortable");
-  const [preferencesReady, setPreferencesReady] = useState(false);
+  const [view, setView] = useState<View>("dashboard")
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [role, setRole] = useState<WorkspaceRole>("Chairman")
+  const [theme, setTheme] = useState<Theme>("dark")
+  const [density, setDensity] = useState<Density>("comfortable")
+  const [preferencesReady, setPreferencesReady] = useState(false)
 
-  const [companies, setCompanies] = useState<CompanyProfile[]>([]);
-  const [users, setUsers] = useState<CompanyUser[]>([]);
-  const [session, setSession] = useState<Session | null>(null);
-  const [authView, setAuthView] = useState<"landing" | "login" | "register" | "verify" | "invite" | "reset-password">("login");
-  const [authLoading, setAuthLoading] = useState(true);
-  const [companyForm, setCompanyForm] = useState<CompanyForm>(emptyCompanyForm);
-  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
-  const [registerError, setRegisterError] = useState("");
-  const [registerSubmitting, setRegisterSubmitting] = useState(false);
+  const [companies, setCompanies] = useState<CompanyProfile[]>([])
+  const [users, setUsers] = useState<CompanyUser[]>([])
+  const [session, setSession] = useState<Session | null>(null)
+  const [authView, setAuthView] =
+    useState<"landing" | "login" | "register" | "verify" | "invite" | "reset-password">(
+      "login",
+    )
+  const [authLoading, setAuthLoading] = useState(true)
+  const [companyForm, setCompanyForm] = useState<CompanyForm>(emptyCompanyForm)
+  const [loginForm, setLoginForm] = useState({ email: "", password: "" })
+  const [registerError, setRegisterError] = useState("")
+  const [registerSubmitting, setRegisterSubmitting] = useState(false)
   const [registrationCompletion, setRegistrationCompletion] = useState<{
-    welcomeEmailSent: boolean;
-    welcomeEmailRecipientCount: number;
-    welcomeEmailError?: string;
-  } | null>(null);
-  const [loginError, setLoginError] = useState("");
-  const [resetEmailSending, setResetEmailSending] = useState(false);
-  const [resetEmailMessage, setResetEmailMessage] = useState("");
-  const [resetPassword, setResetPassword] = useState("");
-  const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
-  const [resetPasswordEmail, setResetPasswordEmail] = useState("");
-  const [resetPasswordError, setResetPasswordError] = useState("");
-  const [resetPasswordSaving, setResetPasswordSaving] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteId, setInviteId] = useState("");
-  const [inviteCompanyId, setInviteCompanyId] = useState("");
-  const [inviteCompanyName, setInviteCompanyName] = useState("");
-  const [inviteRoleName, setInviteRoleName] = useState("");
-  const [invitePassword, setInvitePassword] = useState("");
-  const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("");
-  const [inviteError, setInviteError] = useState("");
-  const [inviteSaving, setInviteSaving] = useState(false);
-  const [wizardStep, setWizardStep] = useState(0);
+    welcomeEmailSent: boolean
+    welcomeEmailRecipientCount: number
+    welcomeEmailError?: string
+  } | null>(null)
+  const [loginError, setLoginError] = useState("")
+  const [resetEmailSending, setResetEmailSending] = useState(false)
+  const [resetEmailMessage, setResetEmailMessage] = useState("")
+  const [resetPassword, setResetPassword] = useState("")
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState("")
+  const [resetPasswordEmail, setResetPasswordEmail] = useState("")
+  const [resetPasswordError, setResetPasswordError] = useState("")
+  const [resetPasswordSaving, setResetPasswordSaving] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState("")
+  const [inviteId, setInviteId] = useState("")
+  const [inviteCompanyId, setInviteCompanyId] = useState("")
+  const [inviteCompanyName, setInviteCompanyName] = useState("")
+  const [inviteRoleName, setInviteRoleName] = useState("")
+  const [invitePassword, setInvitePassword] = useState("")
+  const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("")
+  const [inviteError, setInviteError] = useState("")
+  const [inviteSaving, setInviteSaving] = useState(false)
+  const [wizardStep, setWizardStep] = useState(0)
+  const [mustChangePassword, setMustChangePassword] = useState(false)
+  const [forcedNewPassword, setForcedNewPassword] = useState("")
+  const [forcedNewPasswordConfirm, setForcedNewPasswordConfirm] = useState("")
+  const [forcedPasswordSaving, setForcedPasswordSaving] = useState(false)
+  const [forcedPasswordError, setForcedPasswordError] = useState("")
+  const [forcedShowPassword, setForcedShowPassword] = useState(false)
+  const [idleLocked, setIdleLocked] = useState(false)
+  const [unlockPassword, setUnlockPassword] = useState("")
+  const [unlockError, setUnlockError] = useState("")
+  const [unlockSaving, setUnlockSaving] = useState(false)
+  const [idleCancelSaving, setIdleCancelSaving] = useState(false)
+  const idleLockedRef = useRef(false)
+  const lastActivityAt = useRef(Date.now())
 
-  // Forced first-login password change (set by admin using default-password flow)
-  const [mustChangePassword, setMustChangePassword] = useState(false);
-  const [forcedNewPassword, setForcedNewPassword] = useState("");
-  const [forcedNewPasswordConfirm, setForcedNewPasswordConfirm] = useState("");
-  const [forcedPasswordSaving, setForcedPasswordSaving] = useState(false);
-  const [forcedPasswordError, setForcedPasswordError] = useState("");
-  const [forcedShowPassword, setForcedShowPassword] = useState(false);
-  const [idleLocked, setIdleLocked] = useState(false);
-  const [unlockPassword, setUnlockPassword] = useState("");
-  const [unlockError, setUnlockError] = useState("");
-  const [unlockSaving, setUnlockSaving] = useState(false);
-  const [idleCancelSaving, setIdleCancelSaving] = useState(false);
-  const idleLockedRef = useRef(false);
-  const lastActivityAt = useRef(Date.now());
-
-  const handleNavigate = useCallback((nextView: View) => {
-    if (session && !canAccessView(nextView, session.permissions)) return;
-    preloadView(nextView);
-    setView(nextView);
-  }, [session]);
-  const handleSidebarNavigate = useCallback((nextView: View) => {
-    handleNavigate(nextView);
-    setMobileNavOpen(false);
-  }, [handleNavigate]);
+  const handleNavigate = useCallback(
+    (nextView: View) => {
+      if (session && !canAccessView(nextView, session.permissions)) return
+      preloadView(nextView)
+      setView(nextView)
+    },
+    [session],
+  )
+  const handleSidebarNavigate = useCallback(
+    (nextView: View) => {
+      handleNavigate(nextView)
+      setMobileNavOpen(false)
+    },
+    [handleNavigate],
+  )
 
   useEffect(() => {
-    if (!session?.onboarded || mustChangePassword) return;
+    if (!session?.onboarded || mustChangePassword) return
 
-    const lockStorageKey = `kilax.idle-locked:${session.userId}`;
-    if (window.sessionStorage.getItem(lockStorageKey) === "true") {
-      idleLockedRef.current = true;
-      setIdleLocked(true);
-      return;
+    const lockStorageKey = `kilax.idle-locked:${session.userId}`
+    if (
+      window.sessionStorage.getItem(lockStorageKey) ===
+      "true"
+    ) {
+      idleLockedRef.current = true
+      setIdleLocked(true)
+      return
     }
 
-    idleLockedRef.current = false;
-    lastActivityAt.current = Date.now();
-    let timeoutId: number | undefined;
+    idleLockedRef.current = false
+    lastActivityAt.current = Date.now()
+    let timeoutId: number | undefined
 
     const checkIdleTime = () => {
       const remaining =
-        IDLE_LOCK_TIMEOUT_MS - (Date.now() - lastActivityAt.current);
-      if (remaining <= 0) {
-        idleLockedRef.current = true;
-        window.sessionStorage.setItem(lockStorageKey, "true");
-        setUnlockPassword("");
-        setUnlockError("");
-        setIdleLocked(true);
-        return;
+        IDLE_LOCK_TIMEOUT_MS - (Date.now() - lastActivityAt.current)
+      if (
+        remaining <=
+        0
+      ) {
+        idleLockedRef.current = true
+        window.sessionStorage.setItem(lockStorageKey, "true")
+        setUnlockPassword("")
+        setUnlockError("")
+        setIdleLocked(true)
+        return
       }
 
-      timeoutId = window.setTimeout(checkIdleTime, remaining);
-    };
+      timeoutId = window.setTimeout(checkIdleTime, remaining)
+    }
 
     const recordActivity = () => {
-      if (idleLockedRef.current) return;
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-      lastActivityAt.current = Date.now();
-      checkIdleTime();
-    };
+      if (idleLockedRef.current) return
+      if (
+        timeoutId !==
+        undefined
+      )
+        window.clearTimeout(timeoutId)
+      lastActivityAt.current = Date.now()
+      checkIdleTime()
+    }
 
     const checkAfterVisibilityChange = () => {
-      if (document.hidden) return;
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-      checkIdleTime();
-    };
+      if (document.hidden) return
+      if (
+        timeoutId !==
+        undefined
+      )
+        window.clearTimeout(timeoutId)
+      checkIdleTime()
+    }
 
     const activityEvents = [
       "pointerdown",
@@ -628,378 +887,695 @@ export default function App() {
       "touchstart",
       "wheel",
       "scroll",
-    ] as const;
+    ] as const
     for (const eventName of activityEvents) {
-      window.addEventListener(eventName, recordActivity, { passive: true });
+      window.addEventListener(eventName, recordActivity, { passive: true })
     }
-    document.addEventListener("visibilitychange", checkAfterVisibilityChange);
-    checkIdleTime();
+    document.addEventListener("visibilitychange", checkAfterVisibilityChange)
+    checkIdleTime()
 
     return () => {
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      if (
+        timeoutId !==
+        undefined
+      )
+        window.clearTimeout(timeoutId)
       for (const eventName of activityEvents) {
-        window.removeEventListener(eventName, recordActivity);
+        window.removeEventListener(eventName, recordActivity)
       }
       document.removeEventListener(
         "visibilitychange",
         checkAfterVisibilityChange,
-      );
-    };
-  }, [idleLocked, mustChangePassword, session?.onboarded, session?.userId]);
+      )
+    }
+  }, [idleLocked, mustChangePassword, session?.onboarded, session?.userId])
 
   useEffect(() => {
-    for (const key of ["recruitos.companies", "recruitos.users", "recruitos.session"]) {
-      window.localStorage.removeItem(key);
+    for (const key of [
+      "recruitos.companies",
+      "recruitos.users",
+      "recruitos.session",
+    ]) {
+      window.localStorage.removeItem(key)
     }
-    const preferences = window.localStorage.getItem("kilax.workspace-preferences");
+    const preferences = window.localStorage.getItem(
+      "kilax.workspace-preferences",
+    )
     if (preferences) {
       try {
-        const saved = JSON.parse(preferences) as Partial<{ theme: Theme; density: Density }>;
-        if (saved.theme === "light" || saved.theme === "dark") setTheme(saved.theme);
-        if (saved.density === "compact" || saved.density === "comfortable") setDensity(saved.density);
+        const saved = JSON.parse(preferences) as Partial<{
+          theme: Theme
+          density: Density
+        }>
+        if (
+          saved.theme ===
+            "light" ||
+          saved.theme ===
+            "dark"
+        )
+          setTheme(saved.theme)
+        if (
+          saved.density ===
+            "compact" ||
+          saved.density ===
+            "comfortable"
+        )
+          setDensity(saved.density)
       } catch {
-        window.localStorage.removeItem("kilax.workspace-preferences");
+        window.localStorage.removeItem("kilax.workspace-preferences")
       }
     }
-    setPreferencesReady(true);
+    setPreferencesReady(true)
 
-    let cancelled = false;
+    let cancelled = false
     const restoreSession = async () => {
-      const currentUrl = new URL(window.location.href);
-      if (currentUrl.searchParams.get("view") === "communications") setView("communications");
-      // Restore active view from the URL path on load / hard refresh.
-      // Supports /view, /company-slug/view, and legacy ?v= / ?view= params.
-      const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","agent-invoices","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
-      // Handle both /view and /company-slug/view path formats
-      const pathParts = currentUrl.pathname.replace(/^\//, "").split("/").filter(Boolean);
-      const pathView = pathParts.length >= 2 ? pathParts[1] : pathParts[0] ?? "";
-      // Also handle auth paths: /login → stay on login, /register → go to register, etc.
-      const authPaths: Record<string, "login" | "register" | "invite" | "reset-password"> = {
-        login: "login", register: "register", invite: "invite", "reset-password": "reset-password", onboarding: "register",
-      };
-      if (pathParts.length === 1 && authPaths[pathParts[0]]) {
-        setAuthView(authPaths[pathParts[0]]);
+      const currentUrl = new URL(window.location.href)
+      if (
+        currentUrl.searchParams.get("view") ===
+        "communications"
+      )
+        setView("communications")
+      const validViews = new Set<string>([
+        "dashboard",
+        "candidates",
+        "candidate-inquiries",
+        "agents",
+        "suppliers",
+        "jobs",
+        "interviews",
+        "offers",
+        "analytics",
+        "finance",
+        "agent-invoices",
+        "accounts",
+        "payments",
+        "paychecks",
+        "passport",
+        "documents",
+        "ai",
+        "reports",
+        "users",
+        "settings",
+        "contractors",
+        "projects",
+        "invoices",
+        "tasks",
+        "communications",
+        "attendance",
+        "leave",
+        "human-resources",
+        "medical-appointments",
+        "medical-management",
+        "hospital-management",
+        "branches",
+        "approvals",
+        "requisitions",
+        "drive",
+      ])
+      const pathParts = currentUrl.pathname
+        .replace(/^\//, "")
+        .split("/")
+        .filter(Boolean)
+      const pathView =
+        pathParts.length >=
+        2
+          ? pathParts[1]
+          : (pathParts[0] ??
+            "")
+      const authPaths: Record<string, "login" | "register" | "invite" | "reset-password"> =
+        {
+          login: "login",
+          register: "register",
+          invite: "invite",
+          "reset-password": "reset-password",
+          onboarding: "register",
+        }
+      if (
+        pathParts.length ===
+          1 &&
+        authPaths[pathParts[0]]
+      ) {
+        setAuthView(authPaths[pathParts[0]])
       }
-      const paramView = currentUrl.searchParams.get("v") ?? currentUrl.searchParams.get("view");
-      const detectedView = (validViews.has(pathView) ? pathView : null) ?? (paramView && validViews.has(paramView) ? paramView : null);
-      if (detectedView) setView(detectedView as View);
-      const hashParams = new URLSearchParams(currentUrl.hash.slice(1));
-      const inviteLink = hashParams.get("type") === "invite" || currentUrl.searchParams.get("invite") === "1";
-      const recoveryLink = currentUrl.searchParams.get("view") === "reset-password" || hashParams.get("type") === "recovery";
-      const signupLink = currentUrl.searchParams.get("view") === "company-provisioning"
-        || currentUrl.searchParams.get("type") === "signup"
-        || hashParams.get("type") === "signup";
-      const currentInviteId = currentUrl.searchParams.get("invitation_id") ?? "";
-      if (inviteLink) setAuthView("invite");
+      const paramView =
+        currentUrl.searchParams.get("v") ??
+        currentUrl.searchParams.get("view")
+      const detectedView =
+        (validViews.has(pathView) ? pathView : null) ??
+        (paramView &&
+        validViews.has(paramView)
+          ? paramView
+          : null)
+      if (detectedView) setView(detectedView as View)
+      const hashParams = new URLSearchParams(currentUrl.hash.slice(1))
+      const inviteLink =
+        hashParams.get("type") ===
+          "invite" ||
+        currentUrl.searchParams.get("invite") ===
+          "1"
+      const recoveryLink =
+        currentUrl.searchParams.get("view") ===
+          "reset-password" ||
+        hashParams.get("type") ===
+          "recovery"
+      const signupLink =
+        currentUrl.searchParams.get("view") ===
+          "company-provisioning" ||
+        currentUrl.searchParams.get("type") ===
+          "signup" ||
+        hashParams.get("type") ===
+          "signup"
+      const currentInviteId =
+        currentUrl.searchParams.get("invitation_id") ??
+        ""
+      if (inviteLink) setAuthView("invite")
       if (recoveryLink) {
-        setAuthView("reset-password");
-        setResetPasswordError("This password reset link is invalid or expired. Request a new one from the login screen.");
+        setAuthView("reset-password")
+        setResetPasswordError(
+          "This password reset link is invalid or expired. Request a new one from the login screen.",
+        )
       }
       try {
-        const supabase = createSupabaseBrowserClient();
-        const accessToken = hashParams.get("access_token");
-        const refreshToken = hashParams.get("refresh_token");
-        const recoveryCode = currentUrl.searchParams.get("code") ?? hashParams.get("code") ?? currentUrl.searchParams.get("token") ?? "";
-        if ((inviteLink || recoveryLink || signupLink) && accessToken && refreshToken) {
-          const { error: sessionError } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        const supabase = createSupabaseBrowserClient()
+        const accessToken = hashParams.get("access_token")
+        const refreshToken = hashParams.get("refresh_token")
+        const recoveryCode =
+          currentUrl.searchParams.get("code") ??
+          hashParams.get("code") ??
+          currentUrl.searchParams.get("token") ??
+          ""
+        if (
+          (inviteLink || recoveryLink || signupLink) &&
+          accessToken &&
+          refreshToken
+        ) {
+          const { error: sessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          })
           if (sessionError) {
-            throw new Error(recoveryLink
-              ? "This password reset link is invalid or expired. Request a new one from the login screen."
-              : signupLink
-                ? "This email verification link is invalid or expired. Request a new registration link."
-              : "This invitation link is invalid or expired. Ask the company administrator to send a new invitation.");
+            throw new Error(
+              recoveryLink
+                ? "This password reset link is invalid or expired. Request a new one from the login screen."
+                : signupLink
+                  ? "This email verification link is invalid or expired. Request a new registration link."
+                  : "This invitation link is invalid or expired. Ask the company administrator to send a new invitation.",
+            )
           }
-          window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
+          window.history.replaceState(
+            null,
+            "",
+            `${currentUrl.pathname}${currentUrl.search}`,
+          )
         } else if ((recoveryLink || signupLink) && recoveryCode) {
-          const { data: { session }, error: sessionError } = await supabase.auth.exchangeCodeForSession(recoveryCode);
+          const {
+            data: { session },
+            error: sessionError,
+          } = await supabase.auth.exchangeCodeForSession(recoveryCode)
           if (sessionError || !session) {
-            throw new Error(recoveryLink
-              ? "This password reset link is invalid or expired. Request a new one from the login screen."
-              : "This email verification link is invalid or expired. Request a new registration link.");
+            throw new Error(
+              recoveryLink
+                ? "This password reset link is invalid or expired. Request a new one from the login screen."
+                : "This email verification link is invalid or expired. Request a new registration link.",
+            )
           }
-          window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
+          window.history.replaceState(
+            null,
+            "",
+            `${currentUrl.pathname}${currentUrl.search}`,
+          )
         }
-        const { data: { user }, error } = await supabase.auth.getUser();
-        if (error) throw error;
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser()
+        if (error) throw error
         if (user) {
-          const needsGoogleMailLink = window.sessionStorage.getItem("kilax.googleConnectGmail") === "gmail";
+          const needsGoogleMailLink =
+            window.sessionStorage.getItem("kilax.googleConnectGmail") ===
+            "gmail"
           if (needsGoogleMailLink) {
-            window.sessionStorage.removeItem("kilax.googleConnectGmail");
+            window.sessionStorage.removeItem("kilax.googleConnectGmail")
             try {
-              const connectResponse = await fetch("/api/communications/mail/connect?provider=gmail", { cache: "no-store" });
-              const connectPayload = await connectResponse.json() as { url?: string; error?: string };
-              if (connectResponse.ok && connectPayload.url) {
-                window.location.assign(connectPayload.url);
-                return;
+              const connectResponse = await fetch(
+                "/api/communications/mail/connect?provider=gmail",
+                { cache: "no-store" },
+              )
+              const connectPayload = (await connectResponse.json()) as {
+                url?: string
+                error?: string
               }
-              console.warn("Google Gmail link not started", connectPayload.error ?? "unknown error");
+              if (connectResponse.ok && connectPayload.url) {
+                window.location.assign(connectPayload.url)
+                return
+              }
+              console.warn(
+                "Google Gmail link not started",
+                connectPayload.error ??
+                  "unknown error",
+              )
             } catch (error) {
-              console.warn("Google Gmail link failed", error);
+              console.warn("Google Gmail link failed", error)
             }
           }
 
           const showInvitation = async (invitationId: string) => {
-            setInviteEmail(user.email ?? "");
-            setAuthView("invite");
-            const invitationResponse = await fetch(`/api/workspace/invitations/${encodeURIComponent(invitationId)}`, { cache: "no-store" });
-            const invitation = await invitationResponse.json() as { invitationId?: string; companyId?: string; companyName?: string; roleName?: string; error?: string };
-            if (!invitationResponse.ok || !invitation.companyId) {
-              setInviteError(invitation.error ?? "This invitation is invalid or has expired. Ask for a new invitation.");
-              return;
+            setInviteEmail(
+              user.email ??
+                "",
+            )
+            setAuthView("invite")
+            const invitationResponse = await fetch(
+              `/api/workspace/invitations/${encodeURIComponent(invitationId)}`,
+              { cache: "no-store" },
+            )
+            const invitation = (await invitationResponse.json()) as {
+              invitationId?: string
+              companyId?: string
+              companyName?: string
+              roleName?: string
+              error?: string
             }
-            setInviteId(invitation.invitationId ?? currentInviteId);
-            setInviteCompanyId(invitation.companyId);
-            setInviteCompanyName(invitation.companyName ?? "");
-            setInviteRoleName(invitation.roleName ?? "");
-            setInviteError("");
-          };
+            if (!invitationResponse.ok || !invitation.companyId) {
+              setInviteError(
+                invitation.error ??
+                  "This invitation is invalid or has expired. Ask for a new invitation.",
+              )
+              return
+            }
+            setInviteId(
+              invitation.invitationId ??
+                currentInviteId,
+            )
+            setInviteCompanyId(invitation.companyId)
+            setInviteCompanyName(
+              invitation.companyName ??
+                "",
+            )
+            setInviteRoleName(
+              invitation.roleName ??
+                "",
+            )
+            setInviteError("")
+          }
 
           if (inviteLink) {
-            await showInvitation(currentInviteId || "legacy");
-            window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
-            return;
+            await showInvitation(
+              currentInviteId ||
+                "legacy",
+            )
+            window.history.replaceState(
+              null,
+              "",
+              `${currentUrl.pathname}${currentUrl.search}`,
+            )
+            return
           }
           if (recoveryLink) {
-            setResetPasswordError("");
-            setResetPasswordEmail(user.email ?? "");
-            return;
+            setResetPasswordError("")
+            setResetPasswordEmail(
+              user.email ??
+                "",
+            )
+            return
           }
-          const registrationResult = await provisionPendingCompanyRegistration(user);
+          const registrationResult =
+            await provisionPendingCompanyRegistration(user)
           if (registrationResult?.registrationCompleted) {
             setRegistrationCompletion({
               welcomeEmailSent: registrationResult.welcomeEmailSent,
-              welcomeEmailRecipientCount: registrationResult.welcomeEmailRecipientCount,
+              welcomeEmailRecipientCount:
+                registrationResult.welcomeEmailRecipientCount,
               welcomeEmailError: registrationResult.welcomeEmailError,
-            });
+            })
           }
-          const hasInviteMetadata = Boolean(user.app_metadata?.invitation_company_id
-            || (user.user_metadata?.company_name && user.user_metadata?.role_name));
+          const hasInviteMetadata = Boolean(
+            user.app_metadata?.invitation_company_id ||
+              (user.user_metadata?.company_name &&
+                user.user_metadata?.role_name),
+          )
           if (hasInviteMetadata) {
-            const currentInvitationResponse = await fetch("/api/workspace/invitations/current", { cache: "no-store" });
-            const currentInvitation = await currentInvitationResponse.json() as { invitationId?: string | null; requiresAcceptance?: boolean; legacyInvitation?: boolean; error?: string };
-            if (!currentInvitationResponse.ok) throw new Error(currentInvitation.error ?? "Unable to verify your invitation.");
-            if (currentInvitation.requiresAcceptance || currentInvitation.legacyInvitation) {
-              await showInvitation(currentInvitation.invitationId ?? "legacy");
-              return;
+            const currentInvitationResponse = await fetch(
+              "/api/workspace/invitations/current",
+              { cache: "no-store" },
+            )
+            const currentInvitation =
+              (await currentInvitationResponse.json()) as {
+                invitationId?: string | null
+                requiresAcceptance?: boolean
+                legacyInvitation?: boolean
+                error?: string
+              }
+            if (!currentInvitationResponse.ok)
+              throw new Error(
+                currentInvitation.error ??
+                  "Unable to verify your invitation.",
+              )
+            if (
+              currentInvitation.requiresAcceptance ||
+              currentInvitation.legacyInvitation
+            ) {
+              await showInvitation(
+                currentInvitation.invitationId ??
+                  "legacy",
+              )
+              return
             }
           }
-          const workspace = await resolveUserWorkspace(user, registrationResult?.companyId);
+          const workspace = await resolveUserWorkspace(
+            user,
+            registrationResult?.companyId,
+          )
           if (!cancelled) {
-            setCompanies([workspace.company]);
-            setUsers([workspace.user]);
-            setSession(workspace.session);
-            setRole(workspace.user.role);
-            const mustChange = await checkMustChangePassword(workspace.user.id);
-            if (!cancelled) setMustChangePassword(mustChange);
+            setCompanies([workspace.company])
+            setUsers([workspace.user])
+            setSession(workspace.session)
+            setRole(workspace.user.role)
+            const mustChange = await checkMustChangePassword(workspace.user.id)
+            if (!cancelled) setMustChangePassword(mustChange)
           }
         }
       } catch (error) {
-        if (!cancelled && error instanceof Error) {
-          if (inviteLink) setInviteError(error.message);
-          else if (recoveryLink) setResetPasswordError(error.message === "Auth session missing!"
-            ? "This password reset link is invalid or expired. Request a new one from the login screen."
-            : error.message);
-          else if (error.message !== "Auth session missing!") setLoginError(error.message);
+        if (
+          !cancelled &&
+          error instanceof
+            Error
+        ) {
+          if (inviteLink) setInviteError(error.message)
+          else if (recoveryLink)
+            setResetPasswordError(
+              error.message ===
+                "Auth session missing!"
+                ? "This password reset link is invalid or expired. Request a new one from the login screen."
+                : error.message,
+            )
+          else if (
+            error.message !==
+            "Auth session missing!"
+          )
+            setLoginError(error.message)
         }
       } finally {
-        if (!cancelled) setAuthLoading(false);
+        if (!cancelled) setAuthLoading(false)
       }
-    };
-    void restoreSession();
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    if (!session) return;
-    const preloadCommonViews = () => {
-      for (const commonView of ["dashboard", "candidates", "tasks", "finance"] as const) {
-        preloadView(commonView);
-      }
-    };
-    const idleWindow = window as Window & {
-      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    };
-    if (typeof idleWindow.requestIdleCallback === "function") {
-      const idleId = idleWindow.requestIdleCallback(preloadCommonViews, { timeout: 2500 });
-      return () => idleWindow.cancelIdleCallback?.(idleId);
     }
-    const timeoutId = window.setTimeout(preloadCommonViews, 1200);
-    return () => window.clearTimeout(timeoutId);
-  }, [session]);
+    void restoreSession()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
-    const main = document.querySelector("main");
-    if (!main) return;
-
-    if (!("IntersectionObserver" in window)) return;
-
-    const observed = new WeakSet<Element>();
-    const revealObserver = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        entry.target.setAttribute("data-scroll-reveal", "visible");
-        revealObserver.unobserve(entry.target);
+    if (!session) return
+    const preloadCommonViews = () => {
+      for (const commonView of [
+        "dashboard",
+        "candidates",
+        "tasks",
+        "finance",
+      ] as const) {
+        preloadView(commonView)
       }
-    }, { threshold: 0.01, rootMargin: "0px 0px -24px 0px" });
+    }
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (
+        callback: IdleRequestCallback,
+        options?: IdleRequestOptions,
+      ) => number
+      cancelIdleCallback?: (handle: number) => void
+    }
+    if (
+      typeof idleWindow.requestIdleCallback ===
+      "function"
+    ) {
+      const idleId = idleWindow.requestIdleCallback(preloadCommonViews, {
+        timeout: 2500,
+      })
+      return () => idleWindow.cancelIdleCallback?.(idleId)
+    }
+    const timeoutId = window.setTimeout(preloadCommonViews, 1200)
+    return () => window.clearTimeout(timeoutId)
+  }, [session])
+
+  useEffect(() => {
+    const main = document.querySelector("main")
+    if (!main) return
+
+    if (
+      !(
+        "IntersectionObserver" in
+        window
+      )
+    )
+      return
+
+    const observed = new WeakSet<Element>()
+    const revealObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          entry.target.setAttribute("data-scroll-reveal", "visible")
+          revealObserver.unobserve(entry.target)
+        }
+      },
+      { threshold: 0.01, rootMargin: "0px 0px -24px 0px" },
+    )
 
     const revealContent = () => {
-      main.querySelectorAll(
-        "h1, h2, section, article, table, [role='tabpanel'], .grid > *, [class*='overflow-y-auto'] > *",
-      ).forEach((element) => {
-        if (observed.has(element)) return;
-        observed.add(element);
-        element.setAttribute("data-scroll-reveal", "pending");
-        revealObserver.observe(element);
-      });
-    };
+      main
+        .querySelectorAll(
+          "h1, h2, section, article, table, [role='tabpanel'], .grid > *, [class*='overflow-y-auto'] > *",
+        )
+        .forEach((element) => {
+          if (observed.has(element)) return
+          observed.add(element)
+          element.setAttribute("data-scroll-reveal", "pending")
+          revealObserver.observe(element)
+        })
+    }
 
-    revealContent();
-    const contentObserver = new MutationObserver(revealContent);
-    contentObserver.observe(main, { childList: true, subtree: true });
+    revealContent()
+    const contentObserver = new MutationObserver(revealContent)
+    contentObserver.observe(main, { childList: true, subtree: true })
 
     return () => {
-      contentObserver.disconnect();
-      revealObserver.disconnect();
-    };
-  }, [session, view]);
+      contentObserver.disconnect()
+      revealObserver.disconnect()
+    }
+  }, [session, view])
 
   useEffect(() => {
-    const main = document.querySelector("main");
-    if (!main) return;
-    main.scrollTo({ top: 0, behavior: "smooth" });
+    const main = document.querySelector("main")
+    if (!main) return
+    main.scrollTo({ top: 0, behavior: "smooth" })
     main.querySelectorAll<HTMLElement>("*").forEach((element) => {
-      if (element.scrollHeight > element.clientHeight + 1 && getComputedStyle(element).overflowY !== "visible") {
-        element.scrollTo({ top: 0, behavior: "smooth" });
+      if (
+        element.scrollHeight > element.clientHeight + 1 &&
+        getComputedStyle(element).overflowY !==
+          "visible"
+      ) {
+        element.scrollTo({ top: 0, behavior: "smooth" })
       }
-    });
-  }, [session, view]);
+    })
+  }, [session, view])
 
   useEffect(() => {
     if (preferencesReady) {
-      window.localStorage.setItem("kilax.workspace-preferences", JSON.stringify({ role, theme, density }));
+      window.localStorage.setItem(
+        "kilax.workspace-preferences",
+        JSON.stringify({ role, theme, density }),
+      )
     }
-  }, [density, preferencesReady, role, theme]);
-
-  // Set default view based on permissions on first session load
+  }, [density, preferencesReady, role, theme])
   useEffect(() => {
-    if (!session || view !== "dashboard") return; // Only set if currently on dashboard
-    const defaultView = getDefaultViewByPermissions(session.permissions, session.role);
-    if (defaultView !== "dashboard") {
-      setView(defaultView);
+    if (
+      !session ||
+      view !==
+        "dashboard"
+    )
+      return
+    const defaultView = getDefaultViewByPermissions(
+      session.permissions,
+      session.role,
+    )
+    if (
+      defaultView !==
+      "dashboard"
+    ) {
+      setView(defaultView)
     }
-  }, [session?.companyId]); // Only trigger on session change (new company/login)
+  }, [session?.companyId])
 
   useEffect(() => {
     if (session && !canAccessView(view, session.permissions)) {
-      setView(getDefaultViewByPermissions(session.permissions, session.role));
+      setView(getDefaultViewByPermissions(session.permissions, session.role))
     }
-  }, [session, view]);
-
-  // Refresh access on database changes, with a short polling fallback if Realtime is unavailable.
+  }, [session, view])
   useEffect(() => {
-    if (!session) return;
+    if (!session) return
 
-    const supabase = createSupabaseBrowserClient();
-    let cancelled = false;
-    let refreshing = false;
-    let refreshAgain = false;
-    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let retryDelay = 1_000;
-    let lastRefreshError = "";
+    const supabase = createSupabaseBrowserClient()
+    let cancelled = false
+    let refreshing = false
+    let refreshAgain = false
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    let retryDelay = 1_000
+    let lastRefreshError = ""
 
     const clearWorkspace = async () => {
       await removeBrowserPushSubscription().catch((error: unknown) =>
-        console.error("[Access Refresh] Push subscription cleanup failed.", error),
-      );
-      const { error } = await supabase.auth.signOut();
-      if (error) console.error("[Access Refresh] Unable to sign out after company access was removed.", error);
-      if (cancelled) return;
-      setCompanies([]);
-      setUsers([]);
-      setSession(null);
-      setView("dashboard");
-      setAuthView("login");
-      setLoginError("Your active company access was removed or disabled. Sign in again or contact your administrator.");
-    };
+        console.error(
+          "[Access Refresh] Push subscription cleanup failed.",
+          error,
+        ),
+      )
+      const { error } = await supabase.auth.signOut()
+      if (error)
+        console.error(
+          "[Access Refresh] Unable to sign out after company access was removed.",
+          error,
+        )
+      if (cancelled) return
+      setCompanies([])
+      setUsers([])
+      setSession(null)
+      setView("dashboard")
+      setAuthView("login")
+      setLoginError(
+        "Your active company access was removed or disabled. Sign in again or contact your administrator.",
+      )
+    }
 
     const refreshAccess = async () => {
       if (retryTimer) {
-        refreshAgain = true;
-        return;
+        refreshAgain = true
+        return
       }
       if (refreshing) {
-        refreshAgain = true;
-        return;
+        refreshAgain = true
+        return
       }
-      refreshing = true;
+      refreshing = true
       try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError) throw authError;
-        if (!user || user.id !== session.userId) {
-          await clearWorkspace();
-          return;
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser()
+        if (authError) throw authError
+        if (
+          !user ||
+          user.id !==
+            session.userId
+        ) {
+          await clearWorkspace()
+          return
         }
 
         const { data: membership, error: membershipError } = await supabase
           .from("company_memberships")
-          .select("role_id, branch_id, role:company_roles(id, name), branch:company_branches(id, name, is_main_branch)")
+          .select(
+            "role_id, branch_id, role:company_roles(id, name, access_settings), branch:company_branches(id, name, is_main_branch)",
+          )
           .eq("user_id", session.userId)
           .eq("company_id", session.companyId)
           .eq("status", "active")
           .limit(1)
-          .maybeSingle();
+          .maybeSingle()
 
-        if (membershipError) throw membershipError;
+        if (membershipError) throw membershipError
         if (!membership) {
-          await clearWorkspace();
-          return;
+          await clearWorkspace()
+          return
         }
 
-        const roleValue = membership.role as unknown as { id: string; name: string } | { id: string; name: string }[];
-        const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue;
-        if (!roleRecord) throw new Error("The active membership has no assigned role.");
+        const roleValue = membership.role as unknown as {
+          id: string
+          name: string
+          access_settings: unknown
+              } | { id: string; name: string; access_settings: unknown }[]
+        const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue
+        if (!roleRecord)
+          throw new Error("The active membership has no assigned role.")
 
         const { data: rolePerms, error: permsError } = await supabase
           .from("role_permissions")
           .select("permission_code")
           .eq("role_id", roleRecord.id)
-          .eq("company_id", session.companyId);
+          .eq("company_id", session.companyId)
 
-        if (permsError) throw permsError;
-        if (!rolePerms) throw new Error("Unable to load the assigned role permissions.");
-        const newPermissions = rolePerms.map((rp) => rp.permission_code);
-        const branchValue = membership.branch as unknown as
-          | { id: string; name: string; is_main_branch: boolean }
-          | { id: string; name: string; is_main_branch: boolean }[]
-          | null;
-        const branchRecord = Array.isArray(branchValue) ? branchValue[0] : branchValue;
-        const nextRole = roleRecord.name as WorkspaceRole;
-        const nextBranchId = membership.branch_id ?? null;
-        const nextBranchName = branchRecord?.name ?? "Main Branch";
-        const nextIsMainBranch = !branchRecord || Boolean(branchRecord.is_main_branch);
+        if (permsError) throw permsError
+        if (!rolePerms)
+          throw new Error("Unable to load the assigned role permissions.")
+        const roleAccess = roleAccessSettings(
+          roleRecord.access_settings,
+          roleRecord.name,
+        )
+        const newPermissions = rolePerms
+          .map((rp) => rp.permission_code)
+          .filter(
+            (permission) =>
+              permission !==
+                "agent_finance.view" ||
+              (isRecruitmentAgentRole(roleRecord.name) &&
+                roleAccess.agent_visa_finance),
+          )
+        const branchValue = membership.branch as unknown as {
+          id: string
+          name: string
+          is_main_branch: boolean
+        } | { id: string; name: string; is_main_branch: boolean }[] | null
+        const branchRecord = Array.isArray(branchValue)
+          ? branchValue[0]
+          : branchValue
+        const nextRole = roleRecord.name as WorkspaceRole
+        const nextBranchId =
+          membership.branch_id ??
+          null
+        const nextBranchName =
+          branchRecord?.name ??
+          "Main Branch"
+        const nextIsMainBranch =
+          !branchRecord ||
+          Boolean(branchRecord.is_main_branch)
 
-        if (cancelled) return;
+        if (cancelled) return
         if (retryTimer) {
-          clearTimeout(retryTimer);
-          retryTimer = undefined;
+          clearTimeout(retryTimer)
+          retryTimer = undefined
         }
-        retryDelay = 1_000;
-        refreshAgain = false;
-        lastRefreshError = "";
+        retryDelay = 1_000
+        refreshAgain = false
+        lastRefreshError = ""
         setSession((current) => {
-          if (!current || current.userId !== session.userId || current.companyId !== session.companyId) return current;
-          const permissionsMatch = current.permissions.length === newPermissions.length
-            && current.permissions.every((permission) => newPermissions.includes(permission));
           if (
-            current.roleId === roleRecord.id
-            && current.role === nextRole
-            && current.branchId === nextBranchId
-            && current.branchName === nextBranchName
-            && current.isMainBranchUser === nextIsMainBranch
-            && permissionsMatch
-          ) return current;
+            !current ||
+            current.userId !==
+              session.userId ||
+            current.companyId !==
+              session.companyId
+          )
+            return current
+          const permissionsMatch =
+            current.permissions.length ===
+              newPermissions.length &&
+            current.permissions.every((permission) =>
+              newPermissions.includes(permission),
+            )
+          if (
+            current.roleId ===
+              roleRecord.id &&
+            current.role ===
+              nextRole &&
+            current.branchId ===
+              nextBranchId &&
+            current.branchName ===
+              nextBranchName &&
+            current.isMainBranchUser ===
+              nextIsMainBranch &&
+            permissionsMatch
+          )
+            return current
           return {
             ...current,
             roleId: roleRecord.id,
@@ -1008,144 +1584,202 @@ export default function App() {
             branchName: nextBranchName,
             isMainBranchUser: nextIsMainBranch,
             permissions: newPermissions,
-          };
-        });
-        setRole(nextRole);
+          }
+        })
+        setRole(nextRole)
         setUsers((current) => {
-          const companyUser = current.find((entry) => entry.id === session.userId);
-          if (!companyUser || companyUser.role === nextRole) return current;
-          return current.map((entry) => entry.id === session.userId ? { ...entry, role: nextRole } : entry);
-        });
+          const companyUser = current.find(
+            (entry) =>
+              entry.id ===
+              session.userId,
+          )
+          if (
+            !companyUser ||
+            companyUser.role ===
+              nextRole
+          )
+            return current
+          return current.map((entry) =>
+            entry.id ===
+            session.userId
+              ? { ...entry, role: nextRole }
+              : entry,
+          )
+        })
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message =
+          error instanceof
+          Error
+            ? error.message
+            : String(error)
         const isRetryableNetworkError =
-          error instanceof Error &&
-          (error.name === "AuthRetryableFetchError" ||
-            (error instanceof TypeError && /fetch/i.test(error.message)));
+          error instanceof
+            Error &&
+          (error.name ===
+            "AuthRetryableFetchError" ||
+            (error instanceof
+              TypeError &&
+              /fetch/i.test(error.message)))
 
         if (isRetryableNetworkError) {
-          if (message !== lastRefreshError) {
+          if (
+            message !==
+            lastRefreshError
+          ) {
             console.warn(
               "[Access Refresh] Supabase is temporarily unreachable; retrying access refresh.",
               error,
-            );
-            lastRefreshError = message;
+            )
+            lastRefreshError = message
           }
           retryTimer = setTimeout(() => {
-            retryTimer = undefined;
-            refreshAgain = false;
-            void refreshAccess();
-          }, retryDelay);
-          retryDelay = Math.min(retryDelay * 2, 30_000);
-        } else if (message !== lastRefreshError) {
-          console.error("[Access Refresh] Unable to refresh role and permissions:", error);
-          lastRefreshError = message;
+            retryTimer = undefined
+            refreshAgain = false
+            void refreshAccess()
+          }, retryDelay)
+          retryDelay = Math.min(
+            retryDelay *
+              2,
+            30_000,
+          )
+        } else if (
+          message !==
+          lastRefreshError
+        ) {
+          console.error(
+            "[Access Refresh] Unable to refresh role and permissions:",
+            error,
+          )
+          lastRefreshError = message
         }
       } finally {
-        refreshing = false;
+        refreshing = false
         if (refreshAgain && !cancelled && !retryTimer) {
-          refreshAgain = false;
-          void refreshAccess();
+          refreshAgain = false
+          void refreshAccess()
         }
       }
-    };
+    }
 
     const scheduleRefresh = () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => void refreshAccess(), 100);
-    };
+      if (refreshTimer) clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(() => void refreshAccess(), 100)
+    }
 
     const channel = supabase
       .channel(`workspace-access:${session.companyId}:${session.userId}`)
-      .on("postgres_changes", {
-        event: "*",
-        schema: "public",
-        table: "company_memberships",
-        filter: `user_id=eq.${session.userId}`,
-      }, scheduleRefresh)
-      .on("postgres_changes", {
-        event: "*",
-        schema: "public",
-        table: "role_permissions",
-        filter: `role_id=eq.${session.roleId}`,
-      }, scheduleRefresh)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "company_memberships",
+          filter: `user_id=eq.${session.userId}`,
+        },
+        scheduleRefresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "role_permissions",
+          filter: `role_id=eq.${session.roleId}`,
+        },
+        scheduleRefresh,
+      )
       .subscribe((status, error) => {
-        if ((status === "CHANNEL_ERROR" || status === "TIMED_OUT") && !cancelled) {
-          console.error("[Access Refresh] Realtime subscription is unavailable; polling will continue.", error);
+        if (
+          (status ===
+            "CHANNEL_ERROR" ||
+            status ===
+              "TIMED_OUT") &&
+          !cancelled
+        ) {
+          console.error(
+            "[Access Refresh] Realtime subscription is unavailable; polling will continue.",
+            error,
+          )
         }
-      });
+      })
 
-    const interval = setInterval(() => void refreshAccess(), 30_000);
-    const handleFocus = () => void refreshAccess();
-    window.addEventListener("focus", handleFocus);
-    void refreshAccess();
+    const interval = setInterval(() => void refreshAccess(), 30_000)
+    const handleFocus = () => void refreshAccess()
+    window.addEventListener("focus", handleFocus)
+    void refreshAccess()
 
     return () => {
-      cancelled = true;
-      if (refreshTimer) clearTimeout(refreshTimer);
-      if (retryTimer) clearTimeout(retryTimer);
-      clearInterval(interval);
-      window.removeEventListener("focus", handleFocus);
-      void supabase.removeChannel(channel);
-    };
-  }, [session?.companyId, session?.roleId, session?.userId]);
-
-  // Keep URL path and document title in sync with the active view.
-  // Uses pushState so the browser back button navigates between views.
-  useEffect(() => {
-    if (!session) return;
-    const slug = session.companySlug;
-    const targetPath = view === "dashboard" ? `/${slug}` : `/${slug}/${view}`;
-
-    // Human-readable view titles for the browser tab
-    const viewTitles: Partial<Record<View, string>> = {
-      dashboard:             "Dashboard",
-      candidates:            "Candidates",
-      "candidate-inquiries": "Inquiries",
-      agents:                "Agents",
-      suppliers:             "Suppliers",
-      finance:               "Finance",
-      accounts:              "Accounts",
-      payments:              "Payments",
-      paychecks:             "Paychecks",
-      invoices:              "Invoices",
-      passport:              "Passport Custody",
-      documents:             "Documents",
-      ai:                    "AI Assistant",
-      reports:               "Reports",
-      users:                 "Users & Roles",
-      settings:              "Settings",
-      contractors:           "Contractors",
-      projects:              "Projects",
-      tasks:                 "Tasks",
-      communications:        "Communications",
-      attendance:            "Attendance",
-      leave:                 "Leave",
-      "human-resources":     "My HR Profile",
-      "medical-appointments":"Medical Appointments",
-      "medical-management":  "Medical Examinations",
-      "hospital-management": "Hospital Management",
-      requisitions:          "Requisitions",
-      branches:              "Branches",
-      approvals:             "Approvals",
-      drive:                 "Drive",
-    };
-
-    const viewLabel = viewTitles[view] ?? view;
-    document.title = `${viewLabel} — ${session.companyName} | Kilax Smart Recruit`;
-
-    if (window.location.pathname !== targetPath) {
-      const url = new URL(window.location.href);
-      url.searchParams.delete("v");
-      url.searchParams.delete("view");
-      url.pathname = targetPath;
-      window.history.pushState({ view, companySlug: slug }, "", url.toString());
+      cancelled = true
+      if (refreshTimer) clearTimeout(refreshTimer)
+      if (retryTimer) clearTimeout(retryTimer)
+      clearInterval(interval)
+      window.removeEventListener("focus", handleFocus)
+      void supabase.removeChannel(channel)
     }
-  }, [view, session]);
-
-  // Sync URL when not logged in (auth views get their own paths)
+  }, [session?.companyId, session?.roleId, session?.userId])
   useEffect(() => {
-    if (session) return;
+    if (!session) return
+    const slug = session.companySlug
+    const targetPath =
+      view ===
+      "dashboard"
+        ? `/${slug}`
+        : `/${slug}/${view}`
+    const viewTitles: Partial<Record<View, string>> = {
+      dashboard: "Dashboard",
+      candidates: "Candidates",
+      "candidate-inquiries": "Inquiries",
+      agents: "Agents",
+      suppliers: "Partners",
+      finance: "Finance",
+      accounts: "Accounts",
+      payments: "Payments",
+      paychecks: "Paychecks",
+      invoices: "Invoices",
+      passport: "Passport Custody",
+      documents: "Documents",
+      ai: "AI Assistant",
+      reports: "Reports",
+      users: "Users & Roles",
+      settings: "Settings",
+      contractors: "Contractors",
+      projects: "Projects",
+      tasks: "Tasks",
+      communications: "Communications",
+      attendance: "Attendance",
+      leave: "Leave",
+      "human-resources":
+        session.role ===
+        "Chairman"
+          ? "HR Profiles"
+          : "My HR Profile",
+      "medical-appointments": "Medical Appointments",
+      "medical-management": "Medical Examinations",
+      "hospital-management": "Hospital Management",
+      requisitions: "Requisitions",
+      branches: "Branches",
+      approvals: "Approvals",
+      drive: "Drive",
+    }
+
+    const viewLabel =
+      viewTitles[view] ??
+      view
+    document.title = `${viewLabel} — ${session.companyName} | Kilax Smart Recruit`
+
+    if (
+      window.location.pathname !==
+      targetPath
+    ) {
+      const url = new URL(window.location.href)
+      url.searchParams.delete("v")
+      url.searchParams.delete("view")
+      url.pathname = targetPath
+      window.history.pushState({ view, companySlug: slug }, "", url.toString())
+    }
+  }, [view, session])
+  useEffect(() => {
+    if (session) return
     const authPaths: Record<string, string> = {
       login: "/login",
       register: "/register",
@@ -1153,7 +1787,7 @@ export default function App() {
       invite: "/invite",
       "reset-password": "/reset-password",
       verify: "/register",
-    };
+    }
     const titles: Record<string, string> = {
       login: "Sign In — Kilax Smart Recruit",
       register: "Register Your Company — Kilax Smart Recruit",
@@ -1161,72 +1795,160 @@ export default function App() {
       invite: "Accept Invitation — Kilax Smart Recruit",
       "reset-password": "Reset Password — Kilax Smart Recruit",
       verify: "Account Created — Kilax Smart Recruit",
-    };
-    document.title = titles[authView] ?? "Kilax Smart Recruit | Recruitment ERP";
-    const targetPath = authPaths[authView] ?? "/login";
-    // Don't overwrite special invite/recovery links that have query params
-    const hasSpecialParams = window.location.search.includes("invite=1")
-      || window.location.search.includes("view=reset-password")
-      || window.location.hash.includes("type=");
-    if (!hasSpecialParams && window.location.pathname !== targetPath) {
-      window.history.pushState({ authView }, "", targetPath);
     }
-  }, [authView, session]);
-
-  // Handle browser back / forward buttons
+    document.title =
+      titles[authView] ??
+      "Kilax Smart Recruit | Recruitment ERP"
+    const targetPath =
+      authPaths[authView] ??
+      "/login"
+    const hasSpecialParams =
+      window.location.search.includes("invite=1") ||
+      window.location.search.includes("view=reset-password") ||
+      window.location.hash.includes("type=")
+    if (
+      !hasSpecialParams &&
+      window.location.pathname !==
+        targetPath
+    ) {
+      window.history.pushState({ authView }, "", targetPath)
+    }
+  }, [authView, session])
   useEffect(() => {
-    const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","agent-invoices","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
-    const authViewSet = new Set<string>(["login","register","invite","reset-password"]);
+    const validViews = new Set<string>([
+      "dashboard",
+      "candidates",
+      "candidate-inquiries",
+      "agents",
+      "suppliers",
+      "jobs",
+      "interviews",
+      "offers",
+      "analytics",
+      "finance",
+      "agent-invoices",
+      "accounts",
+      "payments",
+      "paychecks",
+      "passport",
+      "documents",
+      "ai",
+      "reports",
+      "users",
+      "settings",
+      "contractors",
+      "projects",
+      "invoices",
+      "tasks",
+      "communications",
+      "attendance",
+      "leave",
+      "human-resources",
+      "medical-appointments",
+      "medical-management",
+      "hospital-management",
+      "branches",
+      "approvals",
+      "requisitions",
+      "drive",
+    ])
+    const authViewSet = new Set<string>([
+      "login",
+      "register",
+      "invite",
+      "reset-password",
+    ])
     const onPopState = (event: PopStateEvent) => {
-      const state = event.state as { view?: string; authView?: string; companySlug?: string } | null;
-      // Resolve the view from either state or URL path
-      const pathParts = window.location.pathname.replace(/^\//, "").split("/").filter(Boolean);
-      const pathView = pathParts.length >= 2 ? pathParts[1] : pathParts[0] ?? "";
-      const stateView = state?.view;
-      const resolved = (stateView && validViews.has(stateView) ? stateView : null)
-        ?? (validViews.has(pathView) ? pathView : null);
+      const state = event.state as {
+        view?: string
+        authView?: string
+        companySlug?: string
+      } | null
+      const pathParts = window.location.pathname
+        .replace(/^\//, "")
+        .split("/")
+        .filter(Boolean)
+      const pathView =
+        pathParts.length >=
+        2
+          ? pathParts[1]
+          : (pathParts[0] ??
+            "")
+      const stateView = state?.view
+      const resolved =
+        (stateView &&
+        validViews.has(stateView)
+          ? stateView
+          : null) ??
+        (validViews.has(pathView) ? pathView : null)
       if (resolved) {
-        setView(resolved as View);
-      } else if (pathParts.length === 1 && authViewSet.has(pathParts[0])) {
-        setAuthView(pathParts[0] as "login" | "register" | "invite" | "reset-password");
+        setView(resolved as View)
+      } else if (
+        pathParts.length ===
+          1 &&
+        authViewSet.has(pathParts[0])
+      ) {
+        setAuthView(
+          pathParts[0] as "login" | "register" | "invite" | "reset-password",
+        )
       } else if (state?.authView && authViewSet.has(state.authView)) {
-        setAuthView(state.authView as "login" | "register" | "invite" | "reset-password");
+        setAuthView(
+          state.authView as "login" | "register" | "invite" | "reset-password",
+        )
       } else if (!resolved) {
-        setView("dashboard");
+        setView("dashboard")
       }
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
+    }
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [])
 
   const activeCompany = useMemo(
-    () => companies.find((company) => company.id === session?.companyId) ?? companies[0],
+    () =>
+      companies.find(
+        (company) =>
+          company.id ===
+          session?.companyId,
+      ) ??
+      companies[0],
     [companies, session],
-  );
+  )
 
   const activeUser = useMemo(
-    () => users.find((user) => user.id === session?.userId) ?? users[0],
+    () =>
+      users.find(
+        (user) =>
+          user.id ===
+          session?.userId,
+      ) ??
+      users[0],
     [session, users],
-  );
+  )
 
   useEffect(() => {
     if (session && activeUser) {
-      setRole(activeUser.role);
+      setRole(activeUser.role)
     }
-  }, [activeUser, session]);
+  }, [activeUser, session])
 
   const handleRegisterSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    setRegisterError("");
-    const form = companyForm;
-    if (form.password !== form.confirmPassword) {
-      setRegisterError("The passwords do not match.");
-      return;
+    event.preventDefault()
+    setRegisterError("")
+    const form = companyForm
+    if (
+      form.password !==
+      form.confirmPassword
+    ) {
+      setRegisterError("The passwords do not match.")
+      return
     }
-    setRegisterSubmitting(true);
+    setRegisterSubmitting(true)
     try {
-      const supabase = createSupabaseBrowserClient();
-      const redirectOrigin = (process.env.NEXT_PUBLIC_SITE_URL || window.location.origin).replace(/\/+$/, "");
+      const supabase = createSupabaseBrowserClient()
+      const redirectOrigin = (
+        process.env.NEXT_PUBLIC_SITE_URL ||
+        window.location.origin
+      ).replace(/\/+$/, "")
       const { data, error } = await supabase.auth.signUp({
         email: form.adminEmail.trim(),
         password: form.password,
@@ -1250,530 +1972,807 @@ export default function App() {
             },
           },
         },
-      });
-      if (error) throw error;
-      if (!data.user) throw new Error("Supabase did not return the new user account.");
+      })
+      if (error) throw error
+      if (!data.user)
+        throw new Error("Supabase did not return the new user account.")
 
-      setCompanyForm({ ...form, password: "", confirmPassword: "" });
+      setCompanyForm({ ...form, password: "", confirmPassword: "" })
       if (!data.session) {
-        if (data.user.identities?.length === 0) {
-          throw new Error("An account with this email already exists. Sign in or use the password reset link.");
+        if (
+          data.user.identities?.length ===
+          0
+        ) {
+          throw new Error(
+            "An account with this email already exists. Sign in or use the password reset link.",
+          )
         }
-        setAuthView("verify");
-        return;
+        setAuthView("verify")
+        return
       }
 
       try {
-        const registrationResult = await provisionPendingCompanyRegistration(data.user);
-        if (!registrationResult) throw new Error("The new account is missing its company registration details.");
-        const workspace = await resolveUserWorkspace(data.user, registrationResult.companyId);
-        setCompanies([workspace.company]);
-        setUsers([workspace.user]);
-        setRole(workspace.user.role);
-        setSession(workspace.session);
-        setMustChangePassword(false);
+        const registrationResult = await provisionPendingCompanyRegistration(
+          data.user,
+        )
+        if (!registrationResult)
+          throw new Error(
+            "The new account is missing its company registration details.",
+          )
+        const workspace = await resolveUserWorkspace(
+          data.user,
+          registrationResult.companyId,
+        )
+        setCompanies([workspace.company])
+        setUsers([workspace.user])
+        setRole(workspace.user.role)
+        setSession(workspace.session)
+        setMustChangePassword(false)
         if (registrationResult.registrationCompleted) {
           setRegistrationCompletion({
             welcomeEmailSent: registrationResult.welcomeEmailSent,
-            welcomeEmailRecipientCount: registrationResult.welcomeEmailRecipientCount,
+            welcomeEmailRecipientCount:
+              registrationResult.welcomeEmailRecipientCount,
             welcomeEmailError: registrationResult.welcomeEmailError,
-          });
+          })
         }
       } catch (error) {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut()
         throw new Error(
           `Your account was created, but company setup did not finish. Sign in with this email and password to retry. ${
-            error instanceof Error ? error.message : "Please try again."
+            error instanceof
+            Error
+              ? error.message
+              : "Please try again."
           }`,
-        );
+        )
       }
     } catch (error) {
-      setRegisterError(error instanceof Error ? error.message : "Unable to create your company account.");
+      setRegisterError(
+        error instanceof
+          Error
+          ? error.message
+          : "Unable to create your company account.",
+      )
     } finally {
-      setRegisterSubmitting(false);
+      setRegisterSubmitting(false)
     }
-  };
+  }
 
   const handleRetryWelcomeEmail = async () => {
     try {
-      const supabase = createSupabaseBrowserClient();
-      const { data: { user }, error } = await supabase.auth.getUser();
-      if (error) throw error;
-      if (!user) throw new Error("Sign in again before requesting another welcome email.");
-      const result = await provisionPendingCompanyRegistration(user, { resendWelcomeEmail: true });
-      if (!result) throw new Error("Company registration details could not be found.");
+      const supabase = createSupabaseBrowserClient()
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser()
+      if (error) throw error
+      if (!user)
+        throw new Error(
+          "Sign in again before requesting another welcome email.",
+        )
+      const result = await provisionPendingCompanyRegistration(user, {
+        resendWelcomeEmail: true,
+      })
+      if (!result)
+        throw new Error("Company registration details could not be found.")
       setRegistrationCompletion({
         welcomeEmailSent: result.welcomeEmailSent,
         welcomeEmailRecipientCount: result.welcomeEmailRecipientCount,
         welcomeEmailError: result.welcomeEmailError,
-      });
+      })
     } catch (error) {
       setRegistrationCompletion({
         welcomeEmailSent: false,
         welcomeEmailRecipientCount: 0,
-        welcomeEmailError: error instanceof Error ? error.message : "Unable to resend the welcome email.",
-      });
+        welcomeEmailError:
+          error instanceof
+          Error
+            ? error.message
+            : "Unable to resend the welcome email.",
+      })
     }
-  };
+  }
 
   const handleLoginSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    setLoginError("");
+    event.preventDefault()
+    setLoginError("")
     try {
-      const supabase = createSupabaseBrowserClient();
+      const supabase = createSupabaseBrowserClient()
       const { data, error } = await supabase.auth.signInWithPassword({
         email: loginForm.email.trim(),
         password: loginForm.password,
-      });
+      })
       if (error || !data.user) {
-        setLoginError("Sign-in failed. Check your email and password.");
-        return;
+        setLoginError("Sign-in failed. Check your email and password.")
+        return
       }
 
-      const registrationResult = await provisionPendingCompanyRegistration(data.user);
-      const workspace = await resolveUserWorkspace(data.user, registrationResult?.companyId);
-      setCompanies([workspace.company]);
-      setUsers([workspace.user]);
-      setRole(workspace.user.role);
-      setSession(workspace.session);
-      const mustChange = await checkMustChangePassword(workspace.user.id);
-      setMustChangePassword(mustChange);
+      const registrationResult = await provisionPendingCompanyRegistration(
+        data.user,
+      )
+      const workspace = await resolveUserWorkspace(
+        data.user,
+        registrationResult?.companyId,
+      )
+      setCompanies([workspace.company])
+      setUsers([workspace.user])
+      setRole(workspace.user.role)
+      setSession(workspace.session)
+      const mustChange = await checkMustChangePassword(workspace.user.id)
+      setMustChangePassword(mustChange)
       if (registrationResult?.registrationCompleted) {
         setRegistrationCompletion({
           welcomeEmailSent: registrationResult.welcomeEmailSent,
-          welcomeEmailRecipientCount: registrationResult.welcomeEmailRecipientCount,
+          welcomeEmailRecipientCount:
+            registrationResult.welcomeEmailRecipientCount,
           welcomeEmailError: registrationResult.welcomeEmailError,
-        });
+        })
       }
     } catch (error) {
-      setLoginError(error instanceof Error ? error.message : "Unable to load your company workspace.");
+      setLoginError(
+        error instanceof
+          Error
+          ? error.message
+          : "Unable to load your company workspace.",
+      )
     }
-  };
+  }
 
   const handleContinueWithGoogle = async () => {
-    setLoginError("");
+    setLoginError("")
     try {
-      const supabase = createSupabaseBrowserClient();
-      window.sessionStorage.setItem("kilax.googleConnectGmail", "gmail");
+      const supabase = createSupabaseBrowserClient()
+      window.sessionStorage.setItem("kilax.googleConnectGmail", "gmail")
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo: `${window.location.origin}/`,
           queryParams: { access_type: "offline", prompt: "consent" },
         },
-      });
-      if (error) throw error;
+      })
+      if (error) throw error
     } catch (error) {
-      window.sessionStorage.removeItem("kilax.googleConnectGmail");
-      setLoginError(error instanceof Error ? error.message : "Unable to continue with Google.");
+      window.sessionStorage.removeItem("kilax.googleConnectGmail")
+      setLoginError(
+        error instanceof
+          Error
+          ? error.message
+          : "Unable to continue with Google.",
+      )
     }
-  };
+  }
 
   const handlePasswordResetRequest = async () => {
-    setLoginError("");
-    setResetEmailMessage("");
-    const email = loginForm.email.trim();
+    setLoginError("")
+    setResetEmailMessage("")
+    const email = loginForm.email.trim()
     if (!email) {
-      setLoginError("Enter your email address first, then request a password reset.");
-      return;
+      setLoginError(
+        "Enter your email address first, then request a password reset.",
+      )
+      return
     }
 
-    setResetEmailSending(true);
+    setResetEmailSending(true)
     try {
-      const redirectUrl = new URL(window.location.href);
-      redirectUrl.search = "";
-      redirectUrl.hash = "";
-      redirectUrl.searchParams.set("view", "reset-password");
-      const { error } = await createSupabaseBrowserClient().auth.resetPasswordForEmail(email, {
-        redirectTo: redirectUrl.toString(),
-      });
-      if (error) throw error;
-      setResetEmailMessage("If an account exists for that email, a password reset link has been sent.");
+      const redirectUrl = new URL(window.location.href)
+      redirectUrl.search = ""
+      redirectUrl.hash = ""
+      redirectUrl.searchParams.set("view", "reset-password")
+      const { error } =
+        await createSupabaseBrowserClient().auth.resetPasswordForEmail(email, {
+          redirectTo: redirectUrl.toString(),
+        })
+      if (error) throw error
+      setResetEmailMessage(
+        "If an account exists for that email, a password reset link has been sent.",
+      )
     } catch (error) {
-      setLoginError(error instanceof Error ? error.message : "Unable to send a password reset link.");
+      setLoginError(
+        error instanceof
+          Error
+          ? error.message
+          : "Unable to send a password reset link.",
+      )
     } finally {
-      setResetEmailSending(false);
+      setResetEmailSending(false)
     }
-  };
+  }
 
   const handlePasswordReset = async (event: FormEvent) => {
-    event.preventDefault();
-    setResetPasswordError("");
-    if (resetPassword.length < 8) {
-      setResetPasswordError("Choose a password with at least 8 characters.");
-      return;
+    event.preventDefault()
+    setResetPasswordError("")
+    if (
+      resetPassword.length <
+      8
+    ) {
+      setResetPasswordError("Choose a password with at least 8 characters.")
+      return
     }
-    if (resetPassword !== resetPasswordConfirm) {
-      setResetPasswordError("The passwords do not match.");
-      return;
+    if (
+      resetPassword !==
+      resetPasswordConfirm
+    ) {
+      setResetPasswordError("The passwords do not match.")
+      return
     }
 
-    setResetPasswordSaving(true);
+    setResetPasswordSaving(true)
     try {
-      const { data, error } = await createSupabaseBrowserClient().auth.updateUser({ password: resetPassword });
+      const { data, error } =
+        await createSupabaseBrowserClient().auth.updateUser({
+          password: resetPassword,
+        })
       if (error || !data.user) {
-        throw new Error(error?.message ?? "Unable to update your password. Request a new reset link and try again.");
+        throw new Error(
+          error?.message ??
+            "Unable to update your password. Request a new reset link and try again.",
+        )
       }
-      const workspace = await resolveUserWorkspace(data.user);
-      setCompanies([workspace.company]);
-      setUsers([workspace.user]);
-      setRole(workspace.user.role);
-      setSession(workspace.session);
-      setResetPassword("");
-      setResetPasswordConfirm("");
-      const completedUrl = new URL(window.location.href);
-      completedUrl.searchParams.delete("view");
-      completedUrl.searchParams.delete("code");
-      completedUrl.hash = "";
-      window.history.replaceState(null, "", `${completedUrl.pathname}${completedUrl.search}`);
+      const workspace = await resolveUserWorkspace(data.user)
+      setCompanies([workspace.company])
+      setUsers([workspace.user])
+      setRole(workspace.user.role)
+      setSession(workspace.session)
+      setResetPassword("")
+      setResetPasswordConfirm("")
+      const completedUrl = new URL(window.location.href)
+      completedUrl.searchParams.delete("view")
+      completedUrl.searchParams.delete("code")
+      completedUrl.hash = ""
+      window.history.replaceState(
+        null,
+        "",
+        `${completedUrl.pathname}${completedUrl.search}`,
+      )
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to update your password.";
-      setResetPasswordError(message === "Auth session missing!"
-        ? "Your password reset session has expired. Request a new password reset link."
-        : message);
+      const message =
+        error instanceof
+        Error
+          ? error.message
+          : "Unable to update your password."
+      setResetPasswordError(
+        message ===
+          "Auth session missing!"
+          ? "Your password reset session has expired. Request a new password reset link."
+          : message,
+      )
     } finally {
-      setResetPasswordSaving(false);
+      setResetPasswordSaving(false)
     }
-  };
+  }
 
   const handleAcceptInvitation = async (event: FormEvent) => {
-    event.preventDefault();
-    setInviteError("");
-    if (invitePassword.length < 8) {
-      setInviteError("Choose a password with at least 8 characters.");
-      return;
+    event.preventDefault()
+    setInviteError("")
+    if (
+      invitePassword.length <
+      8
+    ) {
+      setInviteError("Choose a password with at least 8 characters.")
+      return
     }
-    if (invitePassword !== invitePasswordConfirm) {
-      setInviteError("The passwords do not match.");
-      return;
+    if (
+      invitePassword !==
+      invitePasswordConfirm
+    ) {
+      setInviteError("The passwords do not match.")
+      return
     }
     if (!inviteCompanyId) {
-      setInviteError("This invitation has no valid company assignment. Ask the company administrator to resend it.");
-      return;
+      setInviteError(
+        "This invitation has no valid company assignment. Ask the company administrator to resend it.",
+      )
+      return
     }
 
-    setInviteSaving(true);
+    setInviteSaving(true)
     try {
-      const supabase = createSupabaseBrowserClient();
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) throw new Error("Your invitation session has expired. Open the latest invitation email to continue.");
-      const validationResponse = await fetch(`/api/workspace/invitations/${encodeURIComponent(inviteId)}`, { cache: "no-store" });
-      const validation = await validationResponse.json() as { error?: string };
-      if (!validationResponse.ok) throw new Error(validation.error ?? "This invitation is invalid or has expired. Ask for a new invitation.");
-      const { data, error } = await supabase.auth.updateUser({ password: invitePassword });
-      if (error || !data.user) throw new Error(error?.message ?? "Unable to set your password.");
+      const supabase = createSupabaseBrowserClient()
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser()
+      if (userError || !user)
+        throw new Error(
+          "Your invitation session has expired. Open the latest invitation email to continue.",
+        )
+      const validationResponse = await fetch(
+        `/api/workspace/invitations/${encodeURIComponent(inviteId)}`,
+        { cache: "no-store" },
+      )
+      const validation = (await validationResponse.json()) as { error?: string }
+      if (!validationResponse.ok)
+        throw new Error(
+          validation.error ??
+            "This invitation is invalid or has expired. Ask for a new invitation.",
+        )
+      const { data, error } = await supabase.auth.updateUser({
+        password: invitePassword,
+      })
+      if (error || !data.user)
+        throw new Error(
+          error?.message ??
+            "Unable to set your password.",
+        )
 
-      const acceptanceResponse = await fetch(`/api/workspace/invitations/${encodeURIComponent(inviteId)}`, { method: "POST" });
-      const acceptance = await acceptanceResponse.json() as { error?: string };
-      if (!acceptanceResponse.ok) throw new Error(acceptance.error ?? "This invitation expired before it could be completed. Ask for a new invitation.");
-      const workspace = await resolveUserWorkspace(data.user, inviteCompanyId);
-      setCompanies([workspace.company]);
-      setUsers([workspace.user]);
-      setRole(workspace.user.role);
-      setSession(workspace.session);
-      setInvitePassword("");
-      setInvitePasswordConfirm("");
-      const completedUrl = new URL(window.location.href);
-      completedUrl.searchParams.delete("invite");
-      completedUrl.searchParams.delete("invitation_id");
-      window.history.replaceState(null, "", `${completedUrl.pathname}${completedUrl.search}`);
+      const acceptanceResponse = await fetch(
+        `/api/workspace/invitations/${encodeURIComponent(inviteId)}`,
+        { method: "POST" },
+      )
+      const acceptance = (await acceptanceResponse.json()) as { error?: string }
+      if (!acceptanceResponse.ok)
+        throw new Error(
+          acceptance.error ??
+            "This invitation expired before it could be completed. Ask for a new invitation.",
+        )
+      const workspace = await resolveUserWorkspace(data.user, inviteCompanyId)
+      setCompanies([workspace.company])
+      setUsers([workspace.user])
+      setRole(workspace.user.role)
+      setSession(workspace.session)
+      setInvitePassword("")
+      setInvitePasswordConfirm("")
+      const completedUrl = new URL(window.location.href)
+      completedUrl.searchParams.delete("invite")
+      completedUrl.searchParams.delete("invitation_id")
+      window.history.replaceState(
+        null,
+        "",
+        `${completedUrl.pathname}${completedUrl.search}`,
+      )
     } catch (error) {
-      setInviteError(error instanceof Error ? error.message : "Unable to finish your invitation.");
+      setInviteError(
+        error instanceof
+          Error
+          ? error.message
+          : "Unable to finish your invitation.",
+      )
     } finally {
-      setInviteSaving(false);
+      setInviteSaving(false)
     }
-  };
+  }
 
   const handleChangeForcedPassword = async (event: FormEvent) => {
-    event.preventDefault();
-    setForcedPasswordError("");
-    if (forcedNewPassword.length < 8) {
-      setForcedPasswordError("Your new password must be at least 8 characters.");
-      return;
+    event.preventDefault()
+    setForcedPasswordError("")
+    if (
+      forcedNewPassword.length <
+      8
+    ) {
+      setForcedPasswordError("Your new password must be at least 8 characters.")
+      return
     }
-    if (forcedNewPassword !== forcedNewPasswordConfirm) {
-      setForcedPasswordError("The passwords do not match.");
-      return;
+    if (
+      forcedNewPassword !==
+      forcedNewPasswordConfirm
+    ) {
+      setForcedPasswordError("The passwords do not match.")
+      return
     }
 
-    setForcedPasswordSaving(true);
+    setForcedPasswordSaving(true)
     try {
       const response = await fetch("/api/workspace/users/change-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ newPassword: forcedNewPassword }),
-      });
-      const result = await response.json() as { error?: string; success?: boolean };
-      if (!response.ok) throw new Error(result.error ?? "Unable to update your password.");
-      setMustChangePassword(false);
-      setForcedNewPassword("");
-      setForcedNewPasswordConfirm("");
+      })
+      const result = (await response.json()) as {
+        error?: string
+        success?: boolean
+      }
+      if (!response.ok)
+        throw new Error(
+          result.error ??
+            "Unable to update your password.",
+        )
+      setMustChangePassword(false)
+      setForcedNewPassword("")
+      setForcedNewPasswordConfirm("")
     } catch (error) {
-      setForcedPasswordError(error instanceof Error ? error.message : "Unable to update your password.");
+      setForcedPasswordError(
+        error instanceof
+          Error
+          ? error.message
+          : "Unable to update your password.",
+      )
     } finally {
-      setForcedPasswordSaving(false);
+      setForcedPasswordSaving(false)
     }
-  };
+  }
 
   const handleUnlockSession = async (event: FormEvent) => {
-    event.preventDefault();
-    setUnlockError("");
-    const email = activeUser?.email;
+    event.preventDefault()
+    setUnlockError("")
+    const email = activeUser?.email
     if (!session || !email || !unlockPassword) {
-      setUnlockError("Enter your password to continue.");
-      return;
+      setUnlockError("Enter your password to continue.")
+      return
     }
 
-    setUnlockSaving(true);
+    setUnlockSaving(true)
     try {
-      const verifier = createSupabasePasswordVerificationClient();
+      const verifier = createSupabasePasswordVerificationClient()
       const { data: verification, error: verificationError } =
-        await verifier.auth.signInWithPassword({ email, password: unlockPassword });
+        await verifier.auth.signInWithPassword({
+          email,
+          password: unlockPassword,
+        })
       if (verificationError) {
         if (
           verificationError.message
             .toLowerCase()
             .includes("invalid login credentials")
         ) {
-          throw new Error("Incorrect password. Please try again.");
+          throw new Error("Incorrect password. Please try again.")
         }
-        if (verificationError.status === 429) {
-          throw new Error("Too many attempts. Please wait before trying again.");
+        if (
+          verificationError.status ===
+          429
+        ) {
+          throw new Error("Too many attempts. Please wait before trying again.")
         }
-        throw new Error("Unable to verify your password. Please try again.");
+        throw new Error("Unable to verify your password. Please try again.")
       }
-      if (!verification.user || verification.user.id !== session.userId) {
-        throw new Error("Incorrect password. Please try again.");
+      if (
+        !verification.user ||
+        verification.user.id !==
+          session.userId
+      ) {
+        throw new Error("Incorrect password. Please try again.")
       }
       if (!verification.session) {
-        throw new Error("Unable to restore your session. Please try again.");
+        throw new Error("Unable to restore your session. Please try again.")
       }
 
-      const supabase = createSupabaseBrowserClient();
+      const supabase = createSupabaseBrowserClient()
       const { data: restoredSession, error: restoreError } =
         await supabase.auth.setSession({
           access_token: verification.session.access_token,
           refresh_token: verification.session.refresh_token,
-        });
+        })
       if (
         restoreError ||
         !restoredSession.user ||
-        restoredSession.user.id !== session.userId
+        restoredSession.user.id !==
+          session.userId
       ) {
-        throw new Error("Unable to restore your session. Please try again.");
+        throw new Error("Unable to restore your session. Please try again.")
       }
 
-      window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`);
-      lastActivityAt.current = Date.now();
-      idleLockedRef.current = false;
-      setIdleLocked(false);
-      setUnlockPassword("");
+      window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`)
+      lastActivityAt.current = Date.now()
+      idleLockedRef.current = false
+      setIdleLocked(false)
+      setUnlockPassword("")
     } catch (error) {
       setUnlockError(
-        error instanceof Error
+        error instanceof
+          Error
           ? error.message
           : "Unable to verify your password. Please try again.",
-      );
+      )
     } finally {
-      setUnlockSaving(false);
+      setUnlockSaving(false)
     }
-  };
+  }
 
   const handleCancelIdleLock = async () => {
-    if (!session) return;
-    setUnlockError("");
-    setIdleCancelSaving(true);
+    if (!session) return
+    setUnlockError("")
+    setIdleCancelSaving(true)
     try {
       await removeBrowserPushSubscription().catch((error: unknown) =>
-        console.error("Push subscription cleanup failed during session cancellation.", error),
-      );
-      const { error } = await createSupabaseBrowserClient().auth.signOut();
-      if (error) throw error;
-      window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`);
-      idleLockedRef.current = false;
-      setIdleLocked(false);
-      setUnlockPassword("");
-      setCompanies([]);
-      setUsers([]);
-      setSession(null);
-      setView("dashboard");
-      setAuthView("login");
-      window.location.replace(`/${encodeURIComponent(session.companySlug)}/login`);
+        console.error(
+          "Push subscription cleanup failed during session cancellation.",
+          error,
+        ),
+      )
+      const { error } = await createSupabaseBrowserClient().auth.signOut()
+      if (error) throw error
+      window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`)
+      idleLockedRef.current = false
+      setIdleLocked(false)
+      setUnlockPassword("")
+      setCompanies([])
+      setUsers([])
+      setSession(null)
+      setView("dashboard")
+      setAuthView("login")
+      window.location.replace(
+        `/${encodeURIComponent(session.companySlug)}/login`,
+      )
     } catch (error) {
-      console.error("Unable to cancel the expired session.", error);
-      setUnlockError("Unable to sign out. Check your connection and try again.");
+      console.error("Unable to cancel the expired session.", error)
+      setUnlockError("Unable to sign out. Check your connection and try again.")
     } finally {
-      setIdleCancelSaving(false);
+      setIdleCancelSaving(false)
     }
-  };
+  }
 
   const handleLogout = async () => {
     const companyLoginPath = session?.companySlug
       ? `/${encodeURIComponent(session.companySlug)}/login`
-      : "/login";
+      : "/login"
 
     try {
       await removeBrowserPushSubscription().catch((error: unknown) =>
-        console.error("Push subscription cleanup failed during sign-out.", error),
-      );
-      const supabase = createSupabaseBrowserClient();
-      const { error } = await supabase.auth.signOut();
+        console.error(
+          "Push subscription cleanup failed during sign-out.",
+          error,
+        ),
+      )
+      const supabase = createSupabaseBrowserClient()
+      const { error } = await supabase.auth.signOut()
       if (error) {
-        console.error("Unable to revoke the current sign-in session.", error);
+        console.error("Unable to revoke the current sign-in session.", error)
         const { error: localSignOutError } = await supabase.auth.signOut({
           scope: "local",
-        });
-        if (localSignOutError) throw localSignOutError;
+        })
+        if (localSignOutError) throw localSignOutError
       }
     } finally {
       if (session) {
-        window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`);
+        window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`)
       }
-      window.sessionStorage.removeItem("session");
-      idleLockedRef.current = false;
-      setIdleLocked(false);
-      setUnlockPassword("");
-      setCompanies([]);
-      setUsers([]);
-      setSession(null);
+      window.sessionStorage.removeItem("session")
+      idleLockedRef.current = false
+      setIdleLocked(false)
+      setUnlockPassword("")
+      setCompanies([])
+      setUsers([])
+      setSession(null)
     }
-    setAuthView("login");
-    setView("dashboard");
-    setLoginError("");
-    setRegisterError("");
-    window.location.replace(companyLoginPath);
-  };
+    setAuthView("login")
+    setView("dashboard")
+    setLoginError("")
+    setRegisterError("")
+    window.location.replace(companyLoginPath)
+  }
 
   const renderView = () => {
-    // Guard: Check if the current view is allowed for this user's permissions
     if (session && !canAccessView(view, session.permissions)) {
-      return <PageLoading />;
+      return <PageLoading />
     }
 
     switch (view) {
       case "dashboard":
-        return <Dashboard
-          role={activeUser?.role ?? role}
-          companyId={session?.companyId ?? ""}
-          companyName={session?.companyName ?? ""}
-          permissions={session?.permissions ?? []}
-          onNavigate={handleNavigate}
-        />;
+        return (
+          <Dashboard
+            role={activeUser?.role ?? role}
+            companyId={session?.companyId ?? ""}
+            companyName={session?.companyName ?? ""}
+            permissions={session?.permissions ?? []}
+            onNavigate={handleNavigate}
+          />
+        )
       case "candidates":
-        return <Candidates
-          page="pipeline"
-          companyName={session?.companyName ?? ""}
-          onNavigate={handleNavigate}
-        />;
+        return (
+          <Candidates
+            page="pipeline"
+            companyName={session?.companyName ?? ""}
+            onNavigate={handleNavigate}
+          />
+        )
       case "candidate-inquiries":
-        return <Candidates
-          page="inquiries"
-          companyName={session?.companyName ?? ""}
-          onNavigate={handleNavigate}
-        />;
+        return (
+          <Candidates
+            page="inquiries"
+            companyName={session?.companyName ?? ""}
+            onNavigate={handleNavigate}
+          />
+        )
       case "documents":
-        return <CompanyDrive companyName={session?.companyName ?? ""} permissions={session?.permissions ?? []} />;
+        return (
+          <CompanyDrive
+            companyName={session?.companyName ?? ""}
+            permissions={session?.permissions ?? []}
+          />
+        )
       case "users":
-        return <UsersRoles companyId={session?.companyId ?? ""} currentUserId={session?.userId ?? ""} />;
+        return (
+          <UsersRoles
+            companyId={session?.companyId ?? ""}
+            currentUserId={session?.userId ?? ""}
+          />
+        )
       case "agents":
-        return <Agents />;
+        return (
+          <Agents
+            canInviteAgents={
+              session?.permissions.includes("users.edit") ?? false
+            }
+          />
+        )
       case "finance":
-        return <Finance />;
+        return <Finance />
       case "accounts":
-        return <AccountsWorkspace />;
+        return <AccountsWorkspace />
       case "invoices":
-        return <Invoices />;
+        return <Invoices />
       case "agent-invoices":
-        return <AgentFinance />;
+        return <AgentFinance />
       case "payments":
-        return <Payments onOpenInvoices={() => handleNavigate("invoices")} />;
+        return <Payments onOpenInvoices={() => handleNavigate("invoices")} />
       case "paychecks":
-        return <Paychecks />;
+        return <Paychecks />
       case "suppliers":
-        return <Suppliers />;
+        return <Partners />
       case "contractors":
-        return <Contractors />;
+        return <Contractors />
       case "projects":
-        return <Projects />;
+        return <Projects />
       case "attendance":
-        return <Attendance />;
+        return <Attendance />
       case "leave":
-        return <LeaveManagement />;
+        return <LeaveManagement />
       case "human-resources":
-        return <HumanResources isOwner={session?.role === "Chairman"} />;
+        return <HumanResources companyId={session?.companyId ?? ""} isOwner={session?.role === "Chairman"} />
       case "medical-appointments":
-        return <MedicalAppointments />;
+        return <MedicalAppointments />
       case "medical-management":
-        return <MedicalManagement />;
+        return <MedicalManagement />
       case "hospital-management":
-        return <HospitalManagement />;
+        return <HospitalManagement />
       case "branches":
-        return <Branches />;
+        return <Branches />
       case "approvals":
-        return <BranchApprovals />;
+        return <BranchApprovals />
       case "requisitions":
-        return <Requisitions />;
+        return <Requisitions />
       case "tasks":
-        return <Tasks />;
+        return <Tasks />
       case "communications":
-        return <Communications userName={session?.userName ?? "Team"} companyName={session?.companyName ?? ""} userEmail={activeUser?.email ?? ""} />;
+        return (
+          <Communications
+            userName={session?.userName ?? "Team"}
+            companyName={session?.companyName ?? ""}
+            userEmail={activeUser?.email ?? ""}
+          />
+        )
       case "ai":
-        return <AIAssistant />;
+        return <AIAssistant />
       case "reports":
-        return <Reports permissions={session?.permissions ?? []} />;
+        return <Reports permissions={session?.permissions ?? []} />
       case "passport":
-        return <PassportCustody companyName={session?.companyName ?? ""} onRegisterCandidate={() => handleNavigate("candidates")} />;
+        return (
+          <PassportCustody
+            companyName={session?.companyName ?? ""}
+            onRegisterCandidate={() => handleNavigate("candidates")}
+          />
+        )
       case "settings":
-        return <SettingsPage company={activeCompany} user={activeUser} />;
+        return <SettingsPage company={activeCompany} user={activeUser} />
       default:
-        return <DatabaseModulePending view={view} />;
+        return <DatabaseModulePending view={view} />
     }
-  };
+  }
 
   if (authLoading && !session) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--background)" }} aria-busy="true">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ background: "var(--background)" }}
+        aria-busy="true"
+      >
         <div className="text-center">
           <div className="flex justify-center mb-4">
             <div className="w-12 h-12 border-3 border-transparent border-t-blue-600 border-r-blue-600 rounded-full animate-spin"></div>
           </div>
-          <p className="text-sm font-600" style={{ color: "var(--foreground)" }}>Loading your workspace…</p>
-          <p className="text-xs mt-2" style={{ color: "var(--muted-foreground)" }}>Please wait while we set up your session</p>
+          <p
+            className="text-sm font-600"
+            style={{ color: "var(--foreground)" }}
+          >
+            Loading your workspace…
+          </p>
+          <p
+            className="text-xs mt-2"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            Please wait while we set up your session
+          </p>
         </div>
       </div>
-    );
+    )
   }
 
   if (session && registrationCompletion) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
-        <div className="w-full max-w-xl rounded-2xl border p-8 shadow-2xl text-center" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-          <div className="mb-6 flex justify-center"><KilaxLogo size={72} /></div>
-          <div className="text-xs font-700 uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Workspace setup complete</div>
-          <h1 className="mt-3 text-3xl font-700" style={{ color: "var(--foreground)" }}>You’re ready to launch your workspace.</h1>
-          <p className="mt-3 text-base leading-7" style={{ color: "var(--muted-foreground)" }}>
-            {activeCompany?.name ?? session.companyName} is set up. Your registration is 100% complete.
+      <div
+        className="min-h-screen flex items-center justify-center px-6 py-10"
+        style={{ background: "var(--background)" }}
+      >
+        <div
+          className="w-full max-w-xl rounded-2xl border p-8 shadow-2xl text-center"
+          style={{ background: "var(--card)", borderColor: "var(--border)" }}
+        >
+          <div className="mb-6 flex justify-center">
+            <KilaxLogo size={72} />
+          </div>
+          <div
+            className="text-xs font-700 uppercase tracking-[0.22em]"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            Workspace setup complete
+          </div>
+          <h1
+            className="mt-3 text-3xl font-700"
+            style={{ color: "var(--foreground)" }}
+          >
+            You’re ready to launch your workspace.
+          </h1>
+          <p
+            className="mt-3 text-base leading-7"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            {activeCompany?.name ?? session.companyName} is set up. Your
+            registration is 100% complete.
           </p>
-          <div className="mt-6" role="progressbar" aria-label="Workspace setup progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={100}>
+          <div
+            className="mt-6"
+            role="progressbar"
+            aria-label="Workspace setup progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={100}
+          >
             <div className="mb-2 flex justify-between text-xs font-700">
-              <span style={{ color: "var(--muted-foreground)" }}>Setup progress</span>
+              <span style={{ color: "var(--muted-foreground)" }}>
+                Setup progress
+              </span>
               <span style={{ color: "#34d399" }}>100%</span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full" style={{ background: "var(--secondary)" }}>
-              <div className="h-full w-full rounded-full" style={{ background: "#34d399" }} />
+            <div
+              className="h-2 overflow-hidden rounded-full"
+              style={{ background: "var(--secondary)" }}
+            >
+              <div
+                className="h-full w-full rounded-full"
+                style={{ background: "#34d399" }}
+              />
             </div>
           </div>
-          <div className="mt-6 rounded border p-4 text-left" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}>
-            <div className="text-sm font-700" style={{ color: registrationCompletion.welcomeEmailSent ? "#34d399" : "var(--primary)" }}>
-              {registrationCompletion.welcomeEmailSent ? "Welcome email sent" : "Welcome email not sent yet"}
-            </div>
-            <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
+          <div
+            className="mt-6 rounded border p-4 text-left"
+            style={{
+              background: "var(--secondary)",
+              borderColor: "var(--border)",
+            }}
+          >
+            <div
+              className="text-sm font-700"
+              style={{
+                color: registrationCompletion.welcomeEmailSent
+                  ? "#34d399"
+                  : "var(--primary)",
+              }}
+            >
               {registrationCompletion.welcomeEmailSent
-                ? `We sent a welcome message to ${registrationCompletion.welcomeEmailRecipientCount > 1 ? "both registered email addresses" : "the registered email address"}.`
-                : registrationCompletion.welcomeEmailError ?? "The email service could not confirm delivery."}
+                ? "Welcome email sent"
+                : "Welcome email not sent yet"}
+            </div>
+            <p
+              className="mt-1 text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              {registrationCompletion.welcomeEmailSent
+                ? `We sent a welcome message to ${
+                    registrationCompletion.welcomeEmailRecipientCount > 1
+                      ? "both registered email addresses"
+                      : "the registered email address"
+                  }.`
+                : (registrationCompletion.welcomeEmailError ??
+                  "The email service could not confirm delivery.")}
             </p>
             {!registrationCompletion.welcomeEmailSent && (
-              <button type="button" onClick={() => void handleRetryWelcomeEmail()} className="mt-3 text-sm font-700" style={{ color: "var(--primary)" }}>
+              <button
+                type="button"
+                onClick={() => void handleRetryWelcomeEmail()}
+                className="mt-3 text-sm font-700"
+                style={{ color: "var(--primary)" }}
+              >
                 Retry welcome email
               </button>
             )}
@@ -1781,17 +2780,20 @@ export default function App() {
           <button
             type="button"
             onClick={() => {
-              setRegistrationCompletion(null);
-              setView("dashboard");
+              setRegistrationCompletion(null)
+              setView("dashboard")
             }}
             className="mt-7 w-full rounded px-5 py-3 font-700"
-            style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+            style={{
+              background: "var(--primary)",
+              color: "var(--primary-foreground)",
+            }}
           >
             Launch workspace
           </button>
         </div>
       </div>
-    );
+    )
   }
 
   if (!session) {
@@ -1800,10 +2802,10 @@ export default function App() {
         authView={authView}
         onSwitchView={(nextView) => {
           if (nextView === "landing") {
-            window.location.assign("/");
-            return;
+            window.location.assign("/")
+            return
           }
-          setAuthView(nextView);
+          setAuthView(nextView)
         }}
         companyForm={companyForm}
         onCompanyFormChange={setCompanyForm}
@@ -1838,7 +2840,7 @@ export default function App() {
         onInvitePasswordConfirmChange={setInvitePasswordConfirm}
         onAcceptInvitation={handleAcceptInvitation}
       />
-    );
+    )
   }
 
   if (!session.onboarded) {
@@ -1849,140 +2851,221 @@ export default function App() {
         step={wizardStep}
         onStepChange={setWizardStep}
         onComplete={() => {
-          setSession((current) => (current ? { ...current, onboarded: true } : current));
-          setView("dashboard");
+          setSession((current) =>
+            current ? { ...current, onboarded: true } : current,
+          )
+          setView("dashboard")
         }}
       />
-    );
+    )
   }
 
   return (
-    <div data-theme={theme} data-density={density} className="app-shell flex h-dvh min-h-0 w-full overflow-hidden" style={{ background: "var(--background)" }}>
+    <div
+      data-theme={theme}
+      data-density={density}
+      className="app-shell flex h-dvh min-h-0 w-full overflow-hidden"
+      style={{ background: "var(--background)" }}
+    >
       <div className="contents" inert={idleLocked}>
-      {mobileNavOpen && (
-        <button
-          type="button"
-          aria-label="Close navigation menu"
-          onClick={() => setMobileNavOpen(false)}
-          className="fixed inset-0 z-40 bg-black/50 lg:hidden"
-        />
-      )}
-      <Sidebar
-        active={view}
-        onNavigate={handleSidebarNavigate}
-        onPrefetch={preloadView}
-        mobileOpen={mobileNavOpen}
-        onClose={() => setMobileNavOpen(false)}
-        role={activeUser?.role ?? role}
-        userName={session.userName}
-        companyName={session.companyName}
-        companyLogo={session.companyLogo}
-        branchName={session.branchName}
-        isMainBranchUser={session.isMainBranchUser}
-        permissions={session.permissions}
-        onLogout={handleLogout}
-      />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar
-          onMenuClick={() => setMobileNavOpen(true)}
-          onNavigate={handleNavigate}
+        {mobileNavOpen && (
+          <button
+            type="button"
+            aria-label="Close navigation menu"
+            onClick={() => setMobileNavOpen(false)}
+            className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+          />
+        )}
+        <Sidebar
+          active={view}
+          onNavigate={handleSidebarNavigate}
+          onPrefetch={preloadView}
+          mobileOpen={mobileNavOpen}
+          onClose={() => setMobileNavOpen(false)}
           role={activeUser?.role ?? role}
-          permissions={session.permissions}
-          theme={theme}
-          onThemeChange={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-          density={density}
-          onDensityChange={() => setDensity((current) => (current === "compact" ? "comfortable" : "compact"))}
+          userName={session.userName}
           companyName={session.companyName}
           companyLogo={session.companyLogo}
-          userName={session.userName}
-          userEmail={activeUser?.email}
-          userAvatarUrl={session.userAvatarUrl}
+          branchName={session.branchName}
+          isMainBranchUser={session.isMainBranchUser}
+          permissions={session.permissions}
+          onLogout={handleLogout}
         />
-        <OfflineBanner />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <TopBar
+            onMenuClick={() => setMobileNavOpen(true)}
+            onNavigate={handleNavigate}
+            role={activeUser?.role ?? role}
+            permissions={session.permissions}
+            theme={theme}
+            onThemeChange={() =>
+              setTheme((current) => (current === "dark" ? "light" : "dark"))
+            }
+            density={density}
+            onDensityChange={() =>
+              setDensity((current) =>
+                current === "compact" ? "comfortable" : "compact",
+              )
+            }
+            companyName={session.companyName}
+            companyLogo={session.companyLogo}
+            userName={session.userName}
+            userEmail={activeUser?.email}
+            userAvatarUrl={session.userAvatarUrl}
+          />
+          <OfflineBanner />
 
-        {/* Forced password change overlay (first-login after admin creates user with default password) */}
-        {mustChangePassword && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" style={{ background: "rgba(0,0,0,0.6)" }}>
-            <div className="w-full max-w-md rounded-2xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-              <div className="text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Security required</div>
-              <h2 className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>Change your password</h2>
-              <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>Your administrator set a temporary password for your account. Please change it to a secure password of your choice before continuing.</p>
+          {}
+          {mustChangePassword && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+              style={{ background: "rgba(0,0,0,0.6)" }}
+            >
+              <div
+                className="w-full max-w-md rounded-2xl border p-8 shadow-2xl"
+                style={{
+                  background: "var(--card)",
+                  borderColor: "var(--border)",
+                }}
+              >
+                <div
+                  className="text-xs uppercase tracking-[0.22em]"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Security required
+                </div>
+                <h2
+                  className="mt-2 text-2xl font-700"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  Change your password
+                </h2>
+                <p
+                  className="mt-2 text-sm"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Your administrator set a temporary password for your account.
+                  Please change it to a secure password of your choice before
+                  continuing.
+                </p>
 
-              <form onSubmit={handleChangeForcedPassword} className="mt-6 space-y-4">
-                <label className="block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
-                  New password
-                  <div className="relative mt-1">
+                <form
+                  onSubmit={handleChangeForcedPassword}
+                  className="mt-6 space-y-4"
+                >
+                  <label
+                    className="block text-xs font-600 uppercase tracking-wider"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    New password
+                    <div className="relative mt-1">
+                      <input
+                        required
+                        minLength={8}
+                        type={forcedShowPassword ? "text" : "password"}
+                        autoComplete="new-password"
+                        value={forcedNewPassword}
+                        onChange={(e) => setForcedNewPassword(e.target.value)}
+                        className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
+                        style={{
+                          background: "var(--secondary)",
+                          borderColor: "var(--border)",
+                          color: "var(--foreground)",
+                        }}
+                      />
+                      <button
+                        type="button"
+                        aria-label={
+                          forcedShowPassword ? "Hide password" : "Show password"
+                        }
+                        onClick={() =>
+                          setForcedShowPassword(!forcedShowPassword)
+                        }
+                        className="absolute inset-y-0 right-0 flex items-center px-3 text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {forcedShowPassword ? "Hide" : "Show"}
+                      </button>
+                    </div>
+                  </label>
+                  <label
+                    className="block text-xs font-600 uppercase tracking-wider"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Confirm new password
                     <input
                       required
                       minLength={8}
                       type={forcedShowPassword ? "text" : "password"}
                       autoComplete="new-password"
-                      value={forcedNewPassword}
-                      onChange={(e) => setForcedNewPassword(e.target.value)}
-                      className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
-                      style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
+                      value={forcedNewPasswordConfirm}
+                      onChange={(e) =>
+                        setForcedNewPasswordConfirm(e.target.value)
+                      }
+                      className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                      style={{
+                        background: "var(--secondary)",
+                        borderColor: "var(--border)",
+                        color: "var(--foreground)",
+                      }}
                     />
-                    <button
-                      type="button"
-                      aria-label={forcedShowPassword ? "Hide password" : "Show password"}
-                      onClick={() => setForcedShowPassword(!forcedShowPassword)}
-                      className="absolute inset-y-0 right-0 flex items-center px-3 text-xs"
-                      style={{ color: "var(--muted-foreground)" }}
+                  </label>
+                  {forcedPasswordError && (
+                    <div
+                      role="alert"
+                      className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400"
                     >
-                      {forcedShowPassword ? "Hide" : "Show"}
-                    </button>
-                  </div>
-                </label>
-                <label className="block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
-                  Confirm new password
-                  <input
-                    required
-                    minLength={8}
-                    type={forcedShowPassword ? "text" : "password"}
-                    autoComplete="new-password"
-                    value={forcedNewPasswordConfirm}
-                    onChange={(e) => setForcedNewPasswordConfirm(e.target.value)}
-                    className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
-                    style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
-                  />
-                </label>
-                {forcedPasswordError && (
-                  <div role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
-                    {forcedPasswordError}
-                  </div>
-                )}
-                <button
-                  type="submit"
-                  disabled={forcedPasswordSaving}
-                  className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
-                  style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
-                >
-                  {forcedPasswordSaving ? "Updating…" : "Update password and continue"}
-                </button>
-              </form>
+                      {forcedPasswordError}
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={forcedPasswordSaving}
+                    className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    style={{
+                      background: "var(--primary)",
+                      color: "var(--primary-foreground)",
+                    }}
+                  >
+                    {forcedPasswordSaving
+                      ? "Updating…"
+                      : "Update password and continue"}
+                  </button>
+                </form>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <main
-          className="min-w-0 flex-1 overflow-auto"
-          onClick={(event) => {
-            const target = event.target;
-            if (!(target instanceof Element)) return;
-            if (target.closest("button, a, input, select, textarea, [role='button']")) return;
+          <main
+            className="min-w-0 flex-1 overflow-auto"
+            onClick={(event) => {
+              const target = event.target
+              if (!(target instanceof Element)) return
+              if (
+                target.closest(
+                  "button, a, input, select, textarea, [role='button']",
+                )
+              )
+                return
 
-            const row = target.closest("tbody > tr");
-            if (!(row instanceof HTMLTableRowElement) || row.querySelector("[colspan]")) return;
+              const row = target.closest("tbody > tr")
+              if (
+                !(row instanceof HTMLTableRowElement) ||
+                row.querySelector("[colspan]")
+              )
+                return
 
-            row.parentElement
-              ?.querySelectorAll(":scope > tr[data-row-selected='true']")
-              .forEach((selectedRow) => selectedRow.removeAttribute("data-row-selected"));
-            row.setAttribute("data-row-selected", "true");
-          }}
-        >
-          {renderView()}
-        </main>
-      </div>
+              row.parentElement
+                ?.querySelectorAll(":scope > tr[data-row-selected='true']")
+                .forEach((selectedRow) =>
+                  selectedRow.removeAttribute("data-row-selected"),
+                )
+              row.setAttribute("data-row-selected", "true")
+            }}
+          >
+            {renderView()}
+          </main>
+        </div>
       </div>
       {idleLocked && (
         <div
@@ -2094,7 +3177,7 @@ export default function App() {
         </div>
       )}
     </div>
-  );
+  )
 }
 
 function AuthenticationExperience({
@@ -2133,360 +3216,985 @@ function AuthenticationExperience({
   onInvitePasswordConfirmChange,
   onAcceptInvitation,
 }: {
-  authView: "landing" | "login" | "register" | "verify" | "invite" | "reset-password";
-  onSwitchView: (view: "landing" | "login" | "register" | "verify" | "invite" | "reset-password") => void;
-  companyForm: CompanyForm;
-  onCompanyFormChange: (next: CompanyForm) => void;
-  onRegister: (event: FormEvent) => void | Promise<void>;
-  registerSubmitting: boolean;
-  registerError: string;
-  onRegisterErrorChange: (error: string) => void;
-  loginForm: { email: string; password: string };
-  onLoginFormChange: (next: { email: string; password: string }) => void;
-  onLogin: (event: FormEvent) => void;
-  onGoogleContinue: () => void;
-  loginError: string;
-  onRequestPasswordReset: () => void;
-  resetEmailSending: boolean;
-  resetEmailMessage: string;
-  resetPassword: string;
-  resetPasswordConfirm: string;
-  resetPasswordEmail: string;
-  resetPasswordError: string;
-  resetPasswordSaving: boolean;
-  onResetPasswordChange: (password: string) => void;
-  onResetPasswordConfirmChange: (password: string) => void;
-  onResetPassword: (event: FormEvent) => void;
-  inviteEmail: string;
-  inviteCompanyName: string;
-  inviteRoleName: string;
-  invitePassword: string;
-  invitePasswordConfirm: string;
-  inviteError: string;
-  inviteSaving: boolean;
-  onInvitePasswordChange: (password: string) => void;
-  onInvitePasswordConfirmChange: (password: string) => void;
-  onAcceptInvitation: (event: FormEvent) => void;
+  authView: "landing" | "login" | "register" | "verify" | "invite" | "reset-password"
+  onSwitchView: (
+    view: "landing" | "login" | "register" | "verify" | "invite" | "reset-password",
+  ) => void
+  companyForm: CompanyForm
+  onCompanyFormChange: (next: CompanyForm) => void
+  onRegister: (event: FormEvent) => void | Promise<void>
+  registerSubmitting: boolean
+  registerError: string
+  onRegisterErrorChange: (error: string) => void
+  loginForm: { email: string; password: string }
+  onLoginFormChange: (next: { email: string; password: string }) => void
+  onLogin: (event: FormEvent) => void
+  onGoogleContinue: () => void
+  loginError: string
+  onRequestPasswordReset: () => void
+  resetEmailSending: boolean
+  resetEmailMessage: string
+  resetPassword: string
+  resetPasswordConfirm: string
+  resetPasswordEmail: string
+  resetPasswordError: string
+  resetPasswordSaving: boolean
+  onResetPasswordChange: (password: string) => void
+  onResetPasswordConfirmChange: (password: string) => void
+  onResetPassword: (event: FormEvent) => void
+  inviteEmail: string
+  inviteCompanyName: string
+  inviteRoleName: string
+  invitePassword: string
+  invitePasswordConfirm: string
+  inviteError: string
+  inviteSaving: boolean
+  onInvitePasswordChange: (password: string) => void
+  onInvitePasswordConfirmChange: (password: string) => void
+  onAcceptInvitation: (event: FormEvent) => void
 }) {
-  const [showLoginPassword, setShowLoginPassword] = useState(false);
-  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
-  const [showRegisterConfirmPassword, setShowRegisterConfirmPassword] = useState(false);
-  const [showResetPassword, setShowResetPassword] = useState(false);
-  const [showResetPasswordConfirm, setShowResetPasswordConfirm] = useState(false);
-  const [registerStep, setRegisterStep] = useState(0);
-  const [registerTermsAccepted, setRegisterTermsAccepted] = useState(false);
-  const registrationStepTitles = ["Company basics", "Company contact", "Your details", "Secure account"];
+  const [showLoginPassword, setShowLoginPassword] = useState(false)
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false)
+  const [showRegisterConfirmPassword, setShowRegisterConfirmPassword] =
+    useState(false)
+  const [showResetPassword, setShowResetPassword] = useState(false)
+  const [showResetPasswordConfirm, setShowResetPasswordConfirm] =
+    useState(false)
+  const [registerStep, setRegisterStep] = useState(0)
+  const [registerTermsAccepted, setRegisterTermsAccepted] = useState(false)
+  const registrationStepTitles = [
+    "Company basics",
+    "Company contact",
+    "Your details",
+    "Secure account",
+  ]
   const formInputStyle = {
     background: "var(--secondary)",
     borderColor: "var(--border)",
     color: "var(--foreground)",
-  } as const;
+  } as const
   const advanceRegistrationStep = () => {
-    const form = document.getElementById("company-registration-form");
-    if (!(form instanceof HTMLFormElement) || !form.reportValidity()) return;
-    onRegisterErrorChange("");
-    setRegisterStep((current) => Math.min(current + 1, registrationStepTitles.length - 1));
-  };
+    const form = document.getElementById("company-registration-form")
+    if (!(form instanceof HTMLFormElement) || !form.reportValidity()) return
+    onRegisterErrorChange("")
+    setRegisterStep((current) =>
+      Math.min(current + 1, registrationStepTitles.length - 1),
+    )
+  }
   const handleCompanyLogoChange = async (file?: File) => {
-    if (!file) return;
-    if (!["image/png", "image/jpeg"].includes(file.type) || file.size > 256 * 1024) {
-      onRegisterErrorChange("Choose a PNG or JPEG company logo no larger than 256 KB.");
-      return;
+    if (!file) return
+    if (
+      !["image/png", "image/jpeg"].includes(file.type) ||
+      file.size > 256 * 1024
+    ) {
+      onRegisterErrorChange(
+        "Choose a PNG or JPEG company logo no larger than 256 KB.",
+      )
+      return
     }
 
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = () => reject(new Error("Unable to read the selected company logo."));
+        const reader = new FileReader()
+        reader.onerror = () =>
+          reject(new Error("Unable to read the selected company logo."))
         reader.onload = () => {
           if (typeof reader.result !== "string") {
-            reject(new Error("Unable to read the selected company logo."));
-            return;
+            reject(new Error("Unable to read the selected company logo."))
+            return
           }
-          resolve(reader.result);
-        };
-        reader.readAsDataURL(file);
-      });
-      window.localStorage.setItem(pendingCompanyLogoStorageKey, JSON.stringify({ dataUrl }));
-      onCompanyFormChange({ ...companyForm, logoFile: file, logoPreview: dataUrl });
-      onRegisterErrorChange("");
+          resolve(reader.result)
+        }
+        reader.readAsDataURL(file)
+      })
+      window.localStorage.setItem(
+        pendingCompanyLogoStorageKey,
+        JSON.stringify({ dataUrl }),
+      )
+      onCompanyFormChange({
+        ...companyForm,
+        logoFile: file,
+        logoPreview: dataUrl,
+      })
+      onRegisterErrorChange("")
     } catch (error) {
-      onRegisterErrorChange(error instanceof Error ? error.message : "Unable to keep the selected logo for signup.");
+      onRegisterErrorChange(
+        error instanceof Error
+          ? error.message
+          : "Unable to keep the selected logo for signup.",
+      )
     }
-  };
+  }
   const handleRegistrationFormSubmit = (event: FormEvent) => {
     if (registerStep < registrationStepTitles.length - 1) {
-      event.preventDefault();
-      advanceRegistrationStep();
-      return;
+      event.preventDefault()
+      advanceRegistrationStep()
+      return
     }
-    void onRegister(event);
-  };
+    void onRegister(event)
+  }
 
   if (authView === "invite") {
     return (
-      <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
-        <div className="w-full max-w-md border p-8" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+      <div
+        className="min-h-screen flex items-center justify-center px-6 py-10"
+        style={{ background: "var(--background)" }}
+      >
+        <div
+          className="w-full max-w-md border p-8"
+          style={{ background: "var(--card)", borderColor: "var(--border)" }}
+        >
           <div className="mb-6">
             <KilaxWordmark />
           </div>
-          <div className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company invitation</div>
-          <h1 className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>Set up your password</h1>
-          <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>Your invitation is for this company and position.</p>
-          <dl className="mt-4 divide-y border-y" style={{ borderColor: "var(--border)" }}>
-            <div className="flex justify-between gap-4 py-3"><dt className="text-xs" style={{ color: "var(--muted-foreground)" }}>Company</dt><dd className="text-right text-sm font-600" style={{ color: "var(--foreground)" }}>{inviteCompanyName || "Verifying invitation…"}</dd></div>
-            <div className="flex justify-between gap-4 py-3"><dt className="text-xs" style={{ color: "var(--muted-foreground)" }}>Assigned role</dt><dd className="text-right text-sm font-600" style={{ color: "var(--foreground)" }}>{inviteRoleName || "Verifying invitation…"}</dd></div>
+          <div
+            className="text-xs font-700 uppercase tracking-wider"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            Company invitation
+          </div>
+          <h1
+            className="mt-2 text-2xl font-700"
+            style={{ color: "var(--foreground)" }}
+          >
+            Set up your password
+          </h1>
+          <p
+            className="mt-2 text-sm"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            Your invitation is for this company and position.
+          </p>
+          <dl
+            className="mt-4 divide-y border-y"
+            style={{ borderColor: "var(--border)" }}
+          >
+            <div className="flex justify-between gap-4 py-3">
+              <dt
+                className="text-xs"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Company
+              </dt>
+              <dd
+                className="text-right text-sm font-600"
+                style={{ color: "var(--foreground)" }}
+              >
+                {inviteCompanyName || "Verifying invitation…"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4 py-3">
+              <dt
+                className="text-xs"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Assigned role
+              </dt>
+              <dd
+                className="text-right text-sm font-600"
+                style={{ color: "var(--foreground)" }}
+              >
+                {inviteRoleName || "Verifying invitation…"}
+              </dd>
+            </div>
           </dl>
-          {inviteEmail && <p className="mt-4 border px-3 py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>{inviteEmail}</p>}
+          {inviteEmail && (
+            <p
+              className="mt-4 border px-3 py-2 text-sm"
+              style={{
+                borderColor: "var(--border)",
+                color: "var(--foreground)",
+              }}
+            >
+              {inviteEmail}
+            </p>
+          )}
           <form onSubmit={onAcceptInvitation} className="mt-5 space-y-4">
-            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>New password<input required minLength={8} type="password" autoComplete="new-password" value={invitePassword} onChange={(event) => onInvitePasswordChange(event.target.value)} className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} /></label>
-            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Confirm password<input required minLength={8} type="password" autoComplete="new-password" value={invitePasswordConfirm} onChange={(event) => onInvitePasswordConfirmChange(event.target.value)} className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} /></label>
-            {inviteError && <div role="alert" className="border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">{inviteError}</div>}
-            <button type="submit" disabled={inviteSaving} className="w-full px-4 py-3 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{inviteSaving ? "Setting password…" : "Set password and continue"}</button>
+            <label
+              className="block text-xs font-700 uppercase tracking-wider"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              New password
+              <input
+                required
+                minLength={8}
+                type="password"
+                autoComplete="new-password"
+                value={invitePassword}
+                onChange={(event) => onInvitePasswordChange(event.target.value)}
+                className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                style={formInputStyle}
+              />
+            </label>
+            <label
+              className="block text-xs font-700 uppercase tracking-wider"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Confirm password
+              <input
+                required
+                minLength={8}
+                type="password"
+                autoComplete="new-password"
+                value={invitePasswordConfirm}
+                onChange={(event) =>
+                  onInvitePasswordConfirmChange(event.target.value)
+                }
+                className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                style={formInputStyle}
+              />
+            </label>
+            {inviteError && (
+              <div
+                role="alert"
+                className="border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400"
+              >
+                {inviteError}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={inviteSaving}
+              className="w-full px-4 py-3 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50"
+              style={{
+                background: "var(--primary)",
+                color: "var(--primary-foreground)",
+              }}
+            >
+              {inviteSaving ? "Setting password…" : "Set password and continue"}
+            </button>
           </form>
         </div>
       </div>
-    );
+    )
   }
 
   if (authView === "reset-password") {
     return (
-      <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
-        <div className="w-full max-w-md rounded-2xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+      <div
+        className="min-h-screen flex items-center justify-center px-6 py-10"
+        style={{ background: "var(--background)" }}
+      >
+        <div
+          className="w-full max-w-md rounded-2xl border p-8 shadow-2xl"
+          style={{ background: "var(--card)", borderColor: "var(--border)" }}
+        >
           <div className="mb-6">
             <KilaxWordmark />
           </div>
-          <div className="text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Account recovery</div>
-          <h1 className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>Choose a new password</h1>
-          <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>
-            {resetPasswordEmail ? `Set a new password for ${resetPasswordEmail}.` : "Enter and confirm your new password."}
+          <div
+            className="text-xs uppercase tracking-[0.22em]"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            Account recovery
+          </div>
+          <h1
+            className="mt-2 text-2xl font-700"
+            style={{ color: "var(--foreground)" }}
+          >
+            Choose a new password
+          </h1>
+          <p
+            className="mt-2 text-sm"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            {resetPasswordEmail
+              ? `Set a new password for ${resetPasswordEmail}.`
+              : "Enter and confirm your new password."}
           </p>
           <form onSubmit={onResetPassword} className="mt-6 space-y-4">
-            <label className="block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+            <label
+              className="block text-xs font-600 uppercase tracking-wider"
+              style={{ color: "var(--muted-foreground)" }}
+            >
               New password
               <div className="relative mt-1">
-                <input required minLength={8} type={showResetPassword ? "text" : "password"} autoComplete="new-password" value={resetPassword} onChange={(event) => onResetPasswordChange(event.target.value)} className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
-                <button type="button" aria-label={showResetPassword ? "Hide password" : "Show password"} aria-pressed={showResetPassword} onClick={() => setShowResetPassword(!showResetPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
-                  {showResetPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                <input
+                  required
+                  minLength={8}
+                  type={showResetPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={resetPassword}
+                  onChange={(event) =>
+                    onResetPasswordChange(event.target.value)
+                  }
+                  className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
+                <button
+                  type="button"
+                  aria-label={
+                    showResetPassword ? "Hide password" : "Show password"
+                  }
+                  aria-pressed={showResetPassword}
+                  onClick={() => setShowResetPassword(!showResetPassword)}
+                  className="absolute inset-y-0 right-0 flex items-center px-3"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  {showResetPassword ? (
+                    <EyeOff size={16} aria-hidden="true" />
+                  ) : (
+                    <Eye size={16} aria-hidden="true" />
+                  )}
                 </button>
               </div>
             </label>
-            <label className="block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+            <label
+              className="block text-xs font-600 uppercase tracking-wider"
+              style={{ color: "var(--muted-foreground)" }}
+            >
               Confirm new password
               <div className="relative mt-1">
-                <input required minLength={8} type={showResetPasswordConfirm ? "text" : "password"} autoComplete="new-password" value={resetPasswordConfirm} onChange={(event) => onResetPasswordConfirmChange(event.target.value)} className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
-                <button type="button" aria-label={showResetPasswordConfirm ? "Hide password" : "Show password"} aria-pressed={showResetPasswordConfirm} onClick={() => setShowResetPasswordConfirm(!showResetPasswordConfirm)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
-                  {showResetPasswordConfirm ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                <input
+                  required
+                  minLength={8}
+                  type={showResetPasswordConfirm ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={resetPasswordConfirm}
+                  onChange={(event) =>
+                    onResetPasswordConfirmChange(event.target.value)
+                  }
+                  className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
+                <button
+                  type="button"
+                  aria-label={
+                    showResetPasswordConfirm ? "Hide password" : "Show password"
+                  }
+                  aria-pressed={showResetPasswordConfirm}
+                  onClick={() =>
+                    setShowResetPasswordConfirm(!showResetPasswordConfirm)
+                  }
+                  className="absolute inset-y-0 right-0 flex items-center px-3"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  {showResetPasswordConfirm ? (
+                    <EyeOff size={16} aria-hidden="true" />
+                  ) : (
+                    <Eye size={16} aria-hidden="true" />
+                  )}
                 </button>
               </div>
             </label>
-            {resetPasswordError && <div role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">{resetPasswordError}</div>}
-            <button type="submit" disabled={resetPasswordSaving} className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              {resetPasswordSaving ? "Updating password…" : "Update password and sign in"}
+            {resetPasswordError && (
+              <div
+                role="alert"
+                className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400"
+              >
+                {resetPasswordError}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={resetPasswordSaving}
+              className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
+              style={{
+                background: "var(--primary)",
+                color: "var(--primary-foreground)",
+              }}
+            >
+              {resetPasswordSaving
+                ? "Updating password…"
+                : "Update password and sign in"}
             </button>
-            <button type="button" onClick={() => onSwitchView("login")} className="w-full py-2 text-sm" style={{ color: "var(--muted-foreground)" }}>
+            <button
+              type="button"
+              onClick={() => onSwitchView("login")}
+              className="w-full py-2 text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
               Back to login
             </button>
           </form>
         </div>
       </div>
-    );
+    )
   }
 
   if (authView === "login") {
     return (
-      <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
-        <div className="w-full max-w-md rounded-2xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+      <div
+        className="min-h-screen flex items-center justify-center px-6 py-10"
+        style={{ background: "var(--background)" }}
+      >
+        <div
+          className="w-full max-w-md rounded-2xl border p-8 shadow-2xl"
+          style={{ background: "var(--card)", borderColor: "var(--border)" }}
+        >
           <div className="mb-6">
             <KilaxWordmark />
           </div>
-          <div className="mb-1 text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Welcome back</div>
-          <h2 className="mb-5 text-2xl font-700" style={{ color: "var(--foreground)" }}>Log in to your workspace</h2>
+          <div
+            className="mb-1 text-xs uppercase tracking-[0.22em]"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            Welcome back
+          </div>
+          <h2
+            className="mb-5 text-2xl font-700"
+            style={{ color: "var(--foreground)" }}
+          >
+            Log in to your workspace
+          </h2>
 
           <form onSubmit={onLogin} className="space-y-4">
             <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Email</label>
+              <label
+                className="mb-1 block text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Email
+              </label>
               <input
                 type="email"
                 value={loginForm.email}
-                onChange={(event) => onLoginFormChange({ ...loginForm, email: event.target.value })}
+                onChange={(event) =>
+                  onLoginFormChange({ ...loginForm, email: event.target.value })
+                }
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={formInputStyle}
                 placeholder="you@company.com"
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Password</label>
+              <label
+                className="mb-1 block text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Password
+              </label>
               <div className="relative">
                 <input
                   type={showLoginPassword ? "text" : "password"}
                   value={loginForm.password}
-                  onChange={(event) => onLoginFormChange({ ...loginForm, password: event.target.value })}
+                  onChange={(event) =>
+                    onLoginFormChange({
+                      ...loginForm,
+                      password: event.target.value,
+                    })
+                  }
                   className="w-full rounded border px-3 py-2.5 pr-10 outline-none"
                   style={formInputStyle}
                   placeholder="••••••••"
                 />
                 <button
                   type="button"
-                  aria-label={showLoginPassword ? "Hide password" : "Show password"}
+                  aria-label={
+                    showLoginPassword ? "Hide password" : "Show password"
+                  }
                   aria-pressed={showLoginPassword}
                   onClick={() => setShowLoginPassword(!showLoginPassword)}
                   className="absolute inset-y-0 right-0 flex items-center px-3"
                   style={{ color: "var(--muted-foreground)" }}
                 >
-                  {showLoginPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                  {showLoginPassword ? (
+                    <EyeOff size={16} aria-hidden="true" />
+                  ) : (
+                    <Eye size={16} aria-hidden="true" />
+                  )}
                 </button>
               </div>
             </div>
             <div className="flex justify-end">
-              <button type="button" onClick={onRequestPasswordReset} disabled={resetEmailSending} className="text-xs font-600 disabled:opacity-50" style={{ color: "var(--primary)" }}>
+              <button
+                type="button"
+                onClick={onRequestPasswordReset}
+                disabled={resetEmailSending}
+                className="text-xs font-600 disabled:opacity-50"
+                style={{ color: "var(--primary)" }}
+              >
                 {resetEmailSending ? "Sending reset link…" : "Forgot password?"}
               </button>
             </div>
             <div className="relative my-2">
-              <div className="absolute inset-0 flex items-center"><div className="w-full border-t" style={{ borderColor: "var(--border)" }} /></div>
-              <div className="relative flex justify-center"><span className="px-2 text-[10px] font-700 uppercase tracking-[0.2em]" style={{ background: "var(--card)", color: "var(--muted-foreground)" }}>or</span></div>
+              <div className="absolute inset-0 flex items-center">
+                <div
+                  className="w-full border-t"
+                  style={{ borderColor: "var(--border)" }}
+                />
+              </div>
+              <div className="relative flex justify-center">
+                <span
+                  className="px-2 text-[10px] font-700 uppercase tracking-[0.2em]"
+                  style={{
+                    background: "var(--card)",
+                    color: "var(--muted-foreground)",
+                  }}
+                >
+                  or
+                </span>
+              </div>
             </div>
-            <button type="button" onClick={onGoogleContinue} className="flex w-full items-center justify-center gap-2 rounded border px-4 py-3 font-600" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-800" style={{ background: "#fff", color: "#1f2937" }}>G</span>
+            <button
+              type="button"
+              onClick={onGoogleContinue}
+              className="flex w-full items-center justify-center gap-2 rounded border px-4 py-3 font-600"
+              style={{
+                borderColor: "var(--border)",
+                background: "var(--secondary)",
+                color: "var(--foreground)",
+              }}
+            >
+              <span
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-800"
+                style={{ background: "#fff", color: "#1f2937" }}
+              >
+                G
+              </span>
               Continue with Google
             </button>
-            {resetEmailMessage && <div role="status" className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-400">{resetEmailMessage}</div>}
-            {loginError ? <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm" style={{ color: "#fca5a5" }}>{loginError}</div> : null}
-            <div className="flex items-center justify-between text-sm" style={{ color: "var(--muted-foreground)" }}>
-              <span className="text-xs">Company access is assigned by a platform administrator.</span>
+            {resetEmailMessage && (
+              <div
+                role="status"
+                className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-400"
+              >
+                {resetEmailMessage}
+              </div>
+            )}
+            {loginError ? (
+              <div
+                className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm"
+                style={{ color: "#fca5a5" }}
+              >
+                {loginError}
+              </div>
+            ) : null}
+            <div
+              className="flex items-center justify-between text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              <span className="text-xs">
+                Company access is assigned by a platform administrator.
+              </span>
             </div>
-            <button type="submit" className="w-full rounded px-4 py-3 font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+            <button
+              type="submit"
+              className="w-full rounded px-4 py-3 font-600"
+              style={{
+                background: "var(--primary)",
+                color: "var(--primary-foreground)",
+              }}
+            >
               Log In
             </button>
-            <div className="pt-1 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>
-              Need an account? <button type="button" onClick={() => onSwitchView("register")} className="font-600" style={{ color: "var(--primary)" }}>Create account</button>
+            <div
+              className="pt-1 text-center text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Need an account?{" "}
+              <button
+                type="button"
+                onClick={() => onSwitchView("register")}
+                className="font-600"
+                style={{ color: "var(--primary)" }}
+              >
+                Create account
+              </button>
             </div>
           </form>
         </div>
       </div>
-    );
+    )
   }
 
   if (authView === "verify") {
     return (
-      <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
-        <div className="w-full max-w-xl rounded-2xl border p-8 shadow-2xl text-center" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+      <div
+        className="min-h-screen flex items-center justify-center px-6 py-10"
+        style={{ background: "var(--background)" }}
+      >
+        <div
+          className="w-full max-w-xl rounded-2xl border p-8 shadow-2xl text-center"
+          style={{ background: "var(--card)", borderColor: "var(--border)" }}
+        >
           <div className="mb-6 flex justify-center">
             <KilaxLogo size={72} />
           </div>
-          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full text-2xl" style={{ background: "rgba(16,185,129,0.14)", color: "#34d399" }}>✓</div>
-          <div className="text-xs font-700 uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Account created</div>
-          <h2 className="mt-3 text-3xl font-700" style={{ color: "var(--foreground)" }}>Verify your email to activate your workspace.</h2>
-          <p className="mt-3 text-base leading-7" style={{ color: "var(--muted-foreground)" }}>
-            The person registering this company becomes its Chairman. Your workspace will be provisioned automatically after you verify your email.
+          <div
+            className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full text-2xl"
+            style={{ background: "rgba(16,185,129,0.14)", color: "#34d399" }}
+          >
+            ✓
+          </div>
+          <div
+            className="text-xs font-700 uppercase tracking-[0.22em]"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            Account created
+          </div>
+          <h2
+            className="mt-3 text-3xl font-700"
+            style={{ color: "var(--foreground)" }}
+          >
+            Verify your email to activate your workspace.
+          </h2>
+          <p
+            className="mt-3 text-base leading-7"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            The person registering this company becomes its Chairman. Your
+            workspace will be provisioned automatically after you verify your
+            email.
           </p>
-          <div className="mt-6 rounded border p-4 text-left" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}>
-            <div className="text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Email verification</div>
-            <div className="mt-2 text-lg font-700" style={{ color: "var(--foreground)" }}>{companyForm.adminEmail || "admin@company.com"}</div>
-            <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>Use the verification link sent to this address, then sign in to open your workspace.</div>
+          <div
+            className="mt-6 rounded border p-4 text-left"
+            style={{
+              background: "var(--secondary)",
+              borderColor: "var(--border)",
+            }}
+          >
+            <div
+              className="text-xs uppercase tracking-widest"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Email verification
+            </div>
+            <div
+              className="mt-2 text-lg font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              {companyForm.adminEmail || "admin@company.com"}
+            </div>
+            <div
+              className="text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Use the verification link sent to this address, then sign in to
+              open your workspace.
+            </div>
           </div>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <button onClick={() => onSwitchView("login")} className="px-5 py-3 rounded border font-600" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
+            <button
+              onClick={() => onSwitchView("login")}
+              className="px-5 py-3 rounded border font-600"
+              style={{
+                borderColor: "var(--border)",
+                background: "var(--secondary)",
+                color: "var(--foreground)",
+              }}
+            >
               Go to login
             </button>
-            <button onClick={() => onSwitchView("register")} className="px-5 py-3 rounded font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+            <button
+              onClick={() => onSwitchView("register")}
+              className="px-5 py-3 rounded font-600"
+              style={{
+                background: "var(--primary)",
+                color: "var(--primary-foreground)",
+              }}
+            >
               Back to registration
             </button>
           </div>
         </div>
       </div>
-    );
+    )
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
-      <div className="w-full max-w-4xl rounded-3xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+    <div
+      className="min-h-screen flex items-center justify-center px-6 py-10"
+      style={{ background: "var(--background)" }}
+    >
+      <div
+        className="w-full max-w-4xl rounded-3xl border p-8 shadow-2xl"
+        style={{ background: "var(--card)", borderColor: "var(--border)" }}
+      >
         <div className="mb-6 flex items-center justify-between">
           <div>
             <div className="mb-4">
               <KilaxWordmark />
             </div>
-            <div className="text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Platform onboarding</div>
-            <h2 className="mt-2 text-3xl font-700" style={{ color: "var(--foreground)" }}>Register Your Company</h2>
+            <div
+              className="text-xs uppercase tracking-[0.22em]"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Platform onboarding
+            </div>
+            <h2
+              className="mt-2 text-3xl font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Register Your Company
+            </h2>
           </div>
-          <button onClick={() => onSwitchView("landing")} className="rounded border px-3 py-2 text-sm font-600" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
+          <button
+            onClick={() => onSwitchView("landing")}
+            className="rounded border px-3 py-2 text-sm font-600"
+            style={{
+              borderColor: "var(--border)",
+              background: "var(--secondary)",
+              color: "var(--foreground)",
+            }}
+          >
             Back
           </button>
         </div>
 
         <div className="mb-6">
           <div className="mb-2 flex items-center justify-between gap-4 text-sm">
-            <span className="font-700" style={{ color: "var(--foreground)" }}>{registrationStepTitles[registerStep]}</span>
-            <span style={{ color: "var(--muted-foreground)" }}>Step {registerStep + 1} of {registrationStepTitles.length} · {registerStep * 25}% complete</span>
+            <span className="font-700" style={{ color: "var(--foreground)" }}>
+              {registrationStepTitles[registerStep]}
+            </span>
+            <span style={{ color: "var(--muted-foreground)" }}>
+              Step {registerStep + 1} of {registrationStepTitles.length} ·{" "}
+              {registerStep * 25}% complete
+            </span>
           </div>
-          <div role="progressbar" aria-label="Company registration progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={registerStep * 25} className="h-2 overflow-hidden rounded-full" style={{ background: "var(--secondary)" }}>
-            <div className="h-full rounded-full transition-all duration-300" style={{ width: `${registerStep * 25}%`, background: "var(--primary)" }} />
+          <div
+            role="progressbar"
+            aria-label="Company registration progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={registerStep * 25}
+            className="h-2 overflow-hidden rounded-full"
+            style={{ background: "var(--secondary)" }}
+          >
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{
+                width: `${registerStep * 25}%`,
+                background: "var(--primary)",
+              }}
+            />
           </div>
           <div className="mt-4 flex gap-2" aria-hidden="true">
             {registrationStepTitles.map((title, index) => (
-              <div key={title} className="h-1.5 flex-1 rounded-full transition-colors" style={{ background: index < registerStep ? "#34d399" : index === registerStep ? "var(--primary)" : "var(--secondary)" }} />
+              <div
+                key={title}
+                className="h-1.5 flex-1 rounded-full transition-colors"
+                style={{
+                  background:
+                    index < registerStep
+                      ? "#34d399"
+                      : index === registerStep
+                        ? "var(--primary)"
+                        : "var(--secondary)",
+                }}
+              />
             ))}
           </div>
         </div>
 
-        <form id="company-registration-form" onSubmit={handleRegistrationFormSubmit} className="space-y-6">
+        <form
+          id="company-registration-form"
+          onSubmit={handleRegistrationFormSubmit}
+          className="space-y-6"
+        >
           <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
-            The person registering becomes the company Chairman and primary administrator.
+            The person registering becomes the company Chairman and primary
+            administrator.
           </p>
 
           {registerStep === 0 && (
             <div className="grid gap-4 md:grid-cols-2">
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Company Name
-                <input required maxLength={200} autoFocus value={companyForm.companyName} onChange={(event) => onCompanyFormChange({ ...companyForm, companyName: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  required
+                  maxLength={200}
+                  autoFocus
+                  value={companyForm.companyName}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      companyName: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Company Registration Number
-                <input required maxLength={200} value={companyForm.registrationNumber} onChange={(event) => onCompanyFormChange({ ...companyForm, registrationNumber: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  required
+                  maxLength={200}
+                  value={companyForm.registrationNumber}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      registrationNumber: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Country
-                <input required maxLength={200} value={companyForm.country} onChange={(event) => onCompanyFormChange({ ...companyForm, country: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  required
+                  maxLength={200}
+                  value={companyForm.country}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      country: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 City
-                <input required maxLength={200} value={companyForm.city} onChange={(event) => onCompanyFormChange({ ...companyForm, city: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  required
+                  maxLength={200}
+                  value={companyForm.city}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      city: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
             </div>
           )}
 
           {registerStep === 1 && (
             <div className="grid gap-4 md:grid-cols-2">
-              <label className="text-xs font-600 uppercase tracking-wider md:col-span-2" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider md:col-span-2"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Office Address
-                <input maxLength={500} autoFocus value={companyForm.officeAddress} onChange={(event) => onCompanyFormChange({ ...companyForm, officeAddress: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  maxLength={500}
+                  autoFocus
+                  value={companyForm.officeAddress}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      officeAddress: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Company Phone
-                <input maxLength={100} value={companyForm.phone} onChange={(event) => onCompanyFormChange({ ...companyForm, phone: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  maxLength={100}
+                  value={companyForm.phone}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      phone: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Company Email
-                <input required type="email" maxLength={254} value={companyForm.email} onChange={(event) => onCompanyFormChange({ ...companyForm, email: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  required
+                  type="email"
+                  maxLength={254}
+                  value={companyForm.email}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      email: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
-              <label className="text-xs font-600 uppercase tracking-wider md:col-span-2" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider md:col-span-2"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Website
-                <input maxLength={500} value={companyForm.website} onChange={(event) => onCompanyFormChange({ ...companyForm, website: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  maxLength={500}
+                  value={companyForm.website}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      website: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
               <div className="md:col-span-2">
-                <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Logo (PNG or JPEG, max 256 KB)</label>
-                <div className="flex items-center gap-4 rounded border p-3" style={{ borderColor: "var(--border)" }}>
-                  {companyForm.logoPreview
-                    ? <img src={companyForm.logoPreview} alt="Company logo preview" className="h-14 w-14 rounded object-contain" />
-                    : <div className="flex h-14 w-14 items-center justify-center rounded text-sm" style={{ background: "var(--secondary)", color: "var(--muted-foreground)" }}>Logo</div>}
-                  <input type="file" accept="image/png,image/jpeg" onChange={(event) => void handleCompanyLogoChange(event.target.files?.[0])} className="min-w-0 flex-1 text-sm" style={{ color: "var(--foreground)" }} />
+                <label
+                  className="mb-1 block text-xs font-600 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Company Logo (PNG or JPEG, max 256 KB)
+                </label>
+                <div
+                  className="flex items-center gap-4 rounded border p-3"
+                  style={{ borderColor: "var(--border)" }}
+                >
+                  {companyForm.logoPreview ? (
+                    <img
+                      src={companyForm.logoPreview}
+                      alt="Company logo preview"
+                      className="h-14 w-14 rounded object-contain"
+                    />
+                  ) : (
+                    <div
+                      className="flex h-14 w-14 items-center justify-center rounded text-sm"
+                      style={{
+                        background: "var(--secondary)",
+                        color: "var(--muted-foreground)",
+                      }}
+                    >
+                      Logo
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg"
+                    onChange={(event) =>
+                      void handleCompanyLogoChange(event.target.files?.[0])
+                    }
+                    className="min-w-0 flex-1 text-sm"
+                    style={{ color: "var(--foreground)" }}
+                  />
                   {companyForm.logoPreview && (
                     <button
                       type="button"
                       onClick={() => {
-                        window.localStorage.removeItem(pendingCompanyLogoStorageKey);
-                        onCompanyFormChange({ ...companyForm, logoFile: undefined, logoPreview: undefined });
+                        window.localStorage.removeItem(
+                          pendingCompanyLogoStorageKey,
+                        )
+                        onCompanyFormChange({
+                          ...companyForm,
+                          logoFile: undefined,
+                          logoPreview: undefined,
+                        })
                       }}
                       className="text-sm font-600"
                       style={{ color: "var(--muted-foreground)" }}
@@ -2495,99 +4203,297 @@ function AuthenticationExperience({
                     </button>
                   )}
                 </div>
-                <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>Your logo will appear in the welcome email and your company workspace.</p>
+                <p
+                  className="mt-1 text-xs"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Your logo will appear in the welcome email and your company
+                  workspace.
+                </p>
               </div>
             </div>
           )}
 
           {registerStep === 2 && (
             <div className="grid gap-4 md:grid-cols-2">
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Full Name
-                <input required maxLength={200} autoFocus value={companyForm.fullName} onChange={(event) => onCompanyFormChange({ ...companyForm, fullName: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  required
+                  maxLength={200}
+                  autoFocus
+                  value={companyForm.fullName}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      fullName: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Position / Title
-                <input maxLength={150} value={companyForm.position} onChange={(event) => onCompanyFormChange({ ...companyForm, position: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  maxLength={150}
+                  value={companyForm.position}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      position: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Email Address
-                <input required type="email" maxLength={254} autoComplete="email" value={companyForm.adminEmail} onChange={(event) => onCompanyFormChange({ ...companyForm, adminEmail: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  required
+                  type="email"
+                  maxLength={254}
+                  autoComplete="email"
+                  value={companyForm.adminEmail}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      adminEmail: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Phone Number
-                <input maxLength={60} value={companyForm.adminPhone} onChange={(event) => onCompanyFormChange({ ...companyForm, adminPhone: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                <input
+                  maxLength={60}
+                  value={companyForm.adminPhone}
+                  onChange={(event) =>
+                    onCompanyFormChange({
+                      ...companyForm,
+                      adminPhone: event.target.value,
+                    })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={formInputStyle}
+                />
               </label>
             </div>
           )}
 
           {registerStep === 3 && (
             <div className="grid gap-4 md:grid-cols-2">
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Password
                 <div className="relative mt-1">
-                  <input required minLength={8} autoComplete="new-password" autoFocus type={showRegisterPassword ? "text" : "password"} value={companyForm.password} onChange={(event) => onCompanyFormChange({ ...companyForm, password: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
-                  <button type="button" aria-label={showRegisterPassword ? "Hide password" : "Show password"} aria-pressed={showRegisterPassword} onClick={() => setShowRegisterPassword(!showRegisterPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
-                    {showRegisterPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                  <input
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    autoFocus
+                    type={showRegisterPassword ? "text" : "password"}
+                    value={companyForm.password}
+                    onChange={(event) =>
+                      onCompanyFormChange({
+                        ...companyForm,
+                        password: event.target.value,
+                      })
+                    }
+                    className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
+                    style={formInputStyle}
+                  />
+                  <button
+                    type="button"
+                    aria-label={
+                      showRegisterPassword ? "Hide password" : "Show password"
+                    }
+                    aria-pressed={showRegisterPassword}
+                    onClick={() =>
+                      setShowRegisterPassword(!showRegisterPassword)
+                    }
+                    className="absolute inset-y-0 right-0 flex items-center px-3"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    {showRegisterPassword ? (
+                      <EyeOff size={16} aria-hidden="true" />
+                    ) : (
+                      <Eye size={16} aria-hidden="true" />
+                    )}
                   </button>
                 </div>
               </label>
-              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+              <label
+                className="text-xs font-600 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Confirm Password
                 <div className="relative mt-1">
-                  <input required minLength={8} autoComplete="new-password" type={showRegisterConfirmPassword ? "text" : "password"} value={companyForm.confirmPassword} onChange={(event) => onCompanyFormChange({ ...companyForm, confirmPassword: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
-                  <button type="button" aria-label={showRegisterConfirmPassword ? "Hide password" : "Show password"} aria-pressed={showRegisterConfirmPassword} onClick={() => setShowRegisterConfirmPassword(!showRegisterConfirmPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
-                    {showRegisterConfirmPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                  <input
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    type={showRegisterConfirmPassword ? "text" : "password"}
+                    value={companyForm.confirmPassword}
+                    onChange={(event) =>
+                      onCompanyFormChange({
+                        ...companyForm,
+                        confirmPassword: event.target.value,
+                      })
+                    }
+                    className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
+                    style={formInputStyle}
+                  />
+                  <button
+                    type="button"
+                    aria-label={
+                      showRegisterConfirmPassword
+                        ? "Hide password"
+                        : "Show password"
+                    }
+                    aria-pressed={showRegisterConfirmPassword}
+                    onClick={() =>
+                      setShowRegisterConfirmPassword(
+                        !showRegisterConfirmPassword,
+                      )
+                    }
+                    className="absolute inset-y-0 right-0 flex items-center px-3"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    {showRegisterConfirmPassword ? (
+                      <EyeOff size={16} aria-hidden="true" />
+                    ) : (
+                      <Eye size={16} aria-hidden="true" />
+                    )}
                   </button>
                 </div>
               </label>
               <label className="md:col-span-2 flex items-start gap-3 pt-2">
-                <input required type="checkbox" checked={registerTermsAccepted} onChange={(event) => setRegisterTermsAccepted(event.target.checked)} className="mt-1 h-4 w-4" />
-                <span className="text-sm" style={{ color: "var(--muted-foreground)" }}>I agree to the terms and understand the company account will be owned by the Chairman.</span>
+                <input
+                  required
+                  type="checkbox"
+                  checked={registerTermsAccepted}
+                  onChange={(event) =>
+                    setRegisterTermsAccepted(event.target.checked)
+                  }
+                  className="mt-1 h-4 w-4"
+                />
+                <span
+                  className="text-sm"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  I agree to the terms and understand the company account will
+                  be owned by the Chairman.
+                </span>
               </label>
             </div>
           )}
 
-          {registerError ? <div role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm" style={{ color: "#fca5a5" }}>{registerError}</div> : null}
+          {registerError ? (
+            <div
+              role="alert"
+              className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm"
+              style={{ color: "#fca5a5" }}
+            >
+              {registerError}
+            </div>
+          ) : null}
 
           <div className="flex items-center justify-between gap-3 pt-2">
-            <button type="button" disabled={registerStep === 0 || registerSubmitting} onClick={() => { onRegisterErrorChange(""); setRegisterStep((current) => Math.max(current - 1, 0)); }} className="rounded border px-4 py-2.5 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-40" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+            <button
+              type="button"
+              disabled={registerStep === 0 || registerSubmitting}
+              onClick={() => {
+                onRegisterErrorChange("")
+                setRegisterStep((current) => Math.max(current - 1, 0))
+              }}
+              className="rounded border px-4 py-2.5 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-40"
+              style={{
+                borderColor: "var(--border)",
+                color: "var(--foreground)",
+              }}
+            >
               Back
             </button>
-            <button type="submit" disabled={registerSubmitting} className="rounded px-5 py-2.5 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-60" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              {registerSubmitting ? "Creating your account…" : registerStep === 3 ? "Register Company" : "Continue"}
+            <button
+              type="submit"
+              disabled={registerSubmitting}
+              className="rounded px-5 py-2.5 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-60"
+              style={{
+                background: "var(--primary)",
+                color: "var(--primary-foreground)",
+              }}
+            >
+              {registerSubmitting
+                ? "Creating your account…"
+                : registerStep === 3
+                  ? "Register Company"
+                  : "Continue"}
             </button>
           </div>
         </form>
       </div>
     </div>
-  );
+  )
 }
 
 function OfflineBanner() {
-  const [offline, setOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
+  const [offline, setOffline] = useState(
+    () => typeof navigator !== "undefined" && !navigator.onLine,
+  )
 
   useEffect(() => {
-    const goOffline = () => setOffline(true);
-    const goOnline = () => setOffline(false);
-    window.addEventListener("offline", goOffline);
-    window.addEventListener("online", goOnline);
+    const goOffline = () => setOffline(true)
+    const goOnline = () => setOffline(false)
+    window.addEventListener("offline", goOffline)
+    window.addEventListener("online", goOnline)
     return () => {
-      window.removeEventListener("offline", goOffline);
-      window.removeEventListener("online", goOnline);
-    };
-  }, []);
+      window.removeEventListener("offline", goOffline)
+      window.removeEventListener("online", goOnline)
+    }
+  }, [])
 
-  if (!offline) return null;
+  if (!offline) return null
 
   return (
     <div
       role="alert"
       aria-live="assertive"
       className="flex shrink-0 items-center gap-2 px-4 py-2 text-sm font-600"
-      style={{ background: "#78350f", color: "#fef3c7", borderBottom: "1px solid #92400e" }}
+      style={{
+        background: "#78350f",
+        color: "#fef3c7",
+        borderBottom: "1px solid #92400e",
+      }}
     >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
         <line x1="1" y1="1" x2="23" y2="23" />
         <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" />
         <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" />
@@ -2596,23 +4502,37 @@ function OfflineBanner() {
         <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
         <line x1="12" y1="20" x2="12.01" y2="20" />
       </svg>
-      You are offline — check your internet connection. Changes you make may not be saved.
+      You are offline — check your internet connection. Changes you make may not
+      be saved.
     </div>
-  );
+  )
 }
 
 function DatabaseModulePending({ view }: { view: View }) {
-  const label = view.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
+  const label = view
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (letter) => letter.toUpperCase())
 
   return (
     <section className="mx-auto max-w-3xl p-8" aria-labelledby="module-title">
-      <p className="text-xs font-700 uppercase" style={{ color: "var(--muted-foreground)" }}>Live data unavailable</p>
-      <h1 id="module-title" className="mt-2 text-2xl font-700" style={{ color: "var(--foreground)" }}>{label}</h1>
+      <p
+        className="text-xs font-700 uppercase"
+        style={{ color: "var(--muted-foreground)" }}
+      >
+        Live data unavailable
+      </p>
+      <h1
+        id="module-title"
+        className="mt-2 text-2xl font-700"
+        style={{ color: "var(--foreground)" }}
+      >
+        {label}
+      </h1>
       <p className="mt-3 text-sm" style={{ color: "var(--muted-foreground)" }}>
         This module is not connected to company database records yet.
       </p>
     </section>
-  );
+  )
 }
 
 function OnboardingWizard({
@@ -2622,55 +4542,128 @@ function OnboardingWizard({
   onStepChange,
   onComplete,
 }: {
-  company?: CompanyProfile;
-  user?: CompanyUser;
-  step: number;
-  onStepChange: (next: number) => void;
-  onComplete: () => void;
+  company?: CompanyProfile
+  user?: CompanyUser
+  step: number
+  onStepChange: (next: number) => void
+  onComplete: () => void
 }) {
-  const [logoPreview, setLogoPreview] = useState<string | undefined>(company?.logo || undefined);
+  const [logoPreview, setLogoPreview] = useState<string | undefined>(
+    company?.logo || undefined,
+  )
   const steps = [
-    { title: "Company Profile", subtitle: "Complete your company information and registration details." },
-    { title: "Recruitment Setup", subtitle: "Configure candidate stages, statuses, and categories." },
-    { title: "Finance Setup", subtitle: "Define currencies, payment methods, and invoice settings." },
+    {
+      title: "Company Profile",
+      subtitle: "Complete your company information and registration details.",
+    },
+    {
+      title: "Recruitment Setup",
+      subtitle: "Configure candidate stages, statuses, and categories.",
+    },
+    {
+      title: "Finance Setup",
+      subtitle: "Define currencies, payment methods, and invoice settings.",
+    },
     { title: "Users", subtitle: "Invite your team and assign their roles." },
-    { title: "Complete", subtitle: "Your company workspace is ready for recruitment operations." },
-  ];
+    {
+      title: "Complete",
+      subtitle: "Your company workspace is ready for recruitment operations.",
+    },
+  ]
 
-  const currentStep = Math.min(step, steps.length - 1);
+  const currentStep = Math.min(step, steps.length - 1)
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
-      <div className="w-full max-w-4xl rounded-3xl border p-8 shadow-2xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+    <div
+      className="min-h-screen flex items-center justify-center px-6 py-10"
+      style={{ background: "var(--background)" }}
+    >
+      <div
+        className="w-full max-w-4xl rounded-3xl border p-8 shadow-2xl"
+        style={{ background: "var(--card)", borderColor: "var(--border)" }}
+      >
         <div className="mb-6 flex items-center justify-between gap-4">
           <div>
-            <div className="text-xs uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>First-time setup</div>
-            <h2 className="mt-2 text-3xl font-700" style={{ color: "var(--foreground)" }}>{steps[currentStep].title}</h2>
+            <div
+              className="text-xs uppercase tracking-[0.22em]"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              First-time setup
+            </div>
+            <h2
+              className="mt-2 text-3xl font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              {steps[currentStep].title}
+            </h2>
           </div>
-          <div className="rounded-full border px-3 py-1 text-xs font-700 uppercase tracking-widest" style={{ borderColor: "var(--border)", color: "var(--primary)" }}>
+          <div
+            className="rounded-full border px-3 py-1 text-xs font-700 uppercase tracking-widest"
+            style={{ borderColor: "var(--border)", color: "var(--primary)" }}
+          >
             Step {currentStep + 1} of {steps.length}
           </div>
         </div>
 
         <div className="mb-8 flex gap-2">
           {steps.map((item, index) => (
-            <div key={item.title} className="h-2 flex-1 rounded-full" style={{ background: index <= currentStep ? "var(--primary)" : "var(--secondary)" }} />
+            <div
+              key={item.title}
+              className="h-2 flex-1 rounded-full"
+              style={{
+                background:
+                  index <= currentStep ? "var(--primary)" : "var(--secondary)",
+              }}
+            />
           ))}
         </div>
 
-        <div className="rounded border p-5 mb-6" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
-          <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>{steps[currentStep].subtitle}</div>
-          <div className="mt-4 text-2xl font-700" style={{ color: "var(--foreground)" }}>{company?.name ?? "Company Workspace"}</div>
-          <div className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>{user?.name ?? "Primary Admin"} · Owner / Primary Admin</div>
+        <div
+          className="rounded border p-5 mb-6"
+          style={{
+            borderColor: "var(--border)",
+            background: "var(--secondary)",
+          }}
+        >
+          <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+            {steps[currentStep].subtitle}
+          </div>
+          <div
+            className="mt-4 text-2xl font-700"
+            style={{ color: "var(--foreground)" }}
+          >
+            {company?.name ?? "Company Workspace"}
+          </div>
+          <div
+            className="mt-1 text-sm"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            {user?.name ?? "Primary Admin"} · Owner / Primary Admin
+          </div>
         </div>
 
         {currentStep === 0 && (
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Logo</label>
-              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded border border-dashed px-3 py-4 transition-colors hover:border-current" style={{ borderColor: logoPreview ? "var(--primary)" : "var(--border)", color: "var(--muted-foreground)" }}>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Company Logo
+              </label>
+              <label
+                className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded border border-dashed px-3 py-4 transition-colors hover:border-current"
+                style={{
+                  borderColor: logoPreview ? "var(--primary)" : "var(--border)",
+                  color: "var(--muted-foreground)",
+                }}
+              >
                 {logoPreview ? (
-                  <img src={logoPreview} alt="Logo preview" className="h-16 w-16 rounded object-contain" />
+                  <img
+                    src={logoPreview}
+                    alt="Logo preview"
+                    className="h-16 w-16 rounded object-contain"
+                  />
                 ) : (
                   <span className="text-sm">Click to upload company logo</span>
                 )}
@@ -2679,55 +4672,311 @@ function OnboardingWizard({
                   accept="image/png,image/jpeg,image/svg+xml,image/webp"
                   className="sr-only"
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    setLogoPreview(URL.createObjectURL(file));
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    setLogoPreview(URL.createObjectURL(file))
                   }}
                 />
               </label>
               {logoPreview && (
-                <button type="button" className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }} onClick={() => setLogoPreview(undefined)}>
+                <button
+                  type="button"
+                  className="mt-1 text-xs"
+                  style={{ color: "var(--muted-foreground)" }}
+                  onClick={() => setLogoPreview(undefined)}
+                >
                   Remove
                 </button>
               )}
             </div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Registration number</label><input defaultValue={company?.registrationNumber ?? ""} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Address</label><input defaultValue={company?.officeAddress ?? ""} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Phone</label><input defaultValue={company?.phone ?? ""} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Email</label><input defaultValue={company?.email ?? ""} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Website</label><input defaultValue={company?.website ?? ""} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Registration number
+              </label>
+              <input
+                defaultValue={company?.registrationNumber ?? ""}
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Address
+              </label>
+              <input
+                defaultValue={company?.officeAddress ?? ""}
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Phone
+              </label>
+              <input
+                defaultValue={company?.phone ?? ""}
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Email
+              </label>
+              <input
+                defaultValue={company?.email ?? ""}
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Website
+              </label>
+              <input
+                defaultValue={company?.website ?? ""}
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
           </div>
         )}
 
         {currentStep === 1 && (
           <div className="grid gap-4 md:grid-cols-2">
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Recruitment stages</label><input defaultValue="Application, Screening, Interview, Offer, Placement" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Candidate statuses</label><input defaultValue="Active, Shortlisted, Hired, Withdrawn" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Job categories</label><input defaultValue="Engineering, Sales, Finance, Support" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Document categories</label><input defaultValue="Passport, Medical, Education, Police" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Recruitment stages
+              </label>
+              <input
+                defaultValue="Application, Screening, Interview, Offer, Placement"
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Candidate statuses
+              </label>
+              <input
+                defaultValue="Active, Shortlisted, Hired, Withdrawn"
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Job categories
+              </label>
+              <input
+                defaultValue="Engineering, Sales, Finance, Support"
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Document categories
+              </label>
+              <input
+                defaultValue="Passport, Medical, Education, Police"
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
           </div>
         )}
 
         {currentStep === 2 && (
           <div className="grid gap-4 md:grid-cols-2">
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Currency</label><input defaultValue={company?.currency ?? "USD"} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment methods</label><input defaultValue="Bank Transfer, Mobile Money, Cash" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Income categories</label><input defaultValue="Placement Fees, Consultancy, Sponsor Fees" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
-            <div><label className="mb-1 block text-xs uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Expense categories</label><input defaultValue="Travel, Medical, Payroll, Admin" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Currency
+              </label>
+              <input
+                defaultValue={company?.currency ?? "USD"}
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Payment methods
+              </label>
+              <input
+                defaultValue="Bank Transfer, Mobile Money, Cash"
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Income categories
+              </label>
+              <input
+                defaultValue="Placement Fees, Consultancy, Sponsor Fees"
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Expense categories
+              </label>
+              <input
+                defaultValue="Travel, Medical, Payroll, Admin"
+                className="w-full rounded border px-3 py-2.5 outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+            </div>
           </div>
         )}
 
         {currentStep === 3 && (
           <div className="space-y-4">
-            <div className="rounded border p-4" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
+            <div
+              className="rounded border p-4"
+              style={{
+                borderColor: "var(--border)",
+                background: "var(--secondary)",
+              }}
+            >
               <div className="mb-3 flex items-center justify-between">
-                <div className="text-sm font-700" style={{ color: "var(--foreground)" }}>Invite Team Members</div>
-                <button className="rounded border px-3 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>+ Add member</button>
+                <div
+                  className="text-sm font-700"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  Invite Team Members
+                </div>
+                <button
+                  className="rounded border px-3 py-1.5 text-xs font-600"
+                  style={{
+                    borderColor: "var(--border)",
+                    color: "var(--foreground)",
+                  }}
+                >
+                  + Add member
+                </button>
               </div>
               <div className="grid gap-3 md:grid-cols-3">
-                <input defaultValue="Aisha Khan" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-                <input defaultValue="owner@kilaxrecruit.com" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }} />
-                <input defaultValue="Company Owner / Primary Admin" className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" }} />
+                <input
+                  defaultValue="Aisha Khan"
+                  className="w-full rounded border px-3 py-2.5 outline-none"
+                  style={{
+                    background: "var(--card)",
+                    borderColor: "var(--border)",
+                    color: "var(--foreground)",
+                  }}
+                />
+                <input
+                  defaultValue="owner@kilaxrecruit.com"
+                  className="w-full rounded border px-3 py-2.5 outline-none"
+                  style={{
+                    background: "var(--card)",
+                    borderColor: "var(--border)",
+                    color: "var(--foreground)",
+                  }}
+                />
+                <input
+                  defaultValue="Company Owner / Primary Admin"
+                  className="w-full rounded border px-3 py-2.5 outline-none"
+                  style={{
+                    background: "var(--card)",
+                    borderColor: "var(--border)",
+                    color: "var(--foreground)",
+                  }}
+                />
               </div>
             </div>
           </div>
@@ -2735,32 +4984,95 @@ function OnboardingWizard({
 
         {currentStep === 4 && (
           <div className="text-center">
-            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full text-2xl" style={{ background: "rgba(245,158,11,0.12)", color: "var(--primary)" }}>✓</div>
-            <h3 className="text-3xl font-700" style={{ color: "var(--foreground)" }}>Your company workspace is ready.</h3>
-            <p className="mt-3 text-base" style={{ color: "var(--muted-foreground)" }}>Invite employees, configure roles, and start recruiting against the active company workspace.</p>
+            <div
+              className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full text-2xl"
+              style={{
+                background: "rgba(245,158,11,0.12)",
+                color: "var(--primary)",
+              }}
+            >
+              ✓
+            </div>
+            <h3
+              className="text-3xl font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Your company workspace is ready.
+            </h3>
+            <p
+              className="mt-3 text-base"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Invite employees, configure roles, and start recruiting against
+              the active company workspace.
+            </p>
           </div>
         )}
 
         <div className="mt-8 flex items-center justify-between">
-          <button onClick={() => onStepChange(Math.max(0, currentStep - 1))} className="rounded border px-4 py-2 text-sm font-600" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
+          <button
+            onClick={() => onStepChange(Math.max(0, currentStep - 1))}
+            className="rounded border px-4 py-2 text-sm font-600"
+            style={{
+              borderColor: "var(--border)",
+              background: "var(--secondary)",
+              color: "var(--foreground)",
+            }}
+          >
             Back
           </button>
           <div className="flex gap-3">
-            <button onClick={() => onStepChange(currentStep === steps.length - 1 ? steps.length - 1 : currentStep + 1)} className="rounded border px-4 py-2 text-sm font-600" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
+            <button
+              onClick={() =>
+                onStepChange(
+                  currentStep === steps.length - 1
+                    ? steps.length - 1
+                    : currentStep + 1,
+                )
+              }
+              className="rounded border px-4 py-2 text-sm font-600"
+              style={{
+                borderColor: "var(--border)",
+                background: "var(--secondary)",
+                color: "var(--foreground)",
+              }}
+            >
               Skip
             </button>
-            <button onClick={currentStep === steps.length - 1 ? onComplete : () => onStepChange(currentStep + 1)} className="rounded px-5 py-2.5 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              {currentStep === steps.length - 1 ? "Launch Dashboard" : "Continue"}
+            <button
+              onClick={
+                currentStep === steps.length - 1
+                  ? onComplete
+                  : () => onStepChange(currentStep + 1)
+              }
+              className="rounded px-5 py-2.5 text-sm font-600"
+              style={{
+                background: "var(--primary)",
+                color: "var(--primary-foreground)",
+              }}
+            >
+              {currentStep === steps.length - 1
+                ? "Launch Dashboard"
+                : "Continue"}
             </button>
           </div>
         </div>
       </div>
     </div>
-  );
+  )
 }
 
-function SettingsPage({ company, user }: { company?: CompanyProfile; user?: CompanyUser }) {
-  const [settingsTab, setSettingsTab] = useState<"general" | "departments" | "currencies" | "service-providers">("general");
+function SettingsPage({
+  company,
+  user,
+}: {
+  company?: CompanyProfile
+  user?: CompanyUser
+}) {
+  const [settingsTab, setSettingsTab] =
+    useState<"general" | "departments" | "currencies" | "service-providers">(
+      "general",
+    )
 
   const permissionRows = [
     ["Candidates", "View / Create / Edit / Approve", "Recruitment Agent"],
@@ -2768,54 +5080,97 @@ function SettingsPage({ company, user }: { company?: CompanyProfile; user?: Comp
     ["Users", "No access", "Recruitment Agent"],
     ["Invoices", "View / Edit / Export", "Finance Manager"],
     ["Passport Custody", "View / Approve", "Document Officer"],
-  ];
+  ]
 
   const tabs: { id: typeof settingsTab; label: string }[] = [
     { id: "general", label: "General" },
     { id: "departments", label: "Departments" },
     { id: "currencies", label: "Currencies" },
     { id: "service-providers", label: "Service Providers" },
-  ];
+  ]
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Settings header */}
-      <div className="shrink-0 px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+      {}
+      <div
+        className="shrink-0 px-6 py-4 border-b flex items-center justify-between"
+        style={{ borderColor: "var(--border)" }}
+      >
         <div>
-          <div className="text-xs uppercase tracking-[0.20em]" style={{ color: "var(--muted-foreground)" }}>Company settings</div>
-          <h1 className="mt-1 text-2xl font-700" style={{ color: "var(--foreground)" }}>Settings</h1>
+          <div
+            className="text-xs uppercase tracking-[0.20em]"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            Company settings
+          </div>
+          <h1
+            className="mt-1 text-2xl font-700"
+            style={{ color: "var(--foreground)" }}
+          >
+            Settings
+          </h1>
         </div>
-        <div className="rounded-full border px-3 py-1 text-[10px] font-700 uppercase tracking-widest" style={{ borderColor: "var(--border)", color: "var(--primary)" }}>
+        <div
+          className="rounded-full border px-3 py-1 text-[10px] font-700 uppercase tracking-widest"
+          style={{ borderColor: "var(--border)", color: "var(--primary)" }}
+        >
           {user?.role ?? "Chairman"}
         </div>
       </div>
 
-      {/* Tab bar */}
-      <div className="shrink-0 flex border-b" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+      {}
+      <div
+        className="shrink-0 flex border-b"
+        style={{ borderColor: "var(--border)", background: "var(--card)" }}
+      >
         {tabs.map((t) => (
-          <button key={t.id} type="button" onClick={() => setSettingsTab(t.id)}
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setSettingsTab(t.id)}
             className="px-5 py-3 text-sm font-600 transition-colors"
             style={{
-              color: settingsTab === t.id ? "var(--primary)" : "var(--muted-foreground)",
-              borderBottom: settingsTab === t.id ? "2px solid var(--primary)" : "2px solid transparent",
-            }}>
+              color:
+                settingsTab === t.id
+                  ? "var(--primary)"
+                  : "var(--muted-foreground)",
+              borderBottom:
+                settingsTab === t.id
+                  ? "2px solid var(--primary)"
+                  : "2px solid transparent",
+            }}
+          >
             {t.label}
           </button>
         ))}
       </div>
 
-      {/* Tab content */}
+      {}
       <div className="flex-1 overflow-auto">
         {settingsTab === "general" && (
           <div className="p-8 max-w-5xl mx-auto">
             <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
               <div className="space-y-4">
-                <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-                  <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Company</div>
+                <div
+                  className="rounded border p-5"
+                  style={{
+                    background: "var(--card)",
+                    borderColor: "var(--border)",
+                  }}
+                >
+                  <div
+                    className="mb-4 text-xs uppercase tracking-widest"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Company
+                  </div>
                   <div className="grid gap-4 md:grid-cols-2">
                     {[
                       ["Company Name", company?.name ?? ""],
-                      ["Registration Number", company?.registrationNumber ?? ""],
+                      [
+                        "Registration Number",
+                        company?.registrationNumber ?? "",
+                      ],
                       ["Country", company?.country ?? ""],
                       ["City", company?.city ?? ""],
                       ["Phone", company?.phone ?? ""],
@@ -2824,32 +5179,95 @@ function SettingsPage({ company, user }: { company?: CompanyProfile; user?: Comp
                       ["Currency", company?.currency ?? "USD"],
                     ].map(([label, value]) => (
                       <div key={label}>
-                        <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>{label}</label>
-                        <input defaultValue={String(value)} className="w-full rounded border px-3 py-2.5 outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} />
+                        <label
+                          className="mb-1 block text-xs font-600 uppercase tracking-wider"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {label}
+                        </label>
+                        <input
+                          defaultValue={String(value)}
+                          className="w-full rounded border px-3 py-2.5 outline-none"
+                          style={{
+                            background: "var(--secondary)",
+                            borderColor: "var(--border)",
+                            color: "var(--foreground)",
+                          }}
+                        />
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-                  <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Permissions matrix</div>
-                  <div className="overflow-hidden rounded border" style={{ borderColor: "var(--border)" }}>
+                <div
+                  className="rounded border p-5"
+                  style={{
+                    background: "var(--card)",
+                    borderColor: "var(--border)",
+                  }}
+                >
+                  <div
+                    className="mb-4 text-xs uppercase tracking-widest"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Permissions matrix
+                  </div>
+                  <div
+                    className="overflow-hidden rounded border"
+                    style={{ borderColor: "var(--border)" }}
+                  >
                     <table className="w-full text-left text-sm">
                       <thead style={{ background: "var(--secondary)" }}>
                         <tr>
-                          <th className="px-3 py-2 font-600" style={{ color: "var(--foreground)" }}>Module</th>
-                          <th className="px-3 py-2 font-600" style={{ color: "var(--foreground)" }}>Permission</th>
-                          <th className="px-3 py-2 font-600" style={{ color: "var(--foreground)" }}>Role</th>
+                          <th
+                            className="px-3 py-2 font-600"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            Module
+                          </th>
+                          <th
+                            className="px-3 py-2 font-600"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            Permission
+                          </th>
+                          <th
+                            className="px-3 py-2 font-600"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            Role
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {permissionRows.map(([module, permission, roleName]) => (
-                          <tr key={module} className="border-t" style={{ borderColor: "var(--border)" }}>
-                            <td className="px-3 py-2" style={{ color: "var(--foreground)" }}>{module}</td>
-                            <td className="px-3 py-2" style={{ color: "var(--muted-foreground)" }}>{permission}</td>
-                            <td className="px-3 py-2" style={{ color: "var(--muted-foreground)" }}>{roleName}</td>
-                          </tr>
-                        ))}
+                        {permissionRows.map(
+                          ([module, permission, roleName]) => (
+                            <tr
+                              key={module}
+                              className="border-t"
+                              style={{ borderColor: "var(--border)" }}
+                            >
+                              <td
+                                className="px-3 py-2"
+                                style={{ color: "var(--foreground)" }}
+                              >
+                                {module}
+                              </td>
+                              <td
+                                className="px-3 py-2"
+                                style={{ color: "var(--muted-foreground)" }}
+                              >
+                                {permission}
+                              </td>
+                              <td
+                                className="px-3 py-2"
+                                style={{ color: "var(--muted-foreground)" }}
+                              >
+                                {roleName}
+                              </td>
+                            </tr>
+                          ),
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -2857,28 +5275,74 @@ function SettingsPage({ company, user }: { company?: CompanyProfile; user?: Comp
               </div>
 
               <div className="space-y-4">
-                <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-                  <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Primary admin</div>
+                <div
+                  className="rounded border p-5"
+                  style={{
+                    background: "var(--card)",
+                    borderColor: "var(--border)",
+                  }}
+                >
+                  <div
+                    className="mb-4 text-xs uppercase tracking-widest"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Primary admin
+                  </div>
                   <div className="flex items-center gap-3">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full font-700" style={{ background: "var(--secondary)", color: "var(--primary)" }}>
+                    <div
+                      className="flex h-12 w-12 items-center justify-center rounded-full font-700"
+                      style={{
+                        background: "var(--secondary)",
+                        color: "var(--primary)",
+                      }}
+                    >
                       {formatInitials(user?.name ?? "Owner User")}
                     </div>
                     <div>
-                      <div className="font-700" style={{ color: "var(--foreground)" }}>{user?.name ?? "Primary Admin"}</div>
-                      <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>{user?.title ?? "Chairman"}</div>
+                      <div
+                        className="font-700"
+                        style={{ color: "var(--foreground)" }}
+                      >
+                        {user?.name ?? "Primary Admin"}
+                      </div>
+                      <div
+                        className="text-sm"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {user?.title ?? "Chairman"}
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="rounded border p-5" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-                  <div className="mb-4 text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Audit log</div>
+                <div
+                  className="rounded border p-5"
+                  style={{
+                    background: "var(--card)",
+                    borderColor: "var(--border)",
+                  }}
+                >
+                  <div
+                    className="mb-4 text-xs uppercase tracking-widest"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Audit log
+                  </div>
                   {[
                     "Company profile updated",
                     "Security policy applied",
                     "Primary admin role confirmed",
                     "Recruitment stages configured",
                   ].map((entry) => (
-                    <div key={entry} className="mb-3 rounded border px-3 py-2 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--muted-foreground)" }}>
+                    <div
+                      key={entry}
+                      className="mb-3 rounded border px-3 py-2 text-sm"
+                      style={{
+                        borderColor: "var(--border)",
+                        background: "var(--secondary)",
+                        color: "var(--muted-foreground)",
+                      }}
+                    >
                       {entry}
                     </div>
                   ))}
@@ -2893,5 +5357,5 @@ function SettingsPage({ company, user }: { company?: CompanyProfile; user?: Comp
         {settingsTab === "service-providers" && <ServiceProvidersSettings />}
       </div>
     </div>
-  );
+  )
 }

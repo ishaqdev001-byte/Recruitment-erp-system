@@ -29,7 +29,6 @@ type MedicalAppointment = {
   income_type_name: string;
   account_name: string;
   payment_reference: string;
-  status: string;
 };
 
 type CandidateResult = {
@@ -267,18 +266,24 @@ export default function MedicalAppointments() {
       setAppointments(result.appointments ?? []);
       setCanBookAppointments(Boolean(result.permissions?.canBookAppointments));
       setCanViewAppointments(Boolean(result.permissions?.canViewAppointments));
-      
-      // Load doctors
-      const doctorsResponse = await fetch("/api/users/doctors", { cache: "no-store" });
-      const doctorsData = await doctorsResponse.json() as { doctors?: DoctorOption[]; error?: string };
-      if (!doctorsResponse.ok) throw new Error(doctorsData.error ?? "Unable to load doctors.");
-      setDoctors(doctorsData.doctors ?? []);
 
-      // Load hospitals
-      const hospitalsResponse = await fetch("/api/medical/hospitals", { cache: "no-store" });
-      const hospitalsData = await hospitalsResponse.json() as { hospitals?: Hospital[]; error?: string };
-      if (!hospitalsResponse.ok) throw new Error(hospitalsData.error ?? "Unable to load hospitals.");
-      setHospitals((hospitalsData.hospitals ?? []).filter((h) => h.is_active));
+      if (result.permissions?.canBookAppointments) {
+        const [doctorsResponse, hospitalsResponse] = await Promise.all([
+          fetch("/api/users/doctors", { cache: "no-store" }),
+          fetch("/api/medical/hospitals", { cache: "no-store" }),
+        ]);
+        const [doctorsData, hospitalsData] = await Promise.all([
+          doctorsResponse.json() as Promise<{ doctors?: DoctorOption[]; error?: string }>,
+          hospitalsResponse.json() as Promise<{ hospitals?: Hospital[]; error?: string }>,
+        ]);
+        if (!doctorsResponse.ok) throw new Error(doctorsData.error ?? "Unable to load doctors.");
+        if (!hospitalsResponse.ok) throw new Error(hospitalsData.error ?? "Unable to load hospitals.");
+        setDoctors(doctorsData.doctors ?? []);
+        setHospitals((hospitalsData.hospitals ?? []).filter((h) => h.is_active));
+      } else {
+        setDoctors([]);
+        setHospitals([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load medical appointments.");
     } finally {
@@ -357,6 +362,10 @@ export default function MedicalAppointments() {
 
   const bookAppointment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canBookAppointments) {
+      setError("You do not have permission to book medical appointments.");
+      return;
+    }
     
     // Validate required fields
     if (!form.hospitalId || form.totalFeeAmount <= 0) {
@@ -418,7 +427,9 @@ export default function MedicalAppointments() {
             <h1 id="med-appt-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Medical Appointments</h1>
           </div>
           <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
-            Book candidate medical appointments. The fee is recorded as income against the configured account automatically.
+            {canBookAppointments
+              ? "Book candidate medical appointments. The fee is recorded as income against the configured account automatically."
+              : "View candidate medical appointments."}
           </p>
         </div>
         {canBookAppointments && (
@@ -461,12 +472,11 @@ export default function MedicalAppointments() {
                   <th className="px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Fee</th>
                   <th className="hidden sm:table-cell px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Account</th>
                   <th className="hidden md:table-cell px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Reference</th>
-                  <th className="px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={10} className="px-3 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading appointments…</td></tr>}
-                {!loading && appointments.length === 0 && <tr><td colSpan={10} className="px-3 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No medical appointments booked yet.</td></tr>}
+                {loading && <tr><td colSpan={9} className="px-3 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading appointments…</td></tr>}
+                {!loading && appointments.length === 0 && <tr><td colSpan={9} className="px-3 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No medical appointments booked yet.</td></tr>}
                 {!loading && appointments.map((appt) => (
                   <tr key={appt.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                     <td className="px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>
@@ -486,7 +496,6 @@ export default function MedicalAppointments() {
                     <td className="px-3 py-3 mono text-xs font-600" style={{ color: "#17845b" }}>{money(appt.fee_amount)}</td>
                     <td className="hidden sm:table-cell px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{appt.account_name}</td>
                     <td className="hidden md:table-cell px-3 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{appt.payment_reference || "—"}</td>
-                    <td className="px-3 py-3 capitalize text-xs" style={{ color: appt.status === "completed" ? "#17845b" : appt.status === "cancelled" ? "#b43c45" : "var(--muted-foreground)" }}>{appt.status}</td>
                   </tr>
                 ))}
               </tbody>

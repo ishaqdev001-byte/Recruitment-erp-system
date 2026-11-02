@@ -137,7 +137,7 @@ type CandidateSourceOption = { id: string; source: string };
 type BranchOption = { id: string; name: string };
 type CandidateStageEvent = {
   id: string;
-  event_type: "stage" | "medical_appointment" | "medical_result";
+  event_type: "stage" | "medical_appointment";
   label: string;
   occurred_at: string;
   metadata: Record<string, unknown>;

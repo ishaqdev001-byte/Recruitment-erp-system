@@ -107,6 +107,8 @@ export async function GET() {
       { data: candidateScope, error: scopeError },
       { data: canViewAgentFinance, error: agentFinancePermissionError },
       { data: canManageCandidateSources, error: sourcePermissionError },
+      { data: canUpdateCandidateStages, error: stagePermissionError },
+      { data: canSubmitCandidatesToProjects, error: projectSubmissionPermissionError },
     ] = await Promise.all([
       supabase.rpc("current_user_has_company_permission", {
         requested_company_id: membership.company_id,
@@ -136,8 +138,16 @@ export async function GET() {
         requested_company_id: membership.company_id,
         requested_permission: "candidates.sources.manage",
       }),
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "candidates.stage",
+      }),
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "candidates.project_submit",
+      }),
     ]);
-    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || scopeError || agentFinancePermissionError || sourcePermissionError) {
+    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || scopeError || agentFinancePermissionError || sourcePermissionError || stagePermissionError || projectSubmissionPermissionError) {
       return NextResponse.json({ error: "Unable to verify candidate access." }, { status: 503, headers });
     }
     const { data: candidateRegistration, error: registrationSettingError } = await supabase.rpc(
@@ -188,6 +198,8 @@ export async function GET() {
         canViewAgentFinance: Boolean(canViewAgentFinance),
         canViewActivityLogs,
         canEditCandidates: Boolean(canEditCandidates),
+        canUpdateCandidateStages: Boolean(canUpdateCandidateStages),
+        canSubmitCandidatesToProjects: Boolean(canSubmitCandidatesToProjects),
         canRegisterCandidates: (Boolean(canRegisterCandidates) || Boolean(canCreateCandidates)) && canRegister,
         canManageCandidateSources: Boolean(canManageCandidateSources),
         canManagePassportStatus,

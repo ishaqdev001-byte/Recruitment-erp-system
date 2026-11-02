@@ -50,6 +50,7 @@ export async function dispatchDueTaskReminders(access: Extract<TaskAccess, { sup
     access.supabase.from("tasks")
       .select("id, title, due_at, reminder_at, assigned_to, created_by, sms_reminder_enabled")
       .eq("company_id", access.companyId)
+      .or(`created_by.eq.${access.userId},assigned_to.eq.${access.userId}`)
       .eq("is_completed", false)
       .not("reminder_at", "is", null)
       .lte("reminder_at", now)
@@ -58,7 +59,11 @@ export async function dispatchDueTaskReminders(access: Extract<TaskAccess, { sup
       .select("task_id, recipient_id, remind_at")
       .eq("company_id", access.companyId),
   ]);
-  if (taskError || notificationError || !dueTasks?.length) return;
+  if (taskError || notificationError) {
+    console.error("Task reminder lookup failed", taskError ?? notificationError);
+    return;
+  }
+  if (!dueTasks?.length) return;
 
   const delivered = new Set((existing ?? []).map((item) => `${item.task_id}:${item.recipient_id}:${item.remind_at}`));
   const notifications = dueTasks.flatMap((task) => {
@@ -89,6 +94,7 @@ export async function dispatchDueTaskReminders(access: Extract<TaskAccess, { sup
   const { data: queued, error: queuedError } = await admin.from("task_notifications")
     .select("id, recipient_id, title, body")
     .eq("company_id", access.companyId)
+    .eq("recipient_id", access.userId)
     .eq("sms_status", "queued")
     .order("sent_at", { ascending: true })
     .limit(20);

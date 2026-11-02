@@ -305,7 +305,7 @@ export default function InvoiceGeneratorModal({
                     style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
                   >
                     <option value="contractor">Contractor / Employer</option>
-                    <option value="supplier">Supplier</option>
+                    <option value="supplier">Partner</option>
                     <option value="candidate">Candidate</option>
                     <option value="agent">Recruitment Agent</option>
                   </select>

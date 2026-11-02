@@ -24,16 +24,16 @@ async function getAccess() {
     .select("company_id, role_id, branch_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
 
-  const [financeView, financeCreate, financeEdit, candidatesView, candidatesCreate, medicalView, isMainBranchResult] = await Promise.all([
+  const [financeView, financeCreate, financeEdit, candidatesCreate, medicalView, medicalUpdate, isMainBranchResult] = await Promise.all([
     supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "finance.view" }),
     supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "finance.create" }),
     supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "finance.edit" }),
-    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "candidates.view" }),
     supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "candidates.create" }),
     supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "medical.view" }),
+    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "medical.update" }),
     supabase.rpc("current_user_is_main_branch_user", { requested_company_id: membership.company_id }),
   ]);
-  if ([financeView, financeCreate, financeEdit, candidatesView, candidatesCreate, medicalView, isMainBranchResult].some((result) => result.error)) {
+  if ([financeView, financeCreate, financeEdit, candidatesCreate, medicalView, medicalUpdate, isMainBranchResult].some((result) => result.error)) {
     return { error: "Unable to verify income, appointment, or branch access.", status: 503 as const };
   }
 
@@ -43,9 +43,9 @@ async function getAccess() {
   if (!admin) return { error: "Other income and appointments require SUPABASE_SERVICE_ROLE_KEY in the server environment.", status: 503 as const };
 
   const canManageTypes = Boolean(financeCreate.data || financeEdit.data);
-  const canBookAppointments = Boolean(candidatesCreate.data);
-  const canViewAppointments = Boolean(candidatesView.data || candidatesCreate.data || medicalView.data);
-  if (!financeView.data && !candidatesView.data && !candidatesCreate.data && !medicalView.data && !canManageTypes) {
+  const canBookAppointments = Boolean(candidatesCreate.data || medicalUpdate.data);
+  const canViewAppointments = Boolean(financeView.data || medicalView.data);
+  if (!financeView.data && !medicalView.data && !canBookAppointments && !canManageTypes) {
     return { error: "You do not have permission to access company income sources.", status: 403 as const };
   }
   return {
@@ -107,8 +107,16 @@ export async function GET() {
       incomeTypes: (incomeTypes ?? []).map((type) => ({ ...type, fee: Number(type.fee), account_name: accountNames.get(type.account_id) ?? "Account" })),
       accounts: accounts ?? [],
       appointments: appointments.map((appointment) => ({
-        ...appointment,
+        id: appointment.id,
+        candidate_first_name: appointment.candidate_first_name,
+        candidate_last_name: appointment.candidate_last_name,
+        candidate_date_of_birth: appointment.candidate_date_of_birth,
+        candidate_age: appointment.candidate_age,
+        candidate_passport_number: appointment.candidate_passport_number,
+        candidate_phone: appointment.candidate_phone,
+        appointment_at: appointment.appointment_at,
         fee_amount: Number(appointment.fee_amount),
+        payment_reference: appointment.payment_reference,
         income_type_name: typeById.get(String(appointment.income_type_id))?.name ?? "Medical service",
         account_name: accountNames.get(String(appointment.account_id)) ?? "Account",
       })),
@@ -274,6 +282,40 @@ export async function POST(request: Request) {
       }).select("id, candidate_first_name, candidate_last_name, candidate_date_of_birth, candidate_age, candidate_passport_number, candidate_phone, appointment_at, fee_amount, account_id, status, created_at").single();
       if (apptError || !appointment) throw apptError ?? new Error("Medical appointment was not booked.");
 
+      let stageWarning = "";
+      if (candidateId) {
+        try {
+          const { data: candidate, error: candidateError } = await access.admin
+            .from("candidates")
+            .select("id, details")
+            .eq("id", candidateId)
+            .eq("company_id", access.companyId)
+            .maybeSingle();
+          if (candidateError) throw candidateError;
+          if (!candidate) throw new Error("The linked candidate could not be found.");
+
+          const existingDetails = (candidate.details ?? {}) as Record<string, unknown>;
+          const laterStages = new Set(["Medical Examination", "Visa Processing", "Travel"]);
+          if (!laterStages.has(String(existingDetails.stage ?? ""))) {
+            const { error: stageError } = await access.admin
+              .from("candidates")
+              .update({
+                details: {
+                  ...existingDetails,
+                  stage: "Medical Booked",
+                  medicalBookedAt: new Date().toISOString(),
+                } as never,
+              })
+              .eq("id", candidateId)
+              .eq("company_id", access.companyId);
+            if (stageError) throw stageError;
+          }
+        } catch (stageErr) {
+          console.error("Medical stage update on booking failed", stageErr);
+          stageWarning = "Appointment booked, but the candidate stage could not be updated.";
+        }
+      }
+
       // Record the income credit transaction against the account automatically
       // transaction_type = 'income', direction = 'credit', source_type = 'medical_appointment'
       const { data: transaction, error: txError } = await access.admin.from("company_account_transactions").insert({
@@ -301,7 +343,10 @@ export async function POST(request: Request) {
             fee_amount: feeAmount,
             income_type_name: incomeType.name,
           },
-          warning: "Appointment booked but the income transaction could not be recorded automatically. Record it manually in Finance → Accounts.",
+          warning: [
+            "Appointment booked but the income transaction could not be recorded automatically. Record it manually in Finance → Accounts.",
+            stageWarning,
+          ].filter(Boolean).join(" "),
         }, { status: 201, headers });
       }
 
@@ -313,39 +358,8 @@ export async function POST(request: Request) {
           .eq("company_id", access.companyId);
       }
 
-      // ── Update candidate stage to "Medical Booked" ─────────────────────
-      if (candidateId) {
-        try {
-          const { data: candidate } = await access.admin
-            .from("candidates")
-            .select("id, details")
-            .eq("id", candidateId)
-            .eq("company_id", access.companyId)
-            .maybeSingle();
-
-          if (candidate) {
-            const existingDetails = (candidate.details ?? {}) as Record<string, unknown>;
-            const laterStages = new Set(["Medical Examination", "Visa Processing", "Travel"]);
-            if (!laterStages.has(String(existingDetails.stage ?? ""))) {
-              await access.admin
-                .from("candidates")
-                .update({
-                  details: {
-                    ...existingDetails,
-                    stage: "Medical Booked",
-                    medicalBookedAt: new Date().toISOString(),
-                  } as never,
-                })
-                .eq("id", candidateId)
-                .eq("company_id", access.companyId);
-            }
-          }
-        } catch (stageErr) {
-          console.warn("Medical stage update on booking failed (non-fatal)", stageErr);
-        }
-      }
-
       return NextResponse.json({
+        ...(stageWarning ? { warning: stageWarning } : {}),
         appointment: {
           ...(appointment as Record<string, unknown>),
           fee_amount: feeAmount,

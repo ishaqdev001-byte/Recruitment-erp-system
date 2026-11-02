@@ -224,6 +224,40 @@ export async function POST(request: Request) {
     
     if (apptError || !appointment) throw apptError ?? new Error("Medical appointment was not booked.");
 
+    let stageWarning = "";
+    if (candidateId) {
+      try {
+        const { data: candidate, error: candidateError } = await access.admin
+          .from("candidates")
+          .select("id, details")
+          .eq("id", candidateId)
+          .eq("company_id", access.companyId)
+          .maybeSingle();
+        if (candidateError) throw candidateError;
+        if (!candidate) throw new Error("The linked candidate could not be found.");
+
+        const existingDetails = (candidate.details ?? {}) as Record<string, unknown>;
+        const laterStages = new Set(["Medical Examination", "Visa Processing", "Travel"]);
+        if (!laterStages.has(String(existingDetails.stage ?? ""))) {
+          const { error: stageError } = await access.admin
+            .from("candidates")
+            .update({
+              details: {
+                ...existingDetails,
+                stage: "Medical Booked",
+                medicalBookedAt: new Date().toISOString(),
+              } as never,
+            })
+            .eq("id", candidateId)
+            .eq("company_id", access.companyId);
+          if (stageError) throw stageError;
+        }
+      } catch (stageErr) {
+        console.error("Candidate medical booking stage update failed", stageErr);
+        stageWarning = "Appointment booked, but the candidate stage could not be updated.";
+      }
+    }
+
     // Record income transaction for candidate payment
     const { data: transaction, error: txError } = await access.admin.from("company_account_transactions").insert({
       company_id: access.companyId,
@@ -244,7 +278,10 @@ export async function POST(request: Request) {
     if (txError) {
       console.error("Medical appointment income transaction failed", txError);
       return NextResponse.json({
-        warning: "Appointment booked but income transaction could not be recorded automatically.",
+        warning: [
+          "Appointment booked but income transaction could not be recorded automatically.",
+          stageWarning,
+        ].filter(Boolean).join(" "),
         appointment: {
           ...(appointment as Record<string, unknown>),
           fee_amount: totalFeeAmount,
@@ -330,39 +367,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // Update candidate stage if linked
-    if (candidateId) {
-      try {
-        const { data: candidate } = await access.admin
-          .from("candidates")
-          .select("id, details")
-          .eq("id", candidateId)
-          .eq("company_id", access.companyId)
-          .maybeSingle();
-
-        if (candidate) {
-          const existingDetails = (candidate.details ?? {}) as Record<string, unknown>;
-          const laterStages = new Set(["Medical Examination", "Visa Processing", "Travel"]);
-          if (!laterStages.has(String(existingDetails.stage ?? ""))) {
-            await access.admin
-              .from("candidates")
-              .update({
-                details: {
-                  ...existingDetails,
-                  stage: "Medical Booked",
-                  medicalBookedAt: new Date().toISOString(),
-                } as never,
-              })
-              .eq("id", candidateId)
-              .eq("company_id", access.companyId);
-          }
-        }
-      } catch (stageErr) {
-        console.warn("Candidate stage update failed (non-fatal)", stageErr);
-      }
-    }
-
     return NextResponse.json({
+      ...(stageWarning ? { warning: stageWarning } : {}),
       appointment: {
         ...(appointment as Record<string, unknown>),
         fee_amount: totalFeeAmount,

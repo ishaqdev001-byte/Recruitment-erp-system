@@ -32,7 +32,7 @@ export async function PATCH(request: Request) {
   try {
     const access = await getTaskAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
-    if (!await hasTaskPermission(access, "tasks.edit")) return NextResponse.json({ error: "You do not have permission to rename task lists." }, { status: 403, headers });
+    if (!await hasTaskPermission(access, "tasks.delete")) return NextResponse.json({ error: "You do not have permission to rename task lists." }, { status: 403, headers });
     const body = await request.json().catch(() => null) as { id?: unknown; name?: unknown } | null;
     const name = typeof body?.name === "string" ? body.name.trim() : "";
     if (!isUuid(body?.id) || !name || name.length > 100) return NextResponse.json({ error: "Enter a valid list name." }, { status: 400, headers });

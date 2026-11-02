@@ -17,7 +17,6 @@ export async function GET() {
       canSendSmsResult,
       { data: lists, error: listError },
       { data: tasks, error: taskError },
-      { data: memberships, error: membershipError },
     ] = await Promise.all([
       hasTaskPermission(access, "tasks.create"),
       hasTaskPermission(access, "tasks.edit"),
@@ -29,10 +28,10 @@ export async function GET() {
       access.supabase.from("task_lists").select("id, name, position, created_at")
         .eq("company_id", access.companyId).order("position").order("name"),
       access.supabase.from("tasks").select("*").eq("company_id", access.companyId)
+        .or(`created_by.eq.${access.userId},assigned_to.eq.${access.userId}`)
         .order("is_starred", { ascending: false }).order("due_at", { ascending: true, nullsFirst: false }).order("created_at", { ascending: false }),
-      access.supabase.from("company_memberships").select("user_id").eq("company_id", access.companyId).eq("status", "active"),
     ]);
-    if (listError || taskError || membershipError) throw listError ?? taskError ?? membershipError;
+    if (listError || taskError) throw listError ?? taskError;
     let taskLists = lists ?? [];
     if (!taskLists.length && canCreate) {
       const { data: newList, error: createListError } = await access.supabase.from("task_lists")
@@ -42,16 +41,13 @@ export async function GET() {
       if (createListError || !newList) throw createListError ?? new Error("Unable to create the default task list.");
       taskLists = [newList];
     }
-    const memberIds = (memberships ?? []).map((member) => member.user_id);
-    const { data: profiles, error: profileError } = memberIds.length
-      ? await access.supabase.from("profiles").select("id, display_name").in("id", memberIds)
-      : { data: [], error: null };
+    const { data: profile, error: profileError } = await access.supabase.from("profiles")
+      .select("id, display_name").eq("id", access.userId).maybeSingle();
     if (profileError) throw profileError;
-    const profileNames = new Map((profiles ?? []).map((profile) => [profile.id, profile.display_name]));
     return NextResponse.json({
       tasks: tasks ?? [],
       lists: taskLists,
-      members: memberIds.map((id) => ({ id, name: profileNames.get(id) || `Staff ${id.slice(0, 8)}` })),
+      members: [{ id: access.userId, name: profile?.display_name || `Staff ${access.userId.slice(0, 8)}` }],
       permissions: { canCreate, canEdit, canDelete, canSendSms: !canSendSmsResult.error && Boolean(canSendSmsResult.data) },
     }, { headers });
   } catch (error) {
@@ -71,7 +67,6 @@ export async function POST(request: Request) {
     const listId = typeof body?.listId === "string" ? body.listId : "";
     const dueAt = body?.dueAt === null || body?.dueAt === "" ? null : body?.dueAt;
     const reminderAt = body?.reminderAt === null || body?.reminderAt === "" ? null : body?.reminderAt;
-    const assignedTo = body?.assignedTo === null || body?.assignedTo === "" ? null : body?.assignedTo;
     const parentTaskId = body?.parentTaskId === null || body?.parentTaskId === "" ? null : body?.parentTaskId;
     const smsReminderEnabled = body?.smsReminderEnabled === true;
     const priority = body?.priority ?? "Medium";
@@ -79,11 +74,13 @@ export async function POST(request: Request) {
     if (!title || title.length > 300 || notes.length > 10000 || !/^[0-9a-f-]{36}$/i.test(listId)
       || (dueAt !== null && (typeof dueAt !== "string" || Number.isNaN(Date.parse(dueAt))))
       || (reminderAt !== null && (typeof reminderAt !== "string" || Number.isNaN(Date.parse(reminderAt))))
-      || (assignedTo !== null && (typeof assignedTo !== "string" || !/^[0-9a-f-]{36}$/i.test(assignedTo)))
       || (parentTaskId !== null && (typeof parentTaskId !== "string" || !/^[0-9a-f-]{36}$/i.test(parentTaskId)))
       || !["High", "Medium", "Low"].includes(String(priority))
       || !["none", "daily", "weekly", "monthly", "yearly"].includes(String(recurrence))) {
       return NextResponse.json({ error: "Enter a task title and valid task details." }, { status: 400, headers });
+    }
+    if (body?.assignedTo !== undefined && body.assignedTo !== null && body.assignedTo !== "" && body.assignedTo !== access.userId) {
+      return NextResponse.json({ error: "Tasks and their reminders can only be assigned to you." }, { status: 400, headers });
     }
 
     const [canCreate, smsPermission] = await Promise.all([
@@ -100,17 +97,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "SMS reminders require a scheduled reminder and the communications.sms.send permission." }, { status: 403, headers });
     }
 
-    const memberLookup = assignedTo
-      ? access.supabase.from("company_memberships").select("user_id")
-        .eq("company_id", access.companyId).eq("user_id", assignedTo).eq("status", "active").maybeSingle()
-      : Promise.resolve(null);
     const parentLookup = parentTaskId
       ? access.supabase.from("tasks").select("id, list_id, parent_task_id")
         .eq("company_id", access.companyId).eq("id", parentTaskId).maybeSingle()
       : Promise.resolve(null);
-    const [memberResult, parentResult] = await Promise.all([memberLookup, parentLookup]);
-    if (memberResult?.error || parentResult?.error) throw memberResult?.error ?? parentResult?.error;
-    if (assignedTo && !memberResult?.data) return NextResponse.json({ error: "Choose an active member of this company." }, { status: 400, headers });
+    const parentResult = await parentLookup;
+    if (parentResult?.error) throw parentResult.error;
     if (parentTaskId && (!parentResult?.data || parentResult.data.list_id !== listId)) {
       return NextResponse.json({ error: "Choose a parent task in the selected list." }, { status: 400, headers });
     }
@@ -124,7 +116,7 @@ export async function POST(request: Request) {
       notes,
       due_at: dueAt,
       reminder_at: reminderAt,
-      assigned_to: assignedTo,
+      assigned_to: access.userId,
       priority,
       recurrence,
       sms_reminder_enabled: smsReminderEnabled,

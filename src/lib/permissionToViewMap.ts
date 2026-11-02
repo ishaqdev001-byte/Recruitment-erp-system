@@ -127,7 +127,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "employers.edit": new Set(["contractors", "projects"]),
   "employers.delete": new Set(["contractors", "projects"]),
 
-  // Suppliers
+  // Partners (stored internally as suppliers)
   "suppliers.view": new Set(["suppliers"]),
   "suppliers.create": new Set(["suppliers"]),
   "suppliers.edit": new Set(["suppliers"]),
@@ -207,6 +207,13 @@ export function viewsFromPermissions(permissions: string[]): Set<View> {
  * Returns true if the given view is accessible with the provided permissions.
  */
 export function canAccessView(view: View, permissions: string[]): boolean {
+  if (view === "agents") {
+    return (
+      permissions.includes("users.view") &&
+      permissions.includes("candidates.view")
+    )
+  }
+
   const allowedViews = viewsFromPermissions(permissions)
   return allowedViews.has(view)
 }

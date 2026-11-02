@@ -25,7 +25,7 @@ async function getSupplierAccess(permission: "suppliers.view" | "suppliers.creat
     requested_permission: permission,
   });
   if (permissionError || !allowed) {
-    return { error: "You do not have permission to access suppliers. Workspace administrators should apply the latest Supabase migration if supplier setup is incomplete.", status: 403 as const };
+    return { error: "You do not have permission to access partners. Workspace administrators should apply the latest Supabase migration if partner setup is incomplete.", status: 403 as const };
   }
 
   return { companyId: membership.company_id, userId: user.id, supabase };
@@ -43,13 +43,28 @@ export async function GET() {
       .order("created_at", { ascending: false });
     if (error) {
       console.error("Supplier list query failed", error);
-      return NextResponse.json({ error: "Unable to load company suppliers." }, { status: 500, headers: responseHeaders });
+      return NextResponse.json({ error: "Unable to load company partners." }, { status: 500, headers: responseHeaders });
     }
 
-    return NextResponse.json({ suppliers: data ?? [] }, { headers: responseHeaders });
+    const { data: canCreate, error: createPermissionError } = await access.supabase.rpc(
+      "current_user_has_company_permission",
+      {
+        requested_company_id: access.companyId,
+        requested_permission: "suppliers.create",
+      },
+    );
+    if (createPermissionError) {
+      console.error("Supplier create permission check failed", createPermissionError);
+      return NextResponse.json({ error: "Unable to verify partner registration access." }, { status: 503, headers: responseHeaders });
+    }
+
+    return NextResponse.json(
+      { suppliers: data ?? [], canCreateSuppliers: Boolean(canCreate) },
+      { headers: responseHeaders },
+    );
   } catch (error) {
     console.error("Supplier list request failed", error);
-    return NextResponse.json({ error: "Supplier data is unavailable." }, { status: 503, headers: responseHeaders });
+    return NextResponse.json({ error: "Partner data is unavailable." }, { status: 503, headers: responseHeaders });
   }
 }
 
@@ -67,7 +82,7 @@ export async function POST(request: Request) {
     if (!supplierName || supplierName.length > 200 || !contactPerson || contactPerson.length > 200
       || !phone || phone.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200
       || !branch || branch.length > 200) {
-      return NextResponse.json({ error: "Provide a supplier name and valid contact, phone, email, and branch details." }, { status: 400, headers: responseHeaders });
+      return NextResponse.json({ error: "Provide a partner name and valid contact, phone, email, and branch details." }, { status: 400, headers: responseHeaders });
     }
 
     const { data, error } = await access.supabase
@@ -85,12 +100,12 @@ export async function POST(request: Request) {
       .single();
     if (error || !data) {
       console.error("Supplier registration failed", error);
-      return NextResponse.json({ error: "Unable to register this supplier." }, { status: 403, headers: responseHeaders });
+      return NextResponse.json({ error: "Unable to register this partner." }, { status: 403, headers: responseHeaders });
     }
 
     return NextResponse.json({ supplier: data }, { status: 201, headers: responseHeaders });
   } catch (error) {
     console.error("Supplier registration request failed", error);
-    return NextResponse.json({ error: "Supplier registration is unavailable." }, { status: 503, headers: responseHeaders });
+    return NextResponse.json({ error: "Partner registration is unavailable." }, { status: 503, headers: responseHeaders });
   }
 }

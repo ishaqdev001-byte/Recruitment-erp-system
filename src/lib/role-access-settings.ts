@@ -66,12 +66,11 @@ export function roleAccessSettings(
         : isAgentRole
           ? false
           : DEFAULT_ROLE_ACCESS_SETTINGS.candidate_registration,
-    agent_visa_finance:
-      typeof settings.agent_visa_finance === "boolean"
+    agent_visa_finance: isAgentRole
+      ? typeof settings.agent_visa_finance === "boolean"
         ? settings.agent_visa_finance
-        : isAgentRole
-          ? true
-          : DEFAULT_ROLE_ACCESS_SETTINGS.agent_visa_finance,
+        : true
+      : DEFAULT_ROLE_ACCESS_SETTINGS.agent_visa_finance,
   }
 }
 

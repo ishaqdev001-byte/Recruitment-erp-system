@@ -23,7 +23,7 @@ async function getAccess() {
     .select("company_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
 
-  const [medicalView, medicalUpdate] = await Promise.all([
+  const [medicalView, medicalUpdate, candidatesCreate] = await Promise.all([
     supabase.rpc("current_user_has_company_permission", {
       requested_company_id: membership.company_id,
       requested_permission: "medical.view",
@@ -32,11 +32,15 @@ async function getAccess() {
       requested_company_id: membership.company_id,
       requested_permission: "medical.update",
     }),
+    supabase.rpc("current_user_has_company_permission", {
+      requested_company_id: membership.company_id,
+      requested_permission: "candidates.create",
+    }),
   ]);
-  if (medicalView.error || medicalUpdate.error) {
+  if (medicalView.error || medicalUpdate.error || candidatesCreate.error) {
     return { error: "Unable to verify medical hospital permissions.", status: 503 as const };
   }
-  if (!medicalView.data && !medicalUpdate.data) {
+  if (!medicalView.data && !medicalUpdate.data && !candidatesCreate.data) {
     return { error: "You do not have permission to access medical hospitals.", status: 403 as const };
   }
 

@@ -10,6 +10,10 @@ import {
 } from "lucide-react"
 
 import { matchesSearch } from "@/lib/search"
+import {
+  clearClientApiCache,
+  fetchClientCached,
+} from "@/lib/client-api-cache"
 
 import AttachmentDrawer from "./AttachmentDrawer"
 
@@ -501,6 +505,10 @@ export default function CandidateRoster({
 
     canEditCandidates?: boolean
 
+    canUpdateCandidateStages?: boolean
+
+    canSubmitCandidatesToProjects?: boolean
+
     canRegisterCandidates?: boolean
 
     canManageCandidateSources?: boolean
@@ -514,6 +522,14 @@ export default function CandidateRoster({
 
   const activePage = page
   const financeReadOnly = canViewFinance && !permissions.canEditCandidates
+  const canUpdateCandidateStages = Boolean(
+    permissions.canUpdateCandidateStages,
+  )
+  const canSubmitCandidatesToProjects = Boolean(
+    permissions.canSubmitCandidatesToProjects,
+  )
+  const canManageCandidateWorkflow =
+    canUpdateCandidateStages || canSubmitCandidatesToProjects
 
   const [inquiries, setInquiries] = useState<InquiryRecord[]>([])
 
@@ -627,7 +643,11 @@ export default function CandidateRoster({
   useEffect(() => {
     let cancelled = false
 
-    fetch("/api/candidates", { cache: "no-store" })
+    fetchClientCached(
+      "/api/candidates",
+      { cache: "no-store" },
+      { scopeKey: `candidates:${companyName}`, ttlMs: 5_000 },
+    )
 
       .then(async (response) => {
         const payload = await response.json()
@@ -664,7 +684,7 @@ export default function CandidateRoster({
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [companyName])
 
   useEffect(() => {
     let cancelled = false
@@ -675,9 +695,11 @@ export default function CandidateRoster({
       setInquiryError("")
 
       try {
-        const response = await fetch("/api/candidate-inquiries", {
-          cache: "no-store",
-        })
+        const response = await fetchClientCached(
+          "/api/candidate-inquiries",
+          { cache: "no-store" },
+          { scopeKey: `inquiries:${companyName}`, ttlMs: 5_000 },
+        )
 
         const payload = (await response.json()) as {
           inquiries?: InquiryRecord[]
@@ -713,14 +735,18 @@ export default function CandidateRoster({
     return () => {
       cancelled = true
     }
-  }, [inquiryReloadKey])
+  }, [companyName, inquiryReloadKey])
 
   useEffect(() => {
     let cancelled = false
 
-    if (!permissions.canEditCandidates || activePage !== "pipeline") return
+    if (!canManageCandidateWorkflow || activePage !== "pipeline") return
 
-    fetch("/api/projects", { cache: "no-store" })
+    fetchClientCached(
+      "/api/projects",
+      { cache: "no-store" },
+      { scopeKey: `projects:${companyName}`, ttlMs: 5_000 },
+    )
 
       .then(async (response) => {
         const payload = (await response.json()) as {
@@ -753,7 +779,7 @@ export default function CandidateRoster({
     return () => {
       cancelled = true
     }
-  }, [activePage, permissions.canEditCandidates])
+  }, [activePage, canManageCandidateWorkflow, companyName])
 
   const filtered = candidates.filter((candidate) =>
     matchesSearch(
@@ -851,7 +877,19 @@ export default function CandidateRoster({
     )
   }
 
+  const canStartWorkflowUpdate = (candidate: CandidateRecord) => {
+    const stage = (candidate.details as Record<string, unknown> | null)?.stage
+    return candidate.visa_locked || stage === "Submitted to Project"
+      ? canUpdateCandidateStages
+      : canSubmitCandidatesToProjects
+  }
+
   const openStageUpdate = (candidateId: string) => {
+    const clickedCandidate = candidates.find(
+      (candidate) => candidate.id === candidateId,
+    )
+    if (!clickedCandidate || !canStartWorkflowUpdate(clickedCandidate)) return
+
     const ids = selectedIds.includes(candidateId) ? selectedIds : [candidateId]
 
     setTransitionIds(ids)
@@ -988,6 +1026,7 @@ export default function CandidateRoster({
         throw new Error(payload.error ?? "Unable to update candidate stages.")
 
       if (payload.updated?.length) {
+        clearClientApiCache()
         const updatedById = new Map(payload.updated.map((r) => [r.id, r]))
 
         setCandidates((current) =>
@@ -1012,7 +1051,9 @@ export default function CandidateRoster({
       if (transitionStep === "project" && payload.updated?.length) {
         setTransitionIds(payload.updated.map((c) => c.id))
 
-        setTransitionStep("details")
+        setTransitionStep(
+          canUpdateCandidateStages ? "details" : "complete",
+        )
 
         setTransitionNotice(
           `${
@@ -1189,6 +1230,7 @@ export default function CandidateRoster({
           payload.error ?? "Unable to save this candidate inquiry.",
         )
 
+      clearClientApiCache()
       setInquiryNotice(
         `Inquiry saved for ${payload.inquiry.first_name} ${payload.inquiry.last_name}.`,
       )
@@ -1325,6 +1367,7 @@ export default function CandidateRoster({
     if (!response.ok || !payload.candidate)
       throw new Error(payload.error ?? "Unable to save candidate.")
 
+    clearClientApiCache()
     if (isNewCandidate)
       setCandidates((current) => [payload.candidate!, ...current])
     else
@@ -1506,7 +1549,7 @@ export default function CandidateRoster({
                   style={{ color: "var(--muted-foreground)" }}
                 >
                   <div className="flex items-center gap-2">
-                    {permissions.canEditCandidates && (
+                    {canManageCandidateWorkflow && (
                       <input
                         type="checkbox"
                         aria-label="Select all visible candidates"
@@ -1612,7 +1655,7 @@ export default function CandidateRoster({
                 >
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1">
-                      {permissions.canEditCandidates && (
+                      {canManageCandidateWorkflow && (
                         <input
                           type="checkbox"
                           aria-label={`Select ${candidate.first_name} ${candidate.last_name}`}
@@ -1633,18 +1676,20 @@ export default function CandidateRoster({
                           <Paperclip size={15} aria-hidden="true" />
                         </button>
                       )}
+                      {canStartWorkflowUpdate(candidate) && (
+                        <button
+                          type="button"
+                          onClick={() => openStageUpdate(candidate.id)}
+                          aria-label={`Advance stage for ${candidate.first_name} ${candidate.last_name}`}
+                          title="Update candidate stage"
+                          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          <RefreshCw size={14} aria-hidden="true" />
+                        </button>
+                      )}
                       {permissions.canEditCandidates && (
                         <>
-                          <button
-                            type="button"
-                            onClick={() => openStageUpdate(candidate.id)}
-                            aria-label={`Advance stage for ${candidate.first_name} ${candidate.last_name}`}
-                            title="Update candidate stage"
-                            className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
-                            style={{ color: "var(--foreground)" }}
-                          >
-                            <RefreshCw size={14} aria-hidden="true" />
-                          </button>
                           <button
                             type="button"
                             onClick={() => {
@@ -3190,7 +3235,10 @@ export default function CandidateRoster({
             )}
             <footer className="mt-5 flex flex-wrap justify-between gap-2">
               <div className="flex gap-2">
-                {transitionStep !== "project" &&
+                {canUpdateCandidateStages &&
+                  (transitionStep !== "details" ||
+                    canSubmitCandidatesToProjects) &&
+                  transitionStep !== "project" &&
                   transitionStep !== "complete" && (
                     <button
                       type="button"
@@ -3259,7 +3307,8 @@ export default function CandidateRoster({
                     Skip & Next Stage →
                   </button>
                 )}
-                {transitionStep === "complete" && (
+                {transitionStep === "complete" &&
+                  canUpdateCandidateStages && (
                   <button
                     type="button"
                     onClick={() => {
@@ -3297,11 +3346,14 @@ export default function CandidateRoster({
                     Add ticket details
                   </button>
                 )}
-                {(transitionStep === "project" ||
+                {((transitionStep === "project" &&
+                  canSubmitCandidatesToProjects) ||
                   (transitionStep === "details" &&
+                    canUpdateCandidateStages &&
                     Object.values(stageAnswers).some((v) => v !== "")) ||
-                  transitionStep === "visa" ||
-                  transitionStep === "ticket") && (
+                  ((transitionStep === "visa" ||
+                    transitionStep === "ticket") &&
+                    canUpdateCandidateStages)) && (
                   <button
                     type="button"
                     disabled={
@@ -3332,21 +3384,6 @@ export default function CandidateRoster({
                         : transitionStep === "ticket"
                           ? "Save travel details"
                           : "Advance stage"}
-                  </button>
-                )}
-                {transitionStep === "visa" && (
-                  <button
-                    type="button"
-                    disabled={transitionSaving || !transitionProjectId}
-                    onClick={() => void advanceCandidates()}
-                    className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:opacity-50"
-                    style={{
-                      background: "var(--primary)",
-                      color: "var(--primary-foreground)",
-                    }}
-                  >
-                    <ArrowRight size={15} aria-hidden="true" />
-                    {transitionSaving ? "Saving…" : "Record visa received"}
                   </button>
                 )}
                 {transitionStep === "ticket" && (

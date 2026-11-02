@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { AlarmClock, Bell, CalendarClock, Check, CircleCheck, ListPlus, Pencil, Plus, Search, Star, Trash2, X } from "lucide-react";
-import { SearchableSelect } from "./SearchableSelect";
 import { matchesSearch } from "@/lib/search";
 
 type Priority = "High" | "Medium" | "Low";
@@ -35,7 +34,6 @@ type TaskDraft = {
   notes: string;
   dueAt: string;
   reminder: string;
-  assignedTo: string;
   priority: Priority;
   recurrence: Recurrence;
   listId: string;
@@ -64,7 +62,7 @@ function reminderLead(task: TaskRecord) {
 }
 
 function freshDraft(listId: string, parentTaskId = ""): TaskDraft {
-  return { title: "", notes: "", dueAt: "", reminder: "none", assignedTo: "", priority: "Medium", recurrence: "none", listId, parentTaskId, smsReminderEnabled: false };
+  return { title: "", notes: "", dueAt: "", reminder: "10", priority: "Medium", recurrence: "none", listId, parentTaskId, smsReminderEnabled: false };
 }
 
 function dueLabel(value: string | null) {
@@ -155,7 +153,6 @@ export default function TaskWorkspace() {
       notes: task.notes,
       dueAt: localDateTime(task.due_at),
       reminder: reminderLead(task),
-      assignedTo: task.assigned_to ?? "",
       priority: task.priority,
       recurrence: task.recurrence,
       listId: task.list_id,
@@ -179,7 +176,6 @@ export default function TaskWorkspace() {
       notes: draft.notes,
       dueAt: dueAt?.toISOString() ?? null,
       reminderAt,
-      assignedTo: draft.assignedTo || null,
       priority: draft.priority,
       recurrence: draft.recurrence,
       listId: draft.listId,
@@ -287,11 +283,11 @@ export default function TaskWorkspace() {
       <header className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 sm:px-6" style={{ borderColor: "var(--border)" }}>
         <div className="min-w-0">
           <h1 id="tasks-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Tasks</h1>
-          <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{openCount} open · {completedCount} completed{lists.length > 0 ? ` · ${lists.length} lists` : ""}</p>
+          <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{openCount} open · {completedCount} completed{lists.length > 0 ? ` · ${lists.length} lists` : ""} · Your tasks and reminders are personal</p>
         </div>
         <div className="flex items-center gap-2">
           {canCreate && <button type="button" onClick={() => { setEditingList(null); setListName(""); setShowListForm(true); }} title="Create task list" aria-label="Create task list" className="inline-flex h-9 w-9 items-center justify-center border sm:hidden" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><ListPlus size={16} aria-hidden="true" /></button>}
-          {activeList && canEdit && <button type="button" onClick={() => { setEditingList(activeList); setListName(activeList.name); setShowListForm(true); }} title="Rename task list" aria-label="Rename task list" className="inline-flex h-9 w-9 items-center justify-center border sm:hidden" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Pencil size={15} aria-hidden="true" /></button>}
+          {activeList && canDelete && <button type="button" onClick={() => { setEditingList(activeList); setListName(activeList.name); setShowListForm(true); }} title="Rename task list" aria-label="Rename task list" className="inline-flex h-9 w-9 items-center justify-center border sm:hidden" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Pencil size={15} aria-hidden="true" /></button>}
           {notificationPermission === "default" && <button type="button" onClick={() => void enableNotifications()} title="Enable browser task reminders" aria-label="Enable browser task reminders" className="inline-flex h-9 items-center gap-2 border px-2.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Bell size={15} aria-hidden="true" /><span className="hidden sm:inline">Enable reminders</span></button>}
           {notificationPermission === "granted" && <span className="inline-flex items-center gap-1.5 text-xs" style={{ color: "#17845b" }}><Bell size={14} aria-hidden="true" />Reminders on</span>}
           <button type="button" onClick={() => openCreate()} disabled={!canCreate || !activeListId} className="inline-flex h-9 items-center gap-2 px-3 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />New task</button>
@@ -311,7 +307,7 @@ export default function TaskWorkspace() {
               </button>
             ))}
           </nav>
-          {activeList && canEdit && <div className="mt-3 flex gap-2 border-t px-4 py-3" style={{ borderColor: "var(--border)" }}>
+          {activeList && canDelete && <div className="mt-3 flex gap-2 border-t px-4 py-3" style={{ borderColor: "var(--border)" }}>
             <button type="button" onClick={() => { setEditingList(activeList); setListName(activeList.name); setShowListForm(true); }} className="inline-flex items-center gap-1.5 text-xs" style={{ color: "var(--muted-foreground)" }}><Pencil size={13} aria-hidden="true" />Rename</button>
             {canDelete && <button type="button" onClick={() => void deleteList()} className="inline-flex items-center gap-1.5 text-xs" style={{ color: "#bd3d3d" }}><Trash2 size={13} aria-hidden="true" />Delete</button>}
           </div>}
@@ -360,7 +356,7 @@ export default function TaskWorkspace() {
             <div className="flex flex-wrap gap-2 border-t pt-4" style={{ borderColor: "var(--border)" }}>
               {canEdit && <button type="button" onClick={() => openEdit(selected)} className="inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-sm font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Pencil size={14} aria-hidden="true" />Edit</button>}
               {canCreate && !selected.parent_task_id && <button type="button" onClick={() => openCreate(selected.id)} className="inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-sm font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Plus size={14} aria-hidden="true" />Subtask</button>}
-              {canDelete && <button type="button" aria-label="Delete task" title="Delete task" onClick={() => void deleteTask(selected)} className="border p-2" style={{ borderColor: "var(--border)", color: "#bd3d3d" }}><Trash2 size={15} aria-hidden="true" /></button>}
+              {canEdit && <button type="button" aria-label="Delete task" title="Delete task" onClick={() => void deleteTask(selected)} className="border p-2" style={{ borderColor: "var(--border)", color: "#bd3d3d" }}><Trash2 size={15} aria-hidden="true" /></button>}
             </div>
           </div>
         </aside>}
@@ -372,12 +368,12 @@ export default function TaskWorkspace() {
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="sm:col-span-2"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Task title *</span><input autoFocus required maxLength={300} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="w-full border px-3 py-2.5 text-sm outline-none" style={inputStyle} placeholder="What needs to be done?" /></label>
             <label><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Task list</span><select required value={draft.listId} onChange={(event) => setDraft({ ...draft, listId: event.target.value })} className="w-full border px-3 py-2.5 text-sm" style={inputStyle}>{lists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}</select></label>
-            <label><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Assigned to</span><SearchableSelect ariaLabel="Search company user to assign" value={draft.assignedTo} onChange={(assignedTo) => setDraft({ ...draft, assignedTo })} options={members.map((member) => ({ value: member.id, label: member.name }))} placeholder="Type a staff name" className="normal-case tracking-normal" style={inputStyle} /></label>
+            <p className="sm:col-span-2 text-xs" style={{ color: "var(--muted-foreground)" }}>This is your personal task. Only you receive its reminders.</p>
             <label><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Due date and time</span><span className="flex items-center gap-2 border px-3" style={inputStyle}><CalendarClock size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input type="datetime-local" value={draft.dueAt} onChange={(event) => setDraft({ ...draft, dueAt: event.target.value, reminder: event.target.value ? draft.reminder : "none", smsReminderEnabled: event.target.value ? draft.smsReminderEnabled : false })} className="min-w-0 flex-1 bg-transparent py-2.5 text-sm outline-none" /></span></label>
             <label><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Reminder</span><span className="flex items-center gap-2 border px-3" style={inputStyle}><AlarmClock size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><select disabled={!draft.dueAt} value={draft.reminder} onChange={(event) => setDraft({ ...draft, reminder: event.target.value, smsReminderEnabled: event.target.value === "none" ? false : draft.smsReminderEnabled })} className="min-w-0 flex-1 bg-transparent py-2.5 text-sm disabled:opacity-50"><option value="none">No reminder</option><option value="0">At due time</option><option value="10">10 minutes before</option><option value="60">1 hour before</option><option value="1440">1 day before</option></select></span></label>
             <label><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Repeat</span><select disabled={!draft.dueAt} value={draft.recurrence} onChange={(event) => setDraft({ ...draft, recurrence: event.target.value as Recurrence })} className="w-full border px-3 py-2.5 text-sm disabled:opacity-50" style={inputStyle}>{Object.entries(recurrenceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Priority</span><select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as Priority })} className="w-full border px-3 py-2.5 text-sm" style={inputStyle}><option>Medium</option><option>High</option><option>Low</option></select></label>
-            {canSendSms && <label className="flex items-center gap-2 border px-3 py-3 text-sm sm:col-span-2" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><input type="checkbox" checked={draft.smsReminderEnabled} disabled={!draft.dueAt || draft.reminder === "none"} onChange={(event) => setDraft({ ...draft, smsReminderEnabled: event.target.checked })} /><span>Send an SMS reminder to the assignee when due</span></label>}
+            {canSendSms && <label className="flex items-center gap-2 border px-3 py-3 text-sm sm:col-span-2" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><input type="checkbox" checked={draft.smsReminderEnabled} disabled={!draft.dueAt || draft.reminder === "none"} onChange={(event) => setDraft({ ...draft, smsReminderEnabled: event.target.checked })} /><span>Send an SMS reminder to you when due</span></label>}
             <label className="sm:col-span-2"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Notes</span><textarea rows={4} maxLength={10000} value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} className="w-full resize-y border px-3 py-2.5 text-sm outline-none" style={inputStyle} placeholder="Add details" /></label>
           </div>
           {error && <p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}

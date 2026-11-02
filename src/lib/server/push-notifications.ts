@@ -125,7 +125,10 @@ function isPermissionAllowed(
     return Boolean(notification.required_permission && permissions.has(notification.required_permission))
   }
 
-  if (roleName.trim().toLowerCase() === "recruitment agent") return false
+  if (
+    roleName.trim().toLowerCase() === "recruitment agent" &&
+    notification.type !== "task"
+  ) return false
 
   return permissionCodes[notification.type].some((code) =>
     permissions.has(code),

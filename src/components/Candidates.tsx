@@ -97,6 +97,8 @@ export interface Candidate {
 
 const stageColor: Record<string, string> = {
   Registration: "#f59e0b",
+  "Medical Booked": "#0ea5e9",
+  "Medical Examination": "#8b5cf6",
   "Visa Processing": "#6366f1",
   "Final Round": "#3b82f6",
   Withdrawn: "#ef4444",
@@ -441,7 +443,7 @@ export default function Candidates() {
               style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} />
           </div>
           {[
-            { key: "stage", label: "Stages", opts: ["", "Registration", "Visa Processing", "Final Round", "Travelled", "Withdrawn"] },
+            { key: "stage", label: "Stages", opts: ["", "Registration", "Medical Booked", "Medical Examination", "Visa Processing", "Final Round", "Travelled", "Withdrawn"] },
             { key: "travelStatus", label: "Travel Status", opts: ["", "Pending Travel", "Travelled", "Withdrawn"] },
             { key: "visaStatus", label: "Visa Status", opts: ["", "Pending", "Received", "Cancelled"] },
             { key: "passportStatus", label: "Passport Status", opts: ["", "Valid", "Expired", "Pending"] },

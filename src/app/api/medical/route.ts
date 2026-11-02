@@ -7,6 +7,16 @@ export const runtime = "nodejs";
 
 const headers = { "Cache-Control": "private, no-store" };
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[character] ?? character);
+}
+
 function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -52,27 +62,65 @@ async function sendSystemAlertEmail(opts: {
   }
 }
 
-async function collectAlertRecipients(admin: ReturnType<typeof createAdminClient>, companyId: string) {
+async function collectAlertRecipients(
+  admin: ReturnType<typeof createAdminClient>,
+  companyId: string,
+  chairmanId: string | null,
+  bookingUserId: string | null,
+) {
   if (!admin) return [];
-  const { data: rolePermissions, error: permissionError } = await admin
-    .from("role_permissions")
-    .select("role_id")
-    .eq("company_id", companyId)
-    .eq("permission_code", "medical.view");
-  if (permissionError) throw permissionError;
+  const [rolesResult, alertPermissionsResult, medicalPermissionsResult, membershipsResult] = await Promise.all([
+    admin.from("company_roles")
+      .select("id, name, is_system_default")
+      .eq("company_id", companyId),
+    admin.from("role_permissions")
+      .select("role_id")
+      .eq("company_id", companyId)
+      .eq("permission_code", "medical.alerts.view"),
+    admin.from("role_permissions")
+      .select("role_id")
+      .eq("company_id", companyId)
+      .eq("permission_code", "medical.view"),
+    admin.from("company_memberships")
+      .select("user_id, role_id")
+      .eq("company_id", companyId)
+      .eq("status", "active"),
+  ]);
+  if (rolesResult.error) throw rolesResult.error;
+  if (alertPermissionsResult.error) throw alertPermissionsResult.error;
+  if (medicalPermissionsResult.error) throw medicalPermissionsResult.error;
+  if (membershipsResult.error) throw membershipsResult.error;
 
-  const roleIds = [...new Set((rolePermissions ?? []).map((item) => item.role_id))];
-  if (!roleIds.length) return [];
+  const roles = rolesResult.data ?? [];
+  const alertPermissionRoleIds = new Set((alertPermissionsResult.data ?? []).map((item) => item.role_id));
+  const medicalPermissionRoleIds = new Set((medicalPermissionsResult.data ?? []).map((item) => item.role_id));
+  const membershipUsers = new Set((membershipsResult.data ?? []).map((item) => item.user_id));
+  const roleNames = new Map(roles.map((role) => [role.id, role.name.trim().toLowerCase()]));
+  const systemDefaultRoleIds = new Set(roles.filter((role) => role.is_system_default).map((role) => role.id));
+  const eligibleUserIds = new Set<string>();
 
-  const { data: memberships, error: membershipError } = await admin
-    .from("company_memberships")
-    .select("user_id")
-    .eq("company_id", companyId)
-    .eq("status", "active")
-    .in("role_id", roleIds);
-  if (membershipError) throw membershipError;
+  for (const { user_id, role_id } of membershipsResult.data ?? []) {
+    const roleName = roleNames.get(role_id) ?? "";
+    if (
+      user_id === chairmanId ||
+      user_id === bookingUserId ||
+      roleName === "supervisor" ||
+      (
+        ["doctor", "medical examiner"].includes(roleName) &&
+        systemDefaultRoleIds.has(role_id) &&
+        medicalPermissionRoleIds.has(role_id)
+      )
+    ) {
+      eligibleUserIds.add(user_id);
+    }
 
-  const recipientEmails = await Promise.all((memberships ?? []).map(async ({ user_id }) => {
+    if (alertPermissionRoleIds.has(role_id)) eligibleUserIds.add(user_id);
+  }
+
+  if (chairmanId && membershipUsers.has(chairmanId)) eligibleUserIds.add(chairmanId);
+  if (bookingUserId && membershipUsers.has(bookingUserId)) eligibleUserIds.add(bookingUserId);
+
+  const recipientEmails = await Promise.all([...eligibleUserIds].map(async (user_id) => {
     const { data, error } = await admin.auth.admin.getUserById(user_id);
     if (error) throw error;
     return data.user?.email ?? null;
@@ -151,6 +199,7 @@ async function getAccess() {
     companyName: company?.name ?? "Kilax Smart Recruit",
     canViewMedical,
     canUpdateMedical,
+    chairmanId: company?.primary_admin_user_id ?? null,
     branchId: membership.branch_id ?? null,
     isMainBranchUser,
   };
@@ -275,7 +324,7 @@ export async function POST(request: Request) {
       // Fetch appointment + candidate
       const { data: appt, error: apptError } = await access.admin
         .from("medical_appointments")
-        .select("id, company_id, candidate_id, candidate_first_name, candidate_last_name, status, exam_result")
+        .select("id, company_id, candidate_id, candidate_first_name, candidate_last_name, status, exam_result, created_by")
         .eq("id", appointmentId)
         .eq("company_id", access.companyId)
         .maybeSingle();
@@ -318,13 +367,10 @@ export async function POST(request: Request) {
 
         if (candidate) {
           const existingDetails = (candidate.details ?? {}) as Record<string, unknown>;
-          const newStage = examResult === "fit" ? "Medical Examination" : "Medical Examination";
+          const newStage = "Medical Examination";
           const updatedDetails: Record<string, unknown> = {
             ...existingDetails,
             stage: newStage,
-            medicalExamResult: examResult,
-            medicalExamAt: now,
-            medicalExamNotes: examNotes || null,
           };
 
           await access.admin
@@ -336,8 +382,13 @@ export async function POST(request: Request) {
       }
 
       // ── Send urgent alert if unfit ─────────────────────────────────────────
-      if (examResult === "unfit") {
-        const recipients = await collectAlertRecipients(access.admin, access.companyId);
+      if (examResult === "unfit" && appt.exam_result !== "unfit") {
+        const recipients = await collectAlertRecipients(
+          access.admin,
+          access.companyId,
+          access.chairmanId,
+          appt.created_by,
+        );
 
         if (recipients.length) {
           const subject = `🚨 URGENT: Medically Unfit – ${candidateName}`;
@@ -345,16 +396,16 @@ export async function POST(request: Request) {
             "⚠️  CRITICAL MEDICAL ALERT",
             "=====================================",
             `Candidate:       ${candidateName}`,
-            `Appointment ID:  ${appointmentId}`,
             `Examined at:     ${new Date(now).toLocaleString()}`,
             `Result:          MEDICALLY UNFIT`,
-            examNotes ? `Doctor's Notes:  ${examNotes}` : "",
             "",
-            "Immediate action is required. Please review this candidate's file and take the necessary steps.",
+            "Please coordinate the appropriate next steps with the authorized medical examiner.",
             "",
             `— ${access.companyName} Medical System`,
           ].filter((line) => line !== undefined).join("\n");
 
+          const safeCandidateName = escapeHtml(candidateName);
+          const safeCompanyName = escapeHtml(access.companyName);
           const html = `
 <!DOCTYPE html>
 <html>
@@ -381,7 +432,7 @@ export async function POST(request: Request) {
                    style="background:#0f172a;border-radius:6px;padding:16px;margin-bottom:20px;">
               <tr>
                 <td style="color:#94a3b8;font-size:12px;padding:4px 0;width:140px;">Candidate</td>
-                <td style="color:#f1f5f9;font-size:14px;font-weight:700;padding:4px 0;">${candidateName}</td>
+                <td style="color:#f1f5f9;font-size:14px;font-weight:700;padding:4px 0;">${safeCandidateName}</td>
               </tr>
               <tr>
                 <td style="color:#94a3b8;font-size:12px;padding:4px 0;">Examined at</td>
@@ -391,22 +442,17 @@ export async function POST(request: Request) {
                 <td style="color:#94a3b8;font-size:12px;padding:4px 0;">Result</td>
                 <td style="color:#ef4444;font-size:14px;font-weight:700;padding:4px 0;">UNFIT</td>
               </tr>
-              ${examNotes ? `
-              <tr>
-                <td style="color:#94a3b8;font-size:12px;padding:4px 0;vertical-align:top;">Doctor's Notes</td>
-                <td style="color:#fbbf24;font-size:13px;padding:4px 0;">${examNotes.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</td>
-              </tr>` : ""}
             </table>
             <p style="font-size:13px;color:#94a3b8;margin:0;">
-              Please log in to <strong style="color:#f1f5f9;">${access.companyName}</strong>
-              and review the candidate file immediately.
+              Please coordinate the appropriate next steps with the authorized medical examiner at
+              <strong style="color:#f1f5f9;">${safeCompanyName}</strong>.
             </p>
           </td>
         </tr>
         <tr>
           <td style="padding:12px 24px;border-top:1px solid #334155;">
             <p style="margin:0;font-size:11px;color:#475569;">
-              This is an automated alert from ${access.companyName} · Kilax Smart Recruit Medical System.
+              This is an automated alert from ${safeCompanyName} · Kilax Smart Recruit Medical System.
               Do not reply to this email.
             </p>
           </td>

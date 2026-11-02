@@ -84,7 +84,7 @@ const previews = [
     title: "Turn everyday activity into useful reports.",
 
     description:
-      "Review staff, agent, supplier, contractor, recruitment, and finance activity with date filters and period comparisons.",
+      "Review staff, agent, partner, contractor, recruitment, and finance activity with date filters and period comparisons.",
 
     icon: BarChart3,
 
@@ -411,7 +411,7 @@ export default function MarketingLanding() {
             {
               icon: BriefcaseBusiness,
               title: "Connected operations",
-              text: "Coordinate staff, agents, suppliers, and contractors.",
+              text: "Coordinate staff, agents, partners, and contractors.",
             },
 
             {

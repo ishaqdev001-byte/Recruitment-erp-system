@@ -80,12 +80,6 @@ export async function POST(request: Request) {
       .select("company_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
     if (membershipError || !membership) return NextResponse.json({ error: "Active company membership not found." }, { status: 403, headers });
 
-    const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
-      requested_company_id: membership.company_id,
-      requested_permission: "candidates.edit",
-    });
-    if (permissionError || !allowed) return NextResponse.json({ error: "You do not have permission to advance candidate stages." }, { status: 403, headers });
-
     const body = await request.json().catch(() => null) as {
       action?: unknown;
       candidateIds?: unknown;
@@ -94,13 +88,37 @@ export async function POST(request: Request) {
       wakalaReceived?: unknown;
       molReceived?: unknown;
       enjaz?: unknown;
-      // ticketing fields
       ticketNumber?: unknown;
       bookingReference?: unknown;
       travelDate?: unknown;
       travelTime?: unknown;
       connectingFlights?: unknown;
     } | null;
+    const requiredPermission = body?.action === "submit-to-project"
+      ? "candidates.project_submit"
+      : body?.action === "save-additional-stages"
+        || body?.action === "record-visa-received"
+        || body?.action === "record-ticketing"
+        ? "candidates.stage"
+        : null;
+    if (!requiredPermission) {
+      return NextResponse.json({ error: "Choose a valid candidate stage action." }, { status: 400, headers });
+    }
+
+    const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
+      requested_company_id: membership.company_id,
+      requested_permission: requiredPermission,
+    });
+    if (permissionError) {
+      console.error("Candidate workflow permission lookup failed", permissionError);
+      return NextResponse.json({ error: "Unable to verify your candidate workflow permission." }, { status: 503, headers });
+    }
+    if (!allowed) {
+      const message = requiredPermission === "candidates.project_submit"
+        ? "You do not have permission to submit candidates to projects."
+        : "You do not have permission to update candidate stages.";
+      return NextResponse.json({ error: message }, { status: 403, headers });
+    }
 
     const candidateIds = Array.isArray(body?.candidateIds) ? [...new Set(body.candidateIds)] : [];
     if (!candidateIds.length || candidateIds.length > 100 || candidateIds.some((id) => typeof id !== "string" || !isUuid(id))) {

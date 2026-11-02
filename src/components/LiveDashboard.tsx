@@ -12,6 +12,7 @@ import {
 
 import type { View, WorkspaceRole } from "../App"
 import { isRecruitmentAgentRole } from "@/lib/role-access-settings"
+import { fetchClientCached } from "@/lib/client-api-cache"
 
 type VisaTrend = {
   months: {
@@ -256,11 +257,17 @@ export default function LiveDashboard({
 
     setError("")
 
-    fetch(`/api/workspace/summary?companyId=${encodeURIComponent(companyId)}`, {
-      cache: "no-store",
-
-      signal: controller.signal,
-    })
+    fetchClientCached(
+      `/api/workspace/summary?companyId=${encodeURIComponent(companyId)}`,
+      {
+        cache: "no-store",
+        signal: controller.signal,
+      },
+      {
+        scopeKey: `${companyId}:${role}:${[...permissions].sort().join(",")}`,
+        ttlMs: 15_000,
+      },
+    )
 
       .then(async (response) => {
         const payload = await response.json()
@@ -296,7 +303,7 @@ export default function LiveDashboard({
 
       controller.abort()
     }
-  }, [companyId, permissions])
+  }, [companyId, permissions, role])
 
   const metrics = [
     {

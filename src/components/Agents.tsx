@@ -46,7 +46,11 @@ function candidateMetrics(agent: AgentRecord, candidates: CandidateRecord[]) {
   return { assigned, deployed, withdrawn, cancelled, stages };
 }
 
-export default function Agents() {
+export default function Agents({
+  canInviteAgents,
+}: {
+  canInviteAgents: boolean;
+}) {
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [roles, setRoles] = useState<RoleRecord[]>([]);
   const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
@@ -278,14 +282,16 @@ export default function Agents() {
           <h1 id="agents-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Agents</h1>
           <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>{loading ? "Loading company agents" : `${agents.length} agents in this company`}</p>
         </div>
-        <button type="button" onClick={() => {
-          if (!recruitmentAgentRole) {
-            setError("Recruitment Agent role is missing. Apply the latest Supabase migration, then reload this page.");
-            return;
-          }
-          setError("");
-          setShowNew(true);
-        }} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />Add agent</button>
+        {canInviteAgents && (
+          <button type="button" onClick={() => {
+            if (!recruitmentAgentRole) {
+              setError("Recruitment Agent role is missing. Apply the latest Supabase migration, then reload this page.");
+              return;
+            }
+            setError("");
+            setShowNew(true);
+          }} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />Add agent</button>
+        )}
       </header>
 
       <div className="grid grid-cols-1 border-b sm:grid-cols-3" style={{ borderColor: "var(--border)" }}>

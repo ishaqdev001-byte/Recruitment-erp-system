@@ -184,7 +184,7 @@ function ExamResultModal({
         {result === "unfit" && (
           <div className="mb-4 border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs" style={{ color: "#ef4444" }}>
             <AlertTriangle size={13} className="mr-1 inline" aria-hidden="true" />
-            An urgent alert email will be sent to the Supervisor, General Manager, and CEO.
+            An urgent alert will be sent to authorized medical examiners.
           </div>
         )}
 
@@ -342,7 +342,7 @@ export default function MedicalManagement() {
       });
     }
     if (updates.examResult === "unfit") {
-      setNotice("Examination result saved. Urgent alert sent to Supervisor, GM, and CEO.");
+      setNotice("Examination result saved. An alert was sent to authorized medical examiners.");
     } else {
       setNotice("Examination result saved successfully.");
     }
@@ -578,7 +578,7 @@ export default function MedicalManagement() {
                         <div className="col-span-2 lg:col-span-4 flex items-center gap-2 rounded border border-red-500/30 bg-red-500/10 px-3 py-2">
                           <XCircle size={14} style={{ color: "#ef4444" }} aria-hidden="true" />
                           <span className="text-xs font-700" style={{ color: "#ef4444" }}>
-                            Declared Medically Unfit — Alert sent to Supervisor, GM, and CEO
+                            Declared Medically Unfit — alert sent to authorized medical examiners
                           </span>
                         </div>
                       )}

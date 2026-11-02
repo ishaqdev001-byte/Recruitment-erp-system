@@ -70,6 +70,9 @@ export interface Candidate {
   contracts: string;
   contractManager: string;
   branch: string;
+  branchId?: string;
+  residenceCountry?: string;
+  residenceState?: string;
   verification: string;
   photo: string;
   nationality?: string;
@@ -96,12 +99,187 @@ const stageColor: Record<string, string> = {
   Travelled: "#10b981",
 };
 
+function candidateFromRecord(value: Record<string, unknown>): Candidate {
+  const details = value.details && typeof value.details === "object" && !Array.isArray(value.details)
+    ? value.details as Record<string, unknown>
+    : {};
+  const text = (key: string) => typeof details[key] === "string" ? details[key] as string : "";
+  const list = (key: string) => Array.isArray(details[key])
+    ? details[key].filter((entry): entry is string => typeof entry === "string")
+    : [];
+  return {
+    id: typeof value.id === "string" ? value.id : crypto.randomUUID(),
+    fileNumber: typeof value.file_number === "string" ? value.file_number : "",
+    firstName: typeof value.first_name === "string" ? value.first_name : "",
+    lastName: typeof value.last_name === "string" ? value.last_name : "",
+    otherNames: text("otherNames"),
+    phone: typeof value.phone === "string" ? value.phone : "",
+    secondaryPhone: text("secondaryPhone"),
+    otherPhone: text("otherPhone"),
+    dob: typeof value.date_of_birth === "string" ? value.date_of_birth : "",
+    age: typeof details.age === "number" ? details.age : 0,
+    gender: text("gender"),
+    maritalStatus: text("maritalStatus"),
+    religion: typeof value.religion === "string" ? value.religion : text("religion"),
+    abroadStatus: text("abroadStatus"),
+    abroadExperience: text("abroadExperience"),
+    source: text("source"),
+    agent: typeof value.agent_name === "string" ? value.agent_name : "",
+    agentUserId: typeof value.agent_user_id === "string" ? value.agent_user_id : undefined,
+    mediaChannel: list("mediaChannel"),
+    nin: text("nin"),
+    passportNumber: text("passportNumber"),
+    passportIssue: text("passportIssue"),
+    passportExpiry: text("passportExpiry"),
+    passportStatus: text("passportStatus") || "Available",
+    passportBranch: text("passportBranch"),
+    passportStorageLocation: text("passportStorageLocation"),
+    preferredCities: text("preferredCities"),
+    placeOfBirth: typeof value.place_of_birth === "string" ? value.place_of_birth : "",
+    physicalAddress: text("physicalAddress"),
+    district: text("district"),
+    county: text("county"),
+    subCounty: text("subCounty"),
+    parish: text("parish"),
+    residenceCountry: text("residenceCountry"),
+    residenceState: text("residenceState"),
+    fatherName: typeof value.father_name === "string" ? value.father_name : "",
+    fatherPhone: text("fatherPhone"),
+    fatherStatus: text("fatherStatus"),
+    motherName: typeof value.mother_name === "string" ? value.mother_name : "",
+    motherPhone: text("motherPhone"),
+    motherStatus: text("motherStatus"),
+    kinFirstName: text("kinFirstName"),
+    kinLastName: text("kinLastName"),
+    kinPhone: text("kinPhone"),
+    kinRelationship: text("kinRelationship"),
+    emergencyFirstName: text("emergencyFirstName"),
+    emergencyLastName: text("emergencyLastName"),
+    emergencyPhone: text("emergencyPhone"),
+    emergencyRelationship: text("emergencyRelationship"),
+    jobOfInterest: list("jobOfInterest"),
+    preferredCountries: list("preferredCountries"),
+    assignedContracts: text("assignedContracts"),
+    stage: text("stage") || "Registration",
+    travelStatus: text("travelStatus"),
+    visaStatus: text("visaStatus"),
+    acceptance: text("acceptance"),
+    contracts: text("contracts"),
+    contractManager: text("contractManager"),
+    branch: text("branch"),
+    branchId: typeof value.branch_id === "string" ? value.branch_id : undefined,
+    verification: text("verification"),
+    photo: text("photo"),
+    nationality: typeof value.nationality === "string" ? value.nationality : text("nationality"),
+    educationQualification: text("educationQualification"),
+    educationInstitution: text("educationInstitution"),
+    educationYearCompleted: text("educationYearCompleted"),
+    educationField: text("educationField"),
+    lastEmployer: text("lastEmployer"),
+    previousJobTitle: text("previousJobTitle"),
+    employmentFrom: text("employmentFrom"),
+    employmentTo: text("employmentTo"),
+    employmentDuties: text("employmentDuties"),
+    keySkills: text("keySkills"),
+    languagesSpoken: text("languagesSpoken"),
+    certifications: text("certifications"),
+    recruiterNotes: text("recruiterNotes"),
+  };
+}
+
+function candidatePayload(candidate: Candidate) {
+  return {
+    fileNumber: candidate.fileNumber,
+    firstName: candidate.firstName,
+    lastName: candidate.lastName,
+    phone: candidate.phone,
+    dob: candidate.dob || null,
+    placeOfBirth: candidate.placeOfBirth,
+    nationality: candidate.nationality ?? "",
+    agent: candidate.agent,
+    agentUserId: candidate.agentUserId ?? "",
+    branchId: candidate.branchId ?? "",
+    religion: candidate.religion,
+    fatherName: candidate.fatherName,
+    motherName: candidate.motherName,
+    position: candidate.jobOfInterest.join(", "),
+    details: {
+      otherNames: candidate.otherNames,
+      secondaryPhone: candidate.secondaryPhone,
+      otherPhone: candidate.otherPhone,
+      age: candidate.age,
+      gender: candidate.gender,
+      maritalStatus: candidate.maritalStatus,
+      religion: candidate.religion,
+      abroadStatus: candidate.abroadStatus,
+      abroadExperience: candidate.abroadExperience,
+      source: candidate.source,
+      nationality: candidate.nationality ?? "",
+      mediaChannel: candidate.mediaChannel,
+      nin: candidate.nin,
+      passportNumber: candidate.passportNumber,
+      passportIssue: candidate.passportIssue,
+      passportExpiry: candidate.passportExpiry,
+      passportStatus: candidate.passportStatus,
+      passportBranch: candidate.passportBranch,
+      passportStorageLocation: candidate.passportStorageLocation,
+      preferredCities: candidate.preferredCities,
+      physicalAddress: candidate.physicalAddress,
+      residenceCountry: candidate.residenceCountry ?? "",
+      residenceState: candidate.residenceState ?? "",
+      district: candidate.district,
+      county: candidate.county,
+      subCounty: candidate.subCounty,
+      parish: candidate.parish,
+      fatherPhone: candidate.fatherPhone,
+      fatherStatus: candidate.fatherStatus,
+      motherPhone: candidate.motherPhone,
+      motherStatus: candidate.motherStatus,
+      kinFirstName: candidate.kinFirstName,
+      kinLastName: candidate.kinLastName,
+      kinPhone: candidate.kinPhone,
+      kinRelationship: candidate.kinRelationship,
+      emergencyFirstName: candidate.emergencyFirstName,
+      emergencyLastName: candidate.emergencyLastName,
+      emergencyPhone: candidate.emergencyPhone,
+      emergencyRelationship: candidate.emergencyRelationship,
+      jobOfInterest: candidate.jobOfInterest,
+      preferredCountries: candidate.preferredCountries,
+      branch: candidate.branch,
+      stage: candidate.stage,
+      travelStatus: candidate.travelStatus,
+      visaStatus: candidate.visaStatus,
+      acceptance: candidate.acceptance,
+      contracts: candidate.contracts,
+      contractManager: candidate.contractManager,
+      verification: candidate.verification,
+      photo: candidate.photo,
+      educationQualification: candidate.educationQualification ?? "",
+      educationInstitution: candidate.educationInstitution ?? "",
+      educationYearCompleted: candidate.educationYearCompleted ?? "",
+      educationField: candidate.educationField ?? "",
+      lastEmployer: candidate.lastEmployer ?? "",
+      previousJobTitle: candidate.previousJobTitle ?? "",
+      employmentFrom: candidate.employmentFrom ?? "",
+      employmentTo: candidate.employmentTo ?? "",
+      employmentDuties: candidate.employmentDuties ?? "",
+      keySkills: candidate.keySkills ?? "",
+      languagesSpoken: candidate.languagesSpoken ?? "",
+      certifications: candidate.certifications ?? "",
+      recruiterNotes: candidate.recruiterNotes ?? "",
+    },
+  };
+}
+
 export default function Candidates() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [canViewFinance, setCanViewFinance] = useState(false);
   const [canViewActivityLogs, setCanViewActivityLogs] = useState(false);
+  const [canManageCandidateSources, setCanManageCandidateSources] = useState(false);
+  const [canManagePassportStatus, setCanManagePassportStatus] = useState(false);
+  const [isAgent, setIsAgent] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawerCandidate, setDrawerCandidate] = useState<Candidate | null>(null);
@@ -120,26 +298,14 @@ export default function Candidates() {
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Unable to load candidates.");
-        const records = payload.candidates as { id: string; file_number: string; first_name: string; last_name: string }[];
+        const records = payload.candidates as Record<string, unknown>[];
         if (cancelled) return;
-        setCandidates(records.map((record) => ({
-          id: record.id,
-          fileNumber: record.file_number,
-          firstName: record.first_name,
-          lastName: record.last_name,
-          otherNames: "", phone: "", secondaryPhone: "", otherPhone: "", dob: "", age: 0,
-          gender: "", maritalStatus: "", religion: "", abroadStatus: "", abroadExperience: "",
-          source: "", agent: "", mediaChannel: [], nin: "", passportNumber: "", passportIssue: "",
-          passportExpiry: "", passportStatus: "Available", passportBranch: "", passportStorageLocation: "", preferredCities: "", placeOfBirth: "", physicalAddress: "", district: "",
-          county: "", subCounty: "", parish: "", fatherName: "", fatherPhone: "", fatherStatus: "",
-          motherName: "", motherPhone: "", motherStatus: "", kinFirstName: "", kinLastName: "",
-          kinPhone: "", kinRelationship: "", emergencyFirstName: "", emergencyLastName: "",
-          emergencyPhone: "", emergencyRelationship: "", jobOfInterest: [], preferredCountries: [],
-          assignedContracts: "", stage: "", travelStatus: "", visaStatus: "", acceptance: "",
-          contracts: "", contractManager: "", branch: "", verification: "", photo: "",
-        })));
+        setCandidates(records.map(candidateFromRecord));
         setCanViewFinance(Boolean(payload.permissions?.canViewFinance));
         setCanViewActivityLogs(Boolean(payload.permissions?.canViewActivityLogs));
+        setCanManageCandidateSources(Boolean(payload.permissions?.canManageCandidateSources));
+        setCanManagePassportStatus(Boolean(payload.permissions?.canManagePassportStatus));
+        setIsAgent(Boolean(payload.permissions?.isAgent));
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoadError(error instanceof Error ? error.message : "Unable to load candidates.");
@@ -166,6 +332,7 @@ export default function Candidates() {
     nin: "", passportNumber: "", passportIssue: "", passportExpiry: "", passportStatus: "Available", passportBranch: "", passportStorageLocation: "",
     preferredCities: "",
     placeOfBirth: "", physicalAddress: "", district: "", county: "", subCounty: "", parish: "",
+    residenceCountry: "", residenceState: "", nationality: "", branchId: "",
     fatherName: "", fatherPhone: "", fatherStatus: "", motherName: "", motherPhone: "", motherStatus: "",
     kinFirstName: "", kinLastName: "", kinPhone: "", kinRelationship: "",
     emergencyFirstName: "", emergencyLastName: "", emergencyPhone: "", emergencyRelationship: "",
@@ -174,11 +341,44 @@ export default function Candidates() {
     acceptance: "Yes", contracts: "—", contractManager: "—", branch: "", verification: "Pending", photo: "",
   });
 
-  const handleSave = (updated: Candidate) => {
+  const handleSave = async (updated: Candidate) => {
+    const values = candidatePayload(updated);
+    const requestBody = isNew
+      ? values
+      : {
+          file_number: values.fileNumber,
+          first_name: values.firstName,
+          last_name: values.lastName,
+          phone: values.phone,
+          date_of_birth: values.dob,
+          place_of_birth: values.placeOfBirth,
+          agent_name: values.agent,
+          agentUserId: values.agentUserId,
+          branchId: values.branchId,
+          religion: values.religion,
+          nationality: values.nationality,
+          father_name: values.fatherName,
+          mother_name: values.motherName,
+          position: values.position,
+          details: values.details,
+        };
+    const response = await fetch(
+      isNew ? "/api/candidates" : `/api/candidates/${encodeURIComponent(updated.id)}`,
+      {
+        method: isNew ? "POST" : "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      },
+    );
+    const payload = await response.json() as { candidate?: Record<string, unknown>; error?: string };
+    if (!response.ok || !payload.candidate) {
+      throw new Error(payload.error ?? "Unable to save candidate.");
+    }
+    const savedCandidate = candidateFromRecord(payload.candidate);
     if (isNew) {
-      setCandidates((prev) => [updated, ...prev]);
+      setCandidates((prev) => [savedCandidate, ...prev]);
     } else {
-      setCandidates((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      setCandidates((prev) => prev.map((c) => (c.id === savedCandidate.id ? savedCandidate : c)));
     }
     setEditingId(null);
     setIsNew(false);
@@ -195,10 +395,13 @@ export default function Candidates() {
       <CandidateDetail
         candidate={editing}
         isNew={isNew}
+        isAgent={isAgent}
         onSave={handleSave}
         onBack={() => { setEditingId(null); setIsNew(false); }}
         canViewFinance={canViewFinance}
         canViewActivityLogs={canViewActivityLogs}
+        canManageSources={canManageCandidateSources}
+        canManagePassportStatus={canManagePassportStatus}
       />
     );
   }

@@ -22,6 +22,8 @@ interface CandidateRecord {
 
   source_row_number: number | null
 
+  branch_id?: string | null
+
   file_number: string
 
   first_name: string
@@ -227,6 +229,10 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
 
     physicalAddress: text("physicalAddress"),
 
+    residenceCountry: text("residenceCountry"),
+
+    residenceState: text("residenceState"),
+
     district: text("district"),
 
     county: text("county"),
@@ -284,6 +290,8 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
     contractManager: text("contractManager"),
 
     branch: text("branch"),
+
+    branchId: record.branch_id ?? "",
 
     verification: text("verification") || "Pending",
 
@@ -488,6 +496,8 @@ export default function CandidateRoster({
     canRegisterCandidates?: boolean
 
     canManageCandidateSources?: boolean
+
+    canManagePassportStatus?: boolean
 
     isAgent?: boolean
 
@@ -1209,6 +1219,7 @@ export default function CandidateRoster({
       placeOfBirth,
       agent,
       religion,
+      branchId,
 
       agentUserId,
       nationality,
@@ -1255,9 +1266,11 @@ export default function CandidateRoster({
 
       jobOfInterest,
 
+      branchId,
+
       position: jobOfInterest.join(", "),
 
-      details: { ...details, jobOfInterest },
+      details: { ...details, nationality: nationality ?? "", jobOfInterest },
 
       ...(registrationInquiryId ? { inquiryId: registrationInquiryId } : {}),
 
@@ -1337,6 +1350,7 @@ export default function CandidateRoster({
           .map((person) => person.display_name)}
         canViewFinance={canViewFinance}
         canManageSources={permissions?.canManageCandidateSources}
+        canManagePassportStatus={permissions?.canManagePassportStatus}
         canViewActivityLogs={canViewActivityLogs}
         canViewActivityByRole={permissions?.canViewActivityByRole || false}
         onBack={() => {

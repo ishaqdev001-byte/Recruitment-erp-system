@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Sparkles, X } from "lucide-react";
 import type { Candidate } from "./Candidates";
 import { SearchableSelect } from "./SearchableSelect";
+import { getCountries, getCountryByShort, getStatesByShort } from "countrycitystatejson/client";
+import { isPassportNumberValid, normalizePassportNumber, passportNumberRule } from "@/lib/passport-number";
 
 interface Props {
   candidate: Candidate;
@@ -14,13 +16,14 @@ interface Props {
   canManageSources?: boolean;
   canViewActivityLogs?: boolean;
   canViewActivityByRole?: boolean; // Chairman, GM, Supervisor visibility
+  canManagePassportStatus?: boolean;
 }
 
 function Field({
-  label, value, onChange, type = "text", required = false, placeholder = "",
+  label, value, onChange, type = "text", required = false, placeholder = "", readOnly = false, invalid = false,
 }: {
   label: string; value: string; onChange: (v: string) => void;
-  type?: string; required?: boolean; placeholder?: string;
+  type?: string; required?: boolean; placeholder?: string; readOnly?: boolean; invalid?: boolean;
 }) {
   return (
     <div>
@@ -31,20 +34,22 @@ function Field({
         type={type}
         required={required}
         value={value}
+        readOnly={readOnly}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        aria-invalid={invalid || undefined}
         className="w-full px-3 py-2 text-sm rounded border outline-none transition-colors"
-        style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
+        style={{ background: "var(--secondary)", borderColor: invalid ? "#dc2626" : "var(--border)", color: "var(--foreground)", ...(readOnly ? { cursor: "not-allowed", opacity: 0.8 } : {}) }}
       />
     </div>
   );
 }
 
 function SelectField({
-  label, value, onChange, options, required = false,
+  label, value, onChange, options, required = false, invalid = false, disabled = false,
 }: {
   label: string; value: string; onChange: (v: string) => void;
-  options: string[]; required?: boolean;
+  options: string[]; required?: boolean; invalid?: boolean; disabled?: boolean;
 }) {
   return (
     <div>
@@ -54,9 +59,11 @@ function SelectField({
       <select
         value={value}
         required={required}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
+        aria-invalid={invalid || undefined}
         className="w-full px-3 py-2 text-sm rounded border outline-none"
-        style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
+        style={{ background: "var(--secondary)", borderColor: invalid ? "#dc2626" : "var(--border)", color: "var(--foreground)" }}
       >
         <option value="">Select option</option>
         {options.map((o) => <option key={o}>{o}</option>)}
@@ -66,10 +73,10 @@ function SelectField({
 }
 
 function MultiField({
-  label, value, onChange, options, required = false,
+  label, value, onChange, options, required = false, invalid = false,
 }: {
   label: string; value: string[]; onChange: (v: string[]) => void;
-  options: string[]; required?: boolean;
+  options: string[]; required?: boolean; invalid?: boolean;
 }) {
   const toggle = (opt: string) =>
     onChange(value.includes(opt) ? value.filter((v) => v !== opt) : [...value, opt]);
@@ -80,7 +87,7 @@ function MultiField({
       </label>
       <div
         className="w-full min-h-10 px-2 py-1.5 rounded border flex flex-wrap gap-1 items-start"
-        style={{ background: "var(--secondary)", borderColor: "var(--border)" }}
+        style={{ background: "var(--secondary)", borderColor: invalid ? "#dc2626" : "var(--border)" }}
       >
         {value.map((v) => (
           <span key={v} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-600"
@@ -111,10 +118,30 @@ function SectionHeader({ title }: { title: string }) {
   );
 }
 
-const allTabs = ["Personal", "Passport & Docs", "Residence", "Parents & Kin", "Job Info", "Education & Skills", "Finance", "AI Tools", "Activity"] as const;
+const allTabs = ["Personal", "Passport Info", "Residence", "Parents & Kin", "Job Info", "Education & Skills", "Finance", "AI Tools", "Activity"] as const;
 type Tab = typeof allTabs[number];
+const countryMetadata = getCountries();
+const countryOptions = countryMetadata.flatMap((country) => {
+  const name = country.name?.trim();
+  if (!name) return [];
+  return [{ value: name, label: name, searchText: country.shortName?.trim() || name }];
+});
 
 type CandidateSourceOption = { id: string; source: string };
+type BranchOption = { id: string; name: string };
+type CandidateStageEvent = {
+  id: string;
+  event_type: "stage" | "medical_appointment" | "medical_result";
+  label: string;
+  occurred_at: string;
+  metadata: Record<string, unknown>;
+};
+type PassportCheck = {
+  passportNumber: string;
+  status: "idle" | "checking" | "valid" | "duplicate" | "invalid" | "error";
+  registeredBy?: string;
+  error?: string;
+};
 type CandidateFinancePayload = {
   summary: {
     totalInvoiced: number;
@@ -127,16 +154,37 @@ type CandidateFinancePayload = {
   payments: { id: string; invoice_id: string; amount: number; paid_at: string }[];
 };
 
-export default function CandidateDetail({ candidate, isNew, isAgent = false, onSave, onBack, agentOptions = [], canViewFinance = false, canManageSources = false, canViewActivityLogs = false, canViewActivityByRole = false }: Props) {
-  // Agents registering candidates only see: Personal, Job Info, Parents & Kin (for next of kin)
+function calculateAge(dateOfBirth: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) return null;
+  const [year, month, day] = dateOfBirth.split("-").map(Number);
+  const birthDate = new Date(year, month - 1, day);
+  const today = new Date();
+  if (
+    birthDate.getFullYear() !== year ||
+    birthDate.getMonth() !== month - 1 ||
+    birthDate.getDate() !== day ||
+    birthDate > new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  ) return null;
+
+  let age = today.getFullYear() - year;
+  if (today.getMonth() < month - 1 || (today.getMonth() === month - 1 && today.getDate() < day)) age -= 1;
+  return age;
+}
+
+export default function CandidateDetail({ candidate, isNew, isAgent = false, onSave, onBack, agentOptions = [], canViewFinance = false, canManageSources = false, canViewActivityLogs = false, canViewActivityByRole = false, canManagePassportStatus = false }: Props) {
+  // Agents registering candidates see the required personal, passport, kin, and job information.
   // Staff completing registration see all tabs based on permissions
-  const agentRegisteringTabs = ["Personal", "Job Info", "Parents & Kin"] as const;
-  const staffViewTabs = ["Personal", "Passport & Docs", "Residence", "Parents & Kin", "Job Info", "Education & Skills", ...(canViewFinance ? ["Finance"] : []), "AI Tools", ...(canViewActivityLogs || canViewActivityByRole ? ["Activity"] : [])] as const;
+  const agentRegisteringTabs = ["Personal", "Passport Info", "Residence", "Parents & Kin", "Job Info"] as const;
+  const staffViewTabs = ["Personal", "Passport Info", "Residence", "Parents & Kin", "Job Info", "Education & Skills", ...(!isNew && canViewFinance ? ["Finance"] : []), ...(!isNew ? ["AI Tools"] : []), ...(!isNew && (canViewActivityLogs || canViewActivityByRole) ? ["Activity"] : [])] as const;
   const availableTabs = (isAgent && isNew ? agentRegisteringTabs : staffViewTabs) as unknown as Tab[];
+  const registrationContentSections = (isAgent && isNew
+    ? ["Personal", "Passport Info", "Residence", "Parents & Kin", "Job Info"]
+    : ["Personal", "Passport Info", "Residence", "Parents & Kin", "Job Info", "Education & Skills"]) as Tab[];
   
   const [form, setForm] = useState<Candidate>({ ...candidate });
   const [activeTab, setActiveTab] = useState<Tab>(availableTabs[0]);
   const [viewMode, setViewMode] = useState<"details" | "content">("details");
+  const [contentSectionIndex, setContentSectionIndex] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [candidateSources, setCandidateSources] = useState<CandidateSourceOption[]>([]);
@@ -146,6 +194,15 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
   const [financeData, setFinanceData] = useState<CandidateFinancePayload | null>(null);
   const [financeLoading, setFinanceLoading] = useState(false);
   const [financeError, setFinanceError] = useState("");
+  const [passportCheck, setPassportCheck] = useState<PassportCheck>({ passportNumber: "", status: "idle" });
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [branchError, setBranchError] = useState("");
+  const [residenceStates, setResidenceStates] = useState<string[]>([]);
+  const [residenceCities, setResidenceCities] = useState<string[]>([]);
+  const [locationError, setLocationError] = useState("");
+  const [showValidationErrors, setShowValidationErrors] = useState(false);
+  const [stageEvents, setStageEvents] = useState<CandidateStageEvent[]>([]);
+  const [stageEventsError, setStageEventsError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -164,6 +221,58 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/branches?purpose=candidate-registration", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json() as { branches?: BranchOption[]; error?: string };
+        if (!response.ok) throw new Error(payload.error ?? "Unable to load company branches.");
+        if (!cancelled) setBranches(payload.branches ?? []);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setBranchError(error instanceof Error ? error.message : "Unable to load company branches.");
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const country = countryMetadata.find((option) => option.name === form.residenceCountry);
+    if (!country) {
+      setResidenceStates([]);
+      setResidenceCities([]);
+      return;
+    }
+
+    setResidenceStates(getStatesByShort(country.shortName) ?? []);
+    setLocationError("");
+    let cancelled = false;
+    void getCountryByShort(country.shortName).then((record) => {
+      if (cancelled) return;
+      const countryCities = form.residenceState
+        ? record?.states[form.residenceState] ?? []
+        : Object.values(record?.states ?? {}).flat();
+      setResidenceCities([...new Set(countryCities.map((city) => city.name))].sort((a, b) => a.localeCompare(b)));
+    }).catch((error: unknown) => {
+      if (!cancelled) setLocationError(error instanceof Error ? error.message : "Unable to load locations for this country.");
+    });
+    return () => { cancelled = true; };
+  }, [form.residenceCountry, form.residenceState]);
+
+  useEffect(() => {
+    if (isNew) return;
+    let cancelled = false;
+    fetch(`/api/candidates/${encodeURIComponent(form.id)}/status-history`, { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json() as { events?: CandidateStageEvent[]; error?: string };
+        if (!response.ok) throw new Error(payload.error ?? "Unable to load processing history.");
+        if (!cancelled) setStageEvents(payload.events ?? []);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setStageEventsError(error instanceof Error ? error.message : "Unable to load processing history.");
+      });
+    return () => { cancelled = true; };
+  }, [form.id, isNew]);
 
   useEffect(() => {
     if (!canViewFinance || isNew) return;
@@ -188,8 +297,66 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
     };
   }, [canViewFinance, form.id, isNew]);
 
+  const normalizedPassportNumber = normalizePassportNumber(form.passportNumber);
+
+  useEffect(() => {
+    if (!isNew || !normalizedPassportNumber) {
+      setPassportCheck({ passportNumber: normalizedPassportNumber, status: "idle" });
+      return;
+    }
+    if (!(form.nationality ?? "").trim()) {
+      setPassportCheck({ passportNumber: normalizedPassportNumber, status: "invalid", error: "Select the candidate nationality first." });
+      return;
+    }
+    if (!isPassportNumberValid(form.nationality ?? "", normalizedPassportNumber)) {
+      setPassportCheck({ passportNumber: normalizedPassportNumber, status: "invalid", error: passportNumberRule(form.nationality ?? "") });
+      return;
+    }
+
+    const controller = new AbortController();
+    setPassportCheck({ passportNumber: normalizedPassportNumber, status: "checking" });
+    const timeout = window.setTimeout(() => {
+      void fetch("/api/candidates/passport-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passportNumber: normalizedPassportNumber, nationality: form.nationality }),
+        cache: "no-store",
+        signal: controller.signal,
+      }).then(async (response) => {
+        const payload = await response.json() as {
+          registered?: boolean;
+          registeredBy?: string | null;
+          error?: string;
+        };
+        if (!response.ok) throw new Error(payload.error ?? "Unable to validate this passport number.");
+        setPassportCheck({
+          passportNumber: normalizedPassportNumber,
+          status: payload.registered ? "duplicate" : "valid",
+          registeredBy: payload.registeredBy ?? undefined,
+        });
+      }).catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setPassportCheck({
+          passportNumber: normalizedPassportNumber,
+          status: "error",
+          error: error instanceof Error ? error.message : "Unable to validate this passport number.",
+        });
+      });
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [form.nationality, isNew, normalizedPassportNumber]);
+
   const set = (key: keyof Candidate, val: string | string[] | number) =>
     setForm((f) => ({ ...f, [key]: val }));
+
+  const setDateOfBirth = (dateOfBirth: string) => {
+    const age = calculateAge(dateOfBirth);
+    setForm((current) => ({ ...current, dob: dateOfBirth, age: age ?? 0 }));
+  };
 
   const addCandidateSource = async () => {
     const source = sourceDraft.trim();
@@ -216,17 +383,13 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
     }
   };
 
-  const registrationComplete =
-    Boolean(
+  const personalSectionComplete = Boolean(
       form.fileNumber.trim() &&
       form.firstName.trim() &&
       form.lastName.trim() &&
       form.phone.trim() &&
-      form.kinFirstName.trim() &&
-      form.kinLastName.trim() &&
-      form.kinPhone.trim() &&
-      form.kinRelationship.trim() &&
-      form.jobOfInterest.length > 0 &&
+      form.nationality?.trim() &&
+      form.branchId?.trim() &&
       (isAgent && isNew ||
         (form.gender.trim() &&
           form.religion.trim() &&
@@ -234,12 +397,47 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
           form.abroadExperience.trim() &&
           candidateSources.some((option) => option.source === form.source) &&
           form.agent.trim())),
-    ) &&
-    (!form.passportNumber.trim() ||
+    );
+  const kinSectionComplete = Boolean(
+      form.kinFirstName.trim() &&
+      form.kinLastName.trim() &&
+      form.kinPhone.trim() &&
+      form.kinRelationship.trim(),
+    );
+  const jobSectionComplete = form.jobOfInterest.length > 0;
+    const passportSectionComplete = Boolean(form.passportNumber.trim() &&
       (["Available", "With Agent"].includes(form.passportStatus) &&
         (form.passportStatus !== "Available" ||
           (form.passportBranch.trim() && form.passportStorageLocation.trim())) &&
-        (form.passportStatus !== "With Agent" || form.agent.trim())));
+          (form.passportStatus !== "With Agent" || form.agent.trim() || Boolean(form.agentUserId) || isAgent)) &&
+        (!isNew || (passportCheck.passportNumber === normalizedPassportNumber && passportCheck.status === "valid")));
+  const registrationComplete =
+    personalSectionComplete &&
+    kinSectionComplete &&
+    jobSectionComplete &&
+    passportSectionComplete;
+  const activeContentSection = registrationContentSections[contentSectionIndex];
+  const isCurrentContentSectionComplete = activeContentSection === "Personal"
+    ? personalSectionComplete
+    : activeContentSection === "Passport Info"
+      ? passportSectionComplete
+      : activeContentSection === "Parents & Kin"
+        ? kinSectionComplete
+        : activeContentSection === "Job Info"
+          ? jobSectionComplete
+          : true;
+  const isLastContentSection = contentSectionIndex === registrationContentSections.length - 1;
+  const showSection = (section: Tab) =>
+    viewMode === "content"
+      ? (!isNew || activeContentSection === section)
+      : activeTab === section;
+  const sectionIsComplete = (section: Tab) => {
+    if (section === "Personal") return personalSectionComplete;
+    if (section === "Passport Info") return passportSectionComplete;
+    if (section === "Parents & Kin") return kinSectionComplete;
+    if (section === "Job Info") return jobSectionComplete;
+    return true;
+  };
 
   const financeRows = financeData
     ? [
@@ -275,6 +473,21 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
   const formatFinanceAmount = (value: number) => `UGX ${value.toLocaleString()}`;
 
   const saveCandidate = async () => {
+    if (isNew && !registrationComplete) {
+      setShowValidationErrors(true);
+      const firstIncomplete = registrationContentSections.findIndex((section) => !sectionIsComplete(section));
+      const nextIndex = Math.max(0, firstIncomplete);
+      const targetSection = registrationContentSections[nextIndex] ?? registrationContentSections[0];
+      setContentSectionIndex(nextIndex);
+      setActiveTab(targetSection);
+      setViewMode("content");
+      window.requestAnimationFrame(() => {
+        document.getElementById(`candidate-section-${targetSection.toLocaleLowerCase().replace(/ /g, "-")}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      return;
+    }
+
     setSaving(true);
     setSaveError("");
     try {
@@ -351,13 +564,18 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
 
       {/* Form body */}
       <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
-        {viewMode === "content" && (
+        {viewMode === "content" && isNew && (
           <p className="mb-6 text-sm" style={{ color: "var(--muted-foreground)" }}>
-            Candidate sections are shown together below. Complete the marked required fields before registering.
+            Complete each section in order. Required fields must be complete before the next section opens.
           </p>
         )}
-        {(viewMode === "content" || activeTab === "Personal") && (
-          <div className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
+        {viewMode === "content" && !isNew && (
+          <p className="mb-6 text-sm" style={{ color: "var(--muted-foreground)" }}>
+            Candidate sections are shown together below.
+          </p>
+        )}
+        {showSection("Personal") && (
+          <div id="candidate-section-personal" className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
             {isAgent && isNew && (
               <div className="col-span-full mb-4 p-4 rounded border" style={{ background: "#fef08a40", borderColor: "#fbbf2440" }}>
                 <p className="text-sm" style={{ color: "var(--foreground)" }}>
@@ -365,28 +583,59 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                 </p>
               </div>
             )}
-            <Field label="File Number" value={form.fileNumber} onChange={(v) => set("fileNumber", v)} required />
-            <Field label="First Name" value={form.firstName} onChange={(v) => set("firstName", v)} required />
-            <Field label="Last Name" value={form.lastName} onChange={(v) => set("lastName", v)} required />
+            <Field label="File Number" value={form.fileNumber} onChange={(v) => set("fileNumber", v)} required invalid={showValidationErrors && !form.fileNumber.trim()} />
+            <Field label="First Name" value={form.firstName} onChange={(v) => set("firstName", v)} required invalid={showValidationErrors && !form.firstName.trim()} />
+            <Field label="Last Name" value={form.lastName} onChange={(v) => set("lastName", v)} required invalid={showValidationErrors && !form.lastName.trim()} />
             {!(isAgent && isNew) && <Field label="Other Names" value={form.otherNames} onChange={(v) => set("otherNames", v)} />}
             {!(isAgent && isNew) && <SelectField label="Marital Status" value={form.maritalStatus} onChange={(v) => set("maritalStatus", v)}
               options={["Single", "Married", "Divorced", "Widowed"]} />}
 
-            <Field label="Date of Birth" value={form.dob} onChange={(v) => set("dob", v)} type="date" />
-            {!(isAgent && isNew) && <Field label="Age" value={String(form.age)} onChange={(v) => set("age", Number(v))} type="number" />}
-            <Field label="Phone" value={form.phone} onChange={(v) => set("phone", v)} required />
+            <Field label="Date of Birth" value={form.dob} onChange={setDateOfBirth} type="date" />
+            <Field label="Age" value={form.dob ? String(calculateAge(form.dob) ?? "") : ""} onChange={() => {}} type="number" readOnly />
+            <Field label="Phone" value={form.phone} onChange={(v) => set("phone", v)} required invalid={showValidationErrors && !form.phone.trim()} />
             {!(isAgent && isNew) && <Field label="Secondary Phone" value={form.secondaryPhone} onChange={(v) => set("secondaryPhone", v)} />}
 
             {!(isAgent && isNew) && <Field label="Other Phone" value={form.otherPhone} onChange={(v) => set("otherPhone", v)} />}
-            {!(isAgent && isNew) && <SelectField label="Gender" value={form.gender} onChange={(v) => set("gender", v)} required
+            {!(isAgent && isNew) && <SelectField label="Gender" value={form.gender} onChange={(v) => set("gender", v)} required invalid={showValidationErrors && !form.gender.trim()}
               options={["Male", "Female"]} />}
-            {!(isAgent && isNew) && <SelectField label="Religion" value={form.religion} onChange={(v) => set("religion", v)} required
+            {!(isAgent && isNew) && <SelectField label="Religion" value={form.religion} onChange={(v) => set("religion", v)} required invalid={showValidationErrors && !form.religion.trim()}
               options={["Christian", "Muslim", "Hindu", "Other"]} />}
-            {!(isAgent && isNew) && <Field label="Nationality" value={form.nationality ?? ""} onChange={(v) => set("nationality", v)} />}
+            <div>
+              <label className="mb-1 block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
+                Nationality<span style={{ color: "#ef4444" }}> *</span>
+              </label>
+              <SearchableSelect
+                required
+                ariaLabel="Candidate nationality"
+                value={form.nationality ?? ""}
+                onChange={(value) => set("nationality", value)}
+                options={countryOptions}
+                placeholder="Type a nationality"
+                style={{ borderColor: showValidationErrors && !form.nationality?.trim() ? "#dc2626" : "var(--border)" }}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
+                Branch<span style={{ color: "#ef4444" }}> *</span>
+              </label>
+              <SearchableSelect
+                required
+                ariaLabel="Candidate branch"
+                value={form.branchId ?? ""}
+                onChange={(branchId) => {
+                  const selectedBranch = branches.find((branch) => branch.id === branchId);
+                  setForm((current) => ({ ...current, branchId, branch: selectedBranch?.name ?? "" }));
+                }}
+                options={branches.map((branch) => ({ value: branch.id, label: branch.name }))}
+                placeholder="Select a company branch"
+                style={{ borderColor: showValidationErrors && !form.branchId?.trim() ? "#dc2626" : "var(--border)" }}
+              />
+              {branchError && <p role="alert" className="mt-1 text-xs text-red-500">{branchError}</p>}
+            </div>
 
-            {!(isAgent && isNew) && <SelectField label="Abroad Status" value={form.abroadStatus} onChange={(v) => set("abroadStatus", v)} required
+            {!(isAgent && isNew) && <SelectField label="Abroad Status" value={form.abroadStatus} onChange={(v) => set("abroadStatus", v)} required invalid={showValidationErrors && !form.abroadStatus.trim()}
               options={["Yes", "No"]} />}
-            {!(isAgent && isNew) && <SelectField label="Abroad Experience" value={form.abroadExperience} onChange={(v) => set("abroadExperience", v)} required
+            {!(isAgent && isNew) && <SelectField label="Abroad Experience" value={form.abroadExperience} onChange={(v) => set("abroadExperience", v)} required invalid={showValidationErrors && !form.abroadExperience.trim()}
               options={["None", "Certificate", "1 Year", "2 Years", "3 Years", "5+ Years"]} />}
             {!(isAgent && isNew) && (
               <div>
@@ -399,7 +648,8 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                   onChange={(event) => set("source", event.target.value)}
                   required
                   className="w-full rounded border px-3 py-2 text-sm outline-none"
-                  style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
+                  aria-invalid={showValidationErrors && !form.source.trim() || undefined}
+                  style={{ background: "var(--secondary)", borderColor: showValidationErrors && !form.source.trim() ? "#dc2626" : "var(--border)", color: "var(--foreground)" }}
                 >
                   <option value="">Select source</option>
                   {form.source && !candidateSources.some((option) => option.source === form.source) && (
@@ -435,51 +685,90 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
 
             {!(isAgent && isNew) && <div className="col-span-2">
               <label className="text-xs font-600 block mb-1" style={{ color: "var(--muted-foreground)" }}>Agent<span style={{ color: "#ef4444" }}> *</span></label>
-              <SearchableSelect required ariaLabel="Search agent" value={form.agent} onChange={(value) => set("agent", value)} options={[...new Set([...agentOptions, ...(form.agent ? [form.agent] : [])])].map((name) => ({ value: name, label: name }))} placeholder="Type an agent name" />
+              <SearchableSelect required ariaLabel="Search agent" value={form.agent} onChange={(value) => set("agent", value)} options={[...new Set([...agentOptions, ...(form.agent ? [form.agent] : [])])].map((name) => ({ value: name, label: name }))} placeholder="Type an agent name" style={{ borderColor: showValidationErrors && !form.agent.trim() ? "#dc2626" : "var(--border)" }} />
             </div>}
           </div>
         )}
 
-        {!(isAgent && isNew) && (viewMode === "content" || activeTab === "Passport & Docs") && (
-          <div className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
-            <SectionHeader title="Passport Information" />
+        {showSection("Passport Info") && (
+          <div id="candidate-section-passport-info" className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
+            <SectionHeader title="Passport Info" />
             <Field label="NIN" value={form.nin} onChange={(v) => set("nin", v)} />
-            <Field label="Passport Number" value={form.passportNumber} onChange={(v) => set("passportNumber", v)} />
+            <div>
+              <Field label="Passport Number" value={form.passportNumber} onChange={(v) => set("passportNumber", v)} required invalid={showValidationErrors && !form.passportNumber.trim()} />
+              {isNew && normalizedPassportNumber && passportCheck.passportNumber === normalizedPassportNumber && (
+                <p
+                  role={passportCheck.status === "duplicate" || passportCheck.status === "invalid" || passportCheck.status === "error" ? "alert" : "status"}
+                  aria-live="polite"
+                  className="mt-1 text-xs"
+                  style={{
+                    color: passportCheck.status === "valid"
+                      ? "#16a34a"
+                      : passportCheck.status === "duplicate" || passportCheck.status === "invalid" || passportCheck.status === "error"
+                        ? "#dc2626"
+                        : "var(--muted-foreground)",
+                  }}
+                >
+                  {passportCheck.status === "checking" && "Checking passport number…"}
+                  {passportCheck.status === "valid" && "✓ Passport number is valid and available."}
+                  {passportCheck.status === "duplicate" && `Sorry, this passport number was already captured by ${passportCheck.registeredBy ?? "a former team member"}.`}
+                  {(passportCheck.status === "invalid" || passportCheck.status === "error") && (passportCheck.error ?? "Unable to validate this passport number.")}
+                </p>
+              )}
+            </div>
             <Field label="Issue Date" value={form.passportIssue} onChange={(v) => set("passportIssue", v)} type="date" />
             <Field label="Expiry Date" value={form.passportExpiry} onChange={(v) => set("passportExpiry", v)} type="date" />
-            <SelectField label="Passport Status" value={form.passportStatus} onChange={(v) => set("passportStatus", v)} options={["Available", "With Agent"]} required={Boolean(form.passportNumber.trim())} />
+            <SelectField label="Passport Status" value={form.passportStatus} onChange={(v) => set("passportStatus", v)} options={["Available", "With Agent", ...(!["Available", "With Agent"].includes(form.passportStatus) && form.passportStatus ? [form.passportStatus] : [])]} required disabled={!isNew && !canManagePassportStatus} invalid={showValidationErrors && !form.passportStatus.trim()} />
             {form.passportStatus === "Available" && <>
-              <Field label="Storage Branch" value={form.passportBranch} onChange={(v) => set("passportBranch", v)} placeholder="e.g. Kampala" required={Boolean(form.passportNumber.trim())} />
-              <Field label="Storage Location" value={form.passportStorageLocation} onChange={(v) => set("passportStorageLocation", v)} placeholder="e.g. Locker A-3" required={Boolean(form.passportNumber.trim())} />
+              <SelectField label="Storage Branch" value={form.passportBranch} onChange={(v) => set("passportBranch", v)} options={branches.map((branch) => branch.name)} required invalid={showValidationErrors && !form.passportBranch.trim()} />
+              <Field label="Storage Location" value={form.passportStorageLocation} onChange={(v) => set("passportStorageLocation", v)} placeholder="e.g. Locker A-3" required invalid={showValidationErrors && !form.passportStorageLocation.trim()} />
             </>}
-
-            <SectionHeader title="Preferred Locations" />
-            <div className="col-span-4">
-              <Field label="Preferred Cities" value={form.preferredCities} onChange={(v) => set("preferredCities", v)}
-                placeholder="Type or select cities" />
-            </div>
           </div>
         )}
 
-        {!(isAgent && isNew) && (viewMode === "content" || activeTab === "Residence") && (
-          <div className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
+        {!(isAgent && isNew) && showSection("Residence") && (
+          <div id="candidate-section-residence" className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
             <SectionHeader title="Residence Information" />
             <Field label="Place of Birth" value={form.placeOfBirth} onChange={(v) => set("placeOfBirth", v)} />
             <div className="col-span-2">
               <Field label="Physical Address" value={form.physicalAddress} onChange={(v) => set("physicalAddress", v)} />
             </div>
-            <SelectField label="District" value={form.district} onChange={(v) => set("district", v)}
-              options={["Kampala", "Wakiso", "Mukono", "Jinja", "Gulu", "Mbarara", "Masaka", "Entebbe"]} />
-            <Field label="County" value={form.county} onChange={(v) => set("county", v)} />
-            <div className="col-span-2">
-              <Field label="Sub County" value={form.subCounty} onChange={(v) => set("subCounty", v)} />
+            <div>
+              <label className="mb-1 block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>Country</label>
+              <SearchableSelect
+                ariaLabel="Residence country"
+                value={form.residenceCountry ?? ""}
+                onChange={(value) => setForm((current) => ({ ...current, residenceCountry: value, district: "", residenceState: "" }))}
+                options={countryOptions}
+                placeholder="Type a country"
+              />
             </div>
-            <Field label="Parish" value={form.parish} onChange={(v) => set("parish", v)} />
+            <div>
+              <label className="mb-1 block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>District / City</label>
+              <SearchableSelect
+                ariaLabel="Residence district or city"
+                value={form.district}
+                onChange={(value) => set("district", value)}
+                options={residenceCities.map((city) => ({ value: city, label: city }))}
+                placeholder={form.residenceCountry ? "Type a city or district" : "Select a country first"}
+                disabled={!form.residenceCountry}
+              />
+            </div>
+            <div>
+              <SelectField
+                label="State / Province"
+                value={form.residenceState ?? ""}
+                onChange={(value) => setForm((current) => ({ ...current, residenceState: value, district: "" }))}
+                options={residenceStates}
+                disabled={!form.residenceCountry}
+              />
+            </div>
+            {locationError && <p role="alert" className="col-span-full text-xs text-red-500">{locationError}</p>}
           </div>
         )}
 
-        {(viewMode === "content" || activeTab === "Parents & Kin") && (
-          <div className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
+        {showSection("Parents & Kin") && (
+          <div id="candidate-section-parents-&-kin" className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
             {!(isAgent && isNew) && <>
               <SectionHeader title="Parents Information" />
               <Field label="Father Name" value={form.fatherName} onChange={(v) => set("fatherName", v)} />
@@ -494,10 +783,10 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
             </>}
 
             <SectionHeader title={isAgent && isNew ? "Next of Kin Information (Mandatory)" : "First Next of Kin (Mandatory)"} />
-            <Field label="First Name" value={form.kinFirstName} onChange={(v) => set("kinFirstName", v)} required />
-            <Field label="Last Name" value={form.kinLastName} onChange={(v) => set("kinLastName", v)} required />
-            <Field label="Phone" value={form.kinPhone} onChange={(v) => set("kinPhone", v)} required />
-            <Field label="Relationship" value={form.kinRelationship} onChange={(v) => set("kinRelationship", v)} required
+            <Field label="First Name" value={form.kinFirstName} onChange={(v) => set("kinFirstName", v)} required invalid={showValidationErrors && !form.kinFirstName.trim()} />
+            <Field label="Last Name" value={form.kinLastName} onChange={(v) => set("kinLastName", v)} required invalid={showValidationErrors && !form.kinLastName.trim()} />
+            <Field label="Phone" value={form.kinPhone} onChange={(v) => set("kinPhone", v)} required invalid={showValidationErrors && !form.kinPhone.trim()} />
+            <Field label="Relationship" value={form.kinRelationship} onChange={(v) => set("kinRelationship", v)} required invalid={showValidationErrors && !form.kinRelationship.trim()}
               placeholder="e.g. Wife, Brother, Parent" />
 
             {!(isAgent && isNew) && <>
@@ -510,11 +799,11 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
           </div>
         )}
 
-        {(viewMode === "content" || activeTab === "Job Info") && (
-          <div className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
+        {showSection("Job Info") && (
+          <div id="candidate-section-job-info" className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
             <SectionHeader title="Job & Contract Information" />
             <div className="col-span-2">
-              <MultiField label="Job of Interest" value={form.jobOfInterest} onChange={(v) => set("jobOfInterest", v)} required
+              <MultiField label="Job of Interest" value={form.jobOfInterest} onChange={(v) => set("jobOfInterest", v)} required invalid={showValidationErrors && form.jobOfInterest.length === 0}
                 options={["Administrator", "Housekeeper", "Cook", "Nanny", "Cleaner", "Driver", "Security Guard", "Cashier", "Waitress", "Nurse", "Labourer"]} />
             </div>
             <div className="col-span-2">
@@ -524,21 +813,33 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
             <div />
             <div />
 
-            <SectionHeader title="Travel and Processing Status" />
-            <SelectField label="Travel Status" value={form.travelStatus} onChange={(v) => set("travelStatus", v)}
-              options={["Pending Travel", "Travelled", "Withdrawn"]} />
-            <SelectField label="Visa Status" value={form.visaStatus} onChange={(v) => set("visaStatus", v)}
-              options={["Pending", "Received", "Cancelled"]} />
-            <SelectField label="Verification" value={form.verification} onChange={(v) => set("verification", v)}
-              options={["Pending", "Verified", "Failed"]} />
-            <SelectField label="Acceptance" value={form.acceptance} onChange={(v) => set("acceptance", v)}
-              options={["Yes", "No"]} />
-            <SelectField label="Branch" value={form.branch} onChange={(v) => set("branch", v)}
-              options={["Kampala", "Masaka", "Gulu", "Mbarara", "Entebbe"]} />
+            {!isNew && (
+              <>
+                <SectionHeader title="Travel and Processing Status History" />
+                {stageEventsError ? (
+                  <p role="alert" className="col-span-full text-sm text-red-500">{stageEventsError}</p>
+                ) : stageEvents.length ? (
+                  <ol className="col-span-full space-y-3">
+                    {stageEvents.map((event) => (
+                      <li key={event.id} className="flex items-start gap-3 border-l-2 pl-4" style={{ borderColor: "var(--primary)" }}>
+                        <div>
+                          <p className="text-sm font-600" style={{ color: "var(--foreground)" }}>{event.label}</p>
+                          <time className="text-xs" dateTime={event.occurred_at} style={{ color: "var(--muted-foreground)" }}>
+                            {new Date(event.occurred_at).toLocaleString()}
+                          </time>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="col-span-full text-sm" style={{ color: "var(--muted-foreground)" }}>No processing updates have been recorded.</p>
+                )}
+              </>
+            )}
           </div>
         )}
 
-        {!(isAgent && isNew) && (viewMode === "content" || activeTab === "Education & Skills") && (
+        {!(isAgent && isNew) && showSection("Education & Skills") && (
           <div className="responsive-grid-4 mb-8 grid grid-cols-4 gap-4">
             <SectionHeader title="Education" />
             <div className="col-span-2"><Field label="Highest Qualification" value={form.educationQualification ?? ""} onChange={(v) => set("educationQualification", v)} placeholder="e.g. Bachelor's Degree" /></div>
@@ -567,7 +868,38 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
           </div>
         )}
 
-        {!(isAgent && isNew) && (viewMode === "content" || activeTab === "Finance") && canViewFinance && (
+        {viewMode === "content" && isNew && (
+          <div className="mb-8 flex flex-wrap items-center justify-between gap-3 border-t pt-4" style={{ borderColor: "var(--border)" }}>
+            <p className="text-sm font-600" style={{ color: "var(--muted-foreground)" }}>
+              Section {contentSectionIndex + 1} of {registrationContentSections.length}: {activeContentSection}
+            </p>
+            <div className="flex gap-2">
+              {contentSectionIndex > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setContentSectionIndex((index) => Math.max(0, index - 1))}
+                  className="rounded border px-4 py-2 text-sm"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                >
+                  Previous section
+                </button>
+              )}
+              {!isLastContentSection && (
+                <button
+                  type="button"
+                  onClick={() => setContentSectionIndex((index) => Math.min(registrationContentSections.length - 1, index + 1))}
+                  disabled={!isCurrentContentSectionComplete}
+                  className="rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
+                  style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                >
+                  Continue to {registrationContentSections[contentSectionIndex + 1]}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!isNew && (viewMode === "content" || activeTab === "Finance") && canViewFinance && (
           <section className="mb-8" aria-labelledby="candidate-finance-heading">
             <h2 id="candidate-finance-heading" className="mb-4 text-base font-700" style={{ color: "var(--foreground)" }}>Candidate Finance</h2>
             {isNew ? (
@@ -622,7 +954,7 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
           </section>
         )}
 
-        {!(isAgent && isNew) && (viewMode === "content" || activeTab === "AI Tools") && (
+        {!isNew && (viewMode === "content" || activeTab === "AI Tools") && (
           <div className="mx-auto mb-8 max-w-xl pt-4">
             <div className="rounded border p-6 mb-4" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
               <h3 className="font-700 mb-1 flex items-center gap-2" style={{ color: "var(--foreground)" }}><Sparkles size={16} aria-hidden="true" /> Generate CV with AI</h3>
@@ -645,7 +977,7 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
           </div>
         )}
 
-        {!(isAgent && isNew) && (viewMode === "content" || activeTab === "Activity") && (canViewActivityLogs || canViewActivityByRole) && (
+        {!isNew && (viewMode === "content" || activeTab === "Activity") && (canViewActivityLogs || canViewActivityByRole) && (
           <div className="mb-8 max-w-2xl">
             <h3 className="text-xs font-700 uppercase tracking-widest mb-4" style={{ color: "var(--muted-foreground)" }}>Activity History</h3>
             <div className="space-y-0">
@@ -671,21 +1003,21 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
         <div className="flex flex-wrap justify-end gap-3">
           {isNew && !registrationComplete && (
             <p className="basis-full text-right text-xs" style={{ color: "var(--muted-foreground)" }}>
-              Complete all required registration fields. If a passport number is entered, complete its passport details too.
+              Complete the required registration fields, including passport number, status, and storage details for available passports.
             </p>
           )}
           <button type="button" onClick={onBack} className="rounded border px-5 py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
             Cancel
           </button>
-          <button
+          {(!isNew || viewMode !== "content" || isLastContentSection) && <button
             type="button"
             onClick={() => void saveCandidate()}
-            disabled={saving || (isNew && !registrationComplete)}
+            disabled={saving}
             className="px-6 py-2 text-sm font-700 rounded disabled:opacity-50"
             style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
           >
             {saving ? "Saving…" : isNew ? "Register Candidate" : "Save Changes"}
-          </button>
+          </button>}
         </div>
       </div>
       {saveError ? <p role="alert" className="border-t px-6 py-2 text-sm text-red-600" style={{ borderColor: "var(--border)" }}>{saveError}</p> : null}

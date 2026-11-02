@@ -524,6 +524,22 @@ const reportsAnalyticsPermissionMigration = await readFile(
   "utf8",
 )
 
+const candidatePassportValidationMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261101220355_candidate_passport_validation.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const candidatePassportWorkflowMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102055732_candidate_passport_workflow.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const database = new PGlite()
 
 const companyA = "10000000-0000-4000-8000-000000000001"
@@ -3305,6 +3321,84 @@ try {
 
   await database.exec(candidateRegistrationSourcesMigration)
 
+  await database.exec(candidatePassportValidationMigration)
+  await database.exec(candidatePassportValidationMigration)
+
+  const passportLookupPrivileges = await database.query(`
+    select
+      has_function_privilege('anon', 'public.lookup_candidate_passport_registration(text)', 'execute') as anon_execute,
+      has_function_privilege('authenticated', 'public.lookup_candidate_passport_registration(text)', 'execute') as authenticated_execute
+  `)
+  assert.deepEqual(passportLookupPrivileges.rows[0], {
+    anon_execute: false,
+    authenticated_execute: true,
+  })
+
+  await database.exec("begin")
+  const passportRegistrarUser = "a0000000-0000-4000-8000-000000000001"
+  await database.query(
+    "insert into auth.users (id) values ($1)",
+    [passportRegistrarUser],
+  )
+  await database.query(
+    `insert into public.profiles (id, display_name)
+     values ($1, 'Passport Test Registrar')
+     on conflict (id) do update set display_name = excluded.display_name`,
+    [passportRegistrarUser],
+  )
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [passportRegistrarUser],
+  )
+  await database.query(
+    `insert into public.candidates (id, company_id, file_number, first_name, last_name, created_by, details)
+     values ('80000000-0000-4000-8000-000000000001', $1, 'PASSPORT-LOOKUP-TEST', 'Lookup', 'Candidate', $2,
+       '{"passportNumber":"  Lookup-Passport-Test  "}'::jsonb)`,
+    [companyB, passportRegistrarUser],
+  )
+  const passportRegistrarFixture = await database.query(
+    `select candidate.created_by, profile.display_name
+     from public.candidates candidate
+     left join public.profiles profile on profile.id = candidate.created_by
+     where candidate.file_number = 'PASSPORT-LOOKUP-TEST'`,
+  )
+  assert.deepEqual(passportRegistrarFixture.rows[0], {
+    created_by: passportRegistrarUser,
+    display_name: "Passport Test Registrar",
+  })
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userA],
+  )
+  await database.exec("set role authenticated")
+  const passportLookup = await database.query(
+    "select * from public.lookup_candidate_passport_registration($1)",
+    ["lookup-passport-test"],
+  )
+  assert.deepEqual(passportLookup.rows, [{
+    is_registered: true,
+    registered_by: "Passport Test Registrar",
+  }])
+  const availablePassportLookup = await database.query(
+    "select * from public.lookup_candidate_passport_registration($1)",
+    ["unused-passport-test"],
+  )
+  assert.deepEqual(availablePassportLookup.rows, [{
+    is_registered: false,
+    registered_by: null,
+  }])
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [userB],
+  )
+  const unauthorizedPassportLookup = await database.query(
+    "select * from public.lookup_candidate_passport_registration($1)",
+    ["lookup-passport-test"],
+  )
+  assert.deepEqual(unauthorizedPassportLookup.rows, [])
+  await database.exec("reset role")
+  await database.exec("rollback")
+
   await database.exec(reportsAnalyticsPermissionMigration)
   await database.exec(reportsAnalyticsPermissionMigration)
   await database.query("select public.seed_company_default_roles($1)", [
@@ -3458,6 +3552,183 @@ try {
     [userB],
   )
   assert.equal(unauthorizedFinanceNotification.rows[0].count, 0)
+
+  await database.exec("alter table public.candidates add column if not exists visa_locked boolean not null default false")
+  await database.exec(candidatePassportWorkflowMigration)
+
+  const passportManagerPermissions = await database.query(`
+    select company_role.name, array_agg(role_permission.permission_code order by role_permission.permission_code) as permissions
+    from public.company_roles company_role
+    join public.role_permissions role_permission on role_permission.role_id = company_role.id
+    where company_role.company_id = $1
+      and lower(company_role.name) in ('general manager', 'supervisor')
+    group by company_role.name
+  `, [companyA])
+  assert(passportManagerPermissions.rows.some((row) =>
+    row.name === "General Manager"
+    && row.permissions.includes("passport.view")
+    && row.permissions.includes("passport.edit"),
+  ), "general managers receive passport permissions")
+
+  const existingSupervisor = await database.query(
+    "select id from public.company_roles where company_id = $1 and lower(name) = 'supervisor' limit 1",
+    [companyA],
+  )
+  const supervisorRole = existingSupervisor.rows[0]?.id ?? "30000000-0000-4000-8000-000000000099"
+  if (existingSupervisor.rows.length) {
+    await database.query(
+      "delete from public.role_permissions where role_id = $1 and permission_code in ('passport.view', 'passport.edit')",
+      [supervisorRole],
+    )
+    await database.query("update public.company_roles set name = name where id = $1", [supervisorRole])
+  } else {
+    await database.query(
+      "insert into public.company_roles (id, company_id, name) values ($1, $2, 'Supervisor')",
+      [supervisorRole, companyA],
+    )
+  }
+  const supervisorPermissions = await database.query(
+    "select permission_code from public.role_permissions where role_id = $1 order by permission_code",
+    [supervisorRole],
+  )
+  const supervisorPermissionCodes = supervisorPermissions.rows.map((row) => row.permission_code)
+  assert(
+    supervisorPermissionCodes.includes("passport.edit")
+    && supervisorPermissionCodes.includes("passport.view"),
+    "supervisor roles receive passport permissions",
+  )
+
+  const workflowManager = "20000000-0000-4000-8000-000000000099"
+  const workflowCandidate = "40000000-0000-4000-8000-000000000099"
+  const workflowProject = "60000000-0000-4000-8000-000000000099"
+  const workflowAccount = "70000000-0000-4000-8000-000000000099"
+  await database.query("insert into auth.users (id) values ($1)", [workflowManager])
+  const managerRole = await database.query(
+    "select id from public.company_roles where company_id = $1 and name = 'General Manager'",
+    [companyA],
+  )
+  assert.equal(managerRole.rows.length, 1, "the test company has a general manager role")
+  await database.query(
+    "insert into public.company_memberships (company_id, user_id, role_id, status) values ($1, $2, $3, 'active')",
+    [companyA, workflowManager, managerRole.rows[0].id],
+  )
+  await database.query(
+    `insert into public.candidates (
+      id, company_id, file_number, first_name, last_name, created_by, details
+    ) values (
+      $1, $2, 'WORKFLOW-001', 'Workflow', 'Candidate', $3,
+      '{"passportNumber":"ZQ1234567","passportStatus":"Available","passportBranch":"Main","passportStorageLocation":"Locker 1","stage":"Registration"}'::jsonb
+    )`,
+    [workflowCandidate, companyA, workflowManager],
+  )
+  await database.query(
+    `insert into public.company_accounts (
+      id, company_id, name, account_type, created_by
+    ) values ($1, $2, 'Workflow Project Account', 'project', $3)`,
+    [workflowAccount, companyA, workflowManager],
+  )
+  await database.query(
+    `insert into public.projects (
+      id, company_id, contractor_name, project_name, country, salary_range,
+      age_bracket, total_demand, interview_mode, created_by, account_id
+    ) values ($1, $2, 'Test Contractor', 'Workflow Project', 'Qatar', 'Negotiable',
+      '20-45', 1, 'Direct submission', $3, $4)`,
+    [workflowProject, companyA, workflowManager, workflowAccount],
+  )
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [workflowManager],
+  )
+  await database.query(
+    "select public.record_candidate_project_submission($1, $2)",
+    [workflowCandidate, workflowProject],
+  )
+  await database.query(
+    `update public.candidate_passports
+      set passport_status = 'withdrawn', withdrawn_at = current_date,
+        withdrawal_requested_by = 'Candidate', status_updated_by = $1
+      where candidate_id = $2 and company_id = $3`,
+    [workflowManager, workflowCandidate, companyA],
+  )
+  const withdrawalEffects = await database.query(`
+    select candidate.details ->> 'stage' as stage,
+      submission.status as submission_status,
+      (select count(*)::integer from public.workspace_communications message
+        where message.candidate_id = candidate.id and message.event_type = 'cancellation') as communication_count,
+      (select count(*)::integer from public.tasks task
+        where task.company_id = candidate.company_id and task.title like 'Cancel Workflow Candidate%') as task_count,
+      (select coalesce(array_agg(distinct task.assigned_to), '{}'::uuid[]) from public.tasks task
+        where task.company_id = candidate.company_id and task.title like 'Cancel Workflow Candidate%') as task_recipients,
+      (select count(*)::integer from public.passport_project_followups followup
+        where followup.candidate_id = candidate.id) as followup_count
+    from public.candidates candidate
+    join public.candidate_project_submissions submission on submission.candidate_id = candidate.id
+    where candidate.id = $1
+  `, [workflowCandidate])
+  assert.equal(withdrawalEffects.rows[0].stage, "Withdrawn")
+  assert.equal(withdrawalEffects.rows[0].submission_status, "cancellation_requested")
+  assert.equal(withdrawalEffects.rows[0].communication_count, 1)
+  assert(withdrawalEffects.rows[0].task_count >= 1)
+  assert(withdrawalEffects.rows[0].task_recipients.includes(workflowManager))
+  assert.equal(withdrawalEffects.rows[0].followup_count, 1)
+
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    ["20000000-0000-4000-8000-000000000098"],
+  )
+  await assert.rejects(
+    () => database.query(
+      `update public.candidate_passports set passport_status = 'transferred',
+        transferred_at = current_date, transfer_destination = 'Test destination'
+        where candidate_id = $1 and company_id = $2`,
+      [workflowCandidate, companyA],
+    ),
+    (error) => error.code === "42501",
+    "non-managers cannot change passport status",
+  )
+  await database.query(
+    "select set_config('request.jwt.claim.sub', $1, false)",
+    [workflowManager],
+  )
+  await assert.rejects(
+    () => database.query(
+      `update public.candidate_passports set passport_status = 'available'
+        where candidate_id = $1 and company_id = $2`,
+      [workflowCandidate, companyA],
+    ),
+    (error) => error.code === "23514",
+    "withdrawn passports cannot be restored before 30 days",
+  )
+
+  const agedCandidate = "40000000-0000-4000-8000-000000000098"
+  await database.query(
+    `insert into public.candidates (
+      id, company_id, file_number, first_name, last_name, created_by, details
+    ) values (
+      $1, $2, 'WORKFLOW-002', 'Restored', 'Candidate', $3,
+      '{"passportNumber":"ZQ7654321","passportStatus":"Withdrawn","stage":"Withdrawn"}'::jsonb
+    )`,
+    [agedCandidate, companyA, workflowManager],
+  )
+  await database.query(
+    `insert into public.candidate_passports (
+      company_id, candidate_id, passport_number, passport_status,
+      withdrawn_at, withdrawal_requested_by, status_changed_at
+    ) values ($1, $2, 'ZQ7654321', 'withdrawn', current_date - 31,
+      'Candidate', now() - interval '31 days')`,
+    [companyA, agedCandidate],
+  )
+  await database.query(
+    `update public.candidate_passports set passport_status = 'available',
+      storage_branch = 'Main', storage_location = 'Locker 2'
+      where candidate_id = $1 and company_id = $2`,
+    [agedCandidate, companyA],
+  )
+  const restoredStage = await database.query(
+    "select details ->> 'stage' as stage from public.candidates where id = $1",
+    [agedCandidate],
+  )
+  assert.equal(restoredStage.rows[0].stage, "Registration", "eligible passports restore candidate registration")
 
   console.log("Supabase migration and tenant RLS checks passed.")
 } finally {

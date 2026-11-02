@@ -36,11 +36,17 @@ export async function POST(request: Request) {
     if (hasCronAuthorization(request)) {
       const admin = createPushAdminClient()
 
-      const [{ error: taskError }, { error: inquiryError }] = await Promise.all(
+      const [
+        { error: taskError },
+        { error: inquiryError },
+        { error: passportFollowupError },
+      ] = await Promise.all(
         [
           admin.rpc("dispatch_due_task_notifications"),
 
           admin.rpc("dispatch_due_candidate_inquiry_notifications"),
+
+          admin.rpc("dispatch_due_passport_followups"),
         ],
       )
 
@@ -52,6 +58,11 @@ export async function POST(request: Request) {
       if (inquiryError)
         throw new Error(
           `Scheduled inquiry notification dispatch failed: ${inquiryError.message}`,
+        )
+
+      if (passportFollowupError)
+        throw new Error(
+          `Scheduled passport follow-up dispatch failed: ${passportFollowupError.message}`,
         )
 
       const result = await dispatchPushNotifications({})

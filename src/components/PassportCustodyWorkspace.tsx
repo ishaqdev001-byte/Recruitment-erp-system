@@ -17,6 +17,8 @@ type PassportRecord = {
   withdrawal_requested_by: string;
   transferred_at: string | null;
   transfer_destination: string;
+  inquiry_id: string | null;
+  status_changed_at: string;
   candidate_name: string;
   file_number: string;
   agent_name: string;
@@ -96,6 +98,16 @@ export default function PassportCustodyWorkspace({ companyName, onRegisterCandid
     transferred: records.filter((record) => record.passport_status === "transferred").length,
     withAgent: records.filter((record) => record.passport_status === "with_agent").length,
   };
+  const restorationTime = editingRecord
+    ? Date.parse(editingRecord.status_changed_at) + 30 * 24 * 60 * 60 * 1000
+    : 0;
+  const restorationDaysRemaining = Math.max(0, Math.ceil((restorationTime - Date.now()) / (24 * 60 * 60 * 1000)));
+  const restorationBlocked = Boolean(
+    editingRecord
+    && ["withdrawn", "transferred"].includes(editingRecord.passport_status)
+    && form.status === "available"
+    && restorationTime > Date.now(),
+  );
 
   const openStatusEditor = (record: PassportRecord, nextStatus = record.passport_status) => {
     setEditingRecord(record);
@@ -164,7 +176,7 @@ export default function PassportCustodyWorkspace({ companyName, onRegisterCandid
               {!loading && !error && filtered.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{records.length ? "No passports match this search." : "No passports registered yet. Add passport details when registering a candidate."}</td></tr>}
               {!loading && filtered.map((record) => <tr key={record.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "var(--primary)" }}>{passportId(companyName, record.tracking_number)}</td>
-                <td className="whitespace-nowrap px-3 py-3"><div className="text-xs font-600" style={{ color: "var(--foreground)" }}>{record.candidate_name}</div></td>
+                <td className="whitespace-nowrap px-3 py-3"><div className="text-xs font-600" style={{ color: "var(--foreground)" }}>{record.candidate_name}</div>{record.inquiry_id && <span className="mt-1 inline-block rounded border px-1.5 py-0.5 text-[10px]" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Inquiry linked</span>}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{record.passport_number}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{record.agent_name || "—"}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{record.passport_status === "available" ? `Locker - ${record.storage_branch}${record.storage_location ? ` · ${record.storage_location}` : ""}` : record.passport_status === "with_agent" ? `With ${record.agent_name || "agent"}` : record.passport_status === "withdrawn" ? `Withdrawn ${record.withdrawn_at ?? ""}` : `Transferred to ${record.transfer_destination}`}</td>
@@ -178,12 +190,13 @@ export default function PassportCustodyWorkspace({ companyName, onRegisterCandid
       {editingRecord && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditingRecord(null); }}>
         <form onSubmit={saveStatus} className="max-h-[90dvh] w-full max-w-lg overflow-y-auto border p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
           <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Update passport status</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>{editingRecord.candidate_name} · {editingRecord.passport_number}</p></div><button type="button" onClick={() => setEditingRecord(null)} aria-label="Close status form" className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
-          <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Status<select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as PassportStatus }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>{statuses.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}</select></label>
+          <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Status<select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as PassportStatus }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>{statuses.map((status) => <option key={status.value} value={status.value} disabled={status.value === "available" && Boolean(editingRecord && ["withdrawn", "transferred"].includes(editingRecord.passport_status) && restorationTime > Date.now())}>{status.label}</option>)}</select></label>
+          {restorationBlocked && <p role="status" className="mt-3 border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700">This passport can be restored to Available after the 30-day window. {restorationDaysRemaining} {restorationDaysRemaining === 1 ? "day" : "days"} remain.</p>}
           {form.status === "available" && <div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Branch<input required maxLength={200} value={form.storageBranch} onChange={(event) => setForm((current) => ({ ...current, storageBranch: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Locker / storage location<input required maxLength={200} value={form.storageLocation} onChange={(event) => setForm((current) => ({ ...current, storageLocation: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label></div>}
           {form.status === "with_agent" && <p className="mt-4 border p-3 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Assigned agent: <strong style={{ color: "var(--foreground)" }}>{editingRecord.agent_name || "No agent assigned"}</strong></p>}
           {form.status === "withdrawn" && <div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Withdrawal date<input required type="date" max={localDate()} value={form.withdrawnAt} onChange={(event) => setForm((current) => ({ ...current, withdrawnAt: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Withdrawal requested by<input required maxLength={200} value={form.withdrawalRequestedBy} onChange={(event) => setForm((current) => ({ ...current, withdrawalRequestedBy: event.target.value }))} placeholder="Name of requester" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label></div>}
           {form.status === "transferred" && <div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Transfer date<input required type="date" max={localDate()} value={form.transferredAt} onChange={(event) => setForm((current) => ({ ...current, transferredAt: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Transferred to<input required maxLength={300} value={form.transferDestination} onChange={(event) => setForm((current) => ({ ...current, transferDestination: event.target.value }))} placeholder="Person, company, or authority" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label></div>}
-          <div className="mt-6 flex gap-3"><button type="submit" disabled={saving} className="flex-1 py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save status"}</button><button type="button" onClick={() => setEditingRecord(null)} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
+          <div className="mt-6 flex gap-3"><button type="submit" disabled={saving || restorationBlocked} className="flex-1 py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save status"}</button><button type="button" onClick={() => setEditingRecord(null)} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
         </form>
       </div>}
     </section>

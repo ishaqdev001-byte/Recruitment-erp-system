@@ -19,7 +19,8 @@ export async function GET() {
       console.error("Passport custody query failed", error);
       return NextResponse.json({ error: "Unable to load passport custody. Apply the latest passport migration if setup is incomplete." }, { status: 500, headers: responseHeaders });
     }
-    return NextResponse.json({ passports: passports ?? [], permissions: { canEdit } }, { headers: responseHeaders });
+    const canManageStatus = access.canManageStatus && canEdit;
+    return NextResponse.json({ passports: passports ?? [], permissions: { canEdit: canManageStatus, canManageStatus } }, { headers: responseHeaders });
   } catch (error) {
     console.error("Passport custody request failed", error);
     return NextResponse.json({ error: "Passport custody is unavailable." }, { status: 503, headers: responseHeaders });

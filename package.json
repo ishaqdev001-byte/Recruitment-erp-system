@@ -18,6 +18,7 @@
     "@supabase/supabase-js": "^2.117.2",
     "archiver": "^8.0.0",
     "basic-ftp": "^6.2.2",
+    "countrycitystatejson": "26.9.2802",
     "exceljs": "^4.4.0",
     "file-type": "^22.1.1",
     "imapflow": "^2.4.0",

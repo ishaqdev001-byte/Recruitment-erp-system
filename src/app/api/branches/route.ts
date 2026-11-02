@@ -14,7 +14,7 @@ function createAdminClient() {
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
 }
 
-async function getAccess() {
+async function getAccess(allowCandidateRegistration = false) {
   const supabase = await createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
@@ -32,12 +32,14 @@ async function getAccess() {
   if (!admin) return { error: "SUPABASE_SERVICE_ROLE_KEY is required.", status: 503 as const };
 
   // Fetch role, company info, and permissions in parallel.
-  const [roleResult, companyResult, canManageResult, canViewResult, isMainBranchResult] = await Promise.all([
+  const [roleResult, companyResult, canManageResult, canViewResult, isMainBranchResult, registerCandidatesResult, createCandidatesResult] = await Promise.all([
     admin.from("company_roles").select("name").eq("id", membership.role_id).eq("company_id", membership.company_id).maybeSingle(),
     admin.from("companies").select("primary_admin_user_id, name").eq("id", membership.company_id).maybeSingle(),
     supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "branches.manage" }),
     supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "branches.view" }),
     supabase.rpc("current_user_is_main_branch_user", { requested_company_id: membership.company_id }),
+    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "candidates.register" }),
+    supabase.rpc("current_user_has_company_permission", { requested_company_id: membership.company_id, requested_permission: "candidates.create" }),
   ]);
 
   if (canManageResult.error) console.error("Branch manage permission check failed", canManageResult.error);
@@ -48,8 +50,11 @@ async function getAccess() {
   const isOwner = companyResult.data?.primary_admin_user_id === user.id;
   const canManageBranches = isOwner || Boolean(canManageResult?.data);
   const canViewBranches = isOwner || Boolean(canViewResult?.data) || canManageBranches;
+  const canRegisterCandidates = Boolean(registerCandidatesResult.data) || Boolean(createCandidatesResult.data);
 
-  if (!canViewBranches) return { error: "You do not have permission to view branches.", status: 403 as const };
+  if (!canViewBranches && !(allowCandidateRegistration && canRegisterCandidates)) {
+    return { error: "You do not have permission to view branches.", status: 403 as const };
+  }
 
   // Fall back to checking if the user's branch_id is null (= main branch)
   // when the RPC doesn't exist yet (pre-migration state).
@@ -73,6 +78,7 @@ async function getAccess() {
     roleName,
     isMainBranch,
     canManageBranches: canManageBranches && isMainBranch,
+    registrationOnly: allowCandidateRegistration && !canViewBranches,
     companyName: companyResult.data?.name ?? "",
   };
 }
@@ -80,10 +86,27 @@ async function getAccess() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // GET /api/branches — list branches
 // ═══════════════════════════════════════════════════════════════════════════════
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const access = await getAccess();
+    const registrationOnly = new URL(request.url).searchParams.get("purpose") === "candidate-registration";
+    const access = await getAccess(registrationOnly);
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
+
+    if (access.registrationOnly) {
+      let registrationBranchesQuery = access.admin.from("company_branches")
+        .select("id, name")
+        .eq("company_id", access.companyId)
+        .eq("status", "active");
+      if (!access.isMainBranch && access.branchId) {
+        registrationBranchesQuery = registrationBranchesQuery.eq("id", access.branchId);
+      }
+      const { data: branches, error } = await registrationBranchesQuery.order("name");
+      if (error) {
+        console.error("Candidate registration branch list failed", error);
+        return NextResponse.json({ error: "Unable to load company branches." }, { status: 500, headers });
+      }
+      return NextResponse.json({ branches: branches ?? [] }, { headers });
+    }
 
     let branchesQuery = access.admin
       .from("company_branches")

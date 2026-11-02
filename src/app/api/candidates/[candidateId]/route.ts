@@ -1,6 +1,8 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { isUuid } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isPassportNumberValid, normalizePassportNumber, passportNumberRule } from "@/lib/passport-number";
 
 export const runtime = "nodejs";
 
@@ -13,7 +15,7 @@ const candidateFields = [
 const candidateDetailFields = new Set([
   "otherNames", "secondaryPhone", "otherPhone", "age", "gender", "maritalStatus", "abroadStatus", "abroadExperience", "source", "mediaChannel",
   "nin", "passportNumber", "passportIssue", "passportExpiry", "passportStatus", "passportBranch", "passportStorageLocation", "height", "weight", "shirtSize", "shoeSize", "waistSize", "preferredCities",
-  "physicalAddress", "district", "county", "subCounty", "parish", "fatherPhone", "fatherStatus", "motherPhone", "motherStatus",
+  "physicalAddress", "residenceCountry", "residenceState", "district", "county", "subCounty", "parish", "fatherPhone", "fatherStatus", "motherPhone", "motherStatus",
   "kinFirstName", "kinLastName", "kinPhone", "kinRelationship", "emergencyFirstName", "emergencyLastName", "emergencyPhone", "emergencyRelationship",
   "jobOfInterest", "preferredCountries", "assignedContracts", "stage", "travelStatus", "visaStatus", "acceptance", "contracts", "contractManager", "branch", "verification", "photo",
   "educationQualification", "educationInstitution", "educationYearCompleted", "educationField", "lastEmployer", "previousJobTitle", "employmentFrom", "employmentTo", "employmentDuties", "keySkills", "languagesSpoken", "certifications", "recruiterNotes",
@@ -35,8 +37,11 @@ function readCandidateDetails(value: unknown) {
 }
 
 function passportSetupError(details: Record<string, string | number | string[]>, agentName: string) {
-  const passportNumber = typeof details.passportNumber === "string" ? details.passportNumber.trim() : "";
+  const passportNumber = typeof details.passportNumber === "string" ? normalizePassportNumber(details.passportNumber) : "";
   if (!passportNumber) return "";
+  const nationality = typeof details.nationality === "string" ? details.nationality.trim() : "";
+  if (!nationality) return "Select the candidate nationality.";
+  if (!isPassportNumberValid(nationality, passportNumber)) return passportNumberRule(nationality);
   if (details.passportStatus !== "Available" && details.passportStatus !== "With Agent") return "Choose whether the passport is available or with the assigned agent.";
   if (details.passportStatus === "Available" && (
     typeof details.passportBranch !== "string" || !details.passportBranch.trim()
@@ -119,6 +124,28 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       }
       updates.details = details;
     }
+    if ("branchId" in body) {
+      const branchId = typeof body.branchId === "string" && isUuid(body.branchId) ? body.branchId : "";
+      if (!branchId) return NextResponse.json({ error: "Select an active company branch." }, { status: 400, headers });
+      const serviceUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!serviceUrl || !serviceRoleKey) {
+        return NextResponse.json({ error: "Candidate branch verification is not configured on the server." }, { status: 503, headers });
+      }
+      const admin = createClient(serviceUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      const { data: branch, error: branchError } = await admin.from("company_branches")
+        .select("id, name")
+        .eq("id", branchId)
+        .eq("company_id", currentCandidate.company_id)
+        .eq("status", "active")
+        .maybeSingle();
+      if (branchError || !branch) {
+        if (branchError) console.error("Candidate branch validation failed", branchError);
+        return NextResponse.json({ error: "Select an active branch registered by this company." }, { status: 400, headers });
+      }
+      updates.branch_id = branchId;
+      if (updates.details && typeof updates.details === "object") updates.details.branch = branch.name;
+    }
     if ("agentUserId" in body) {
       const requestedAgentUserId = body.agentUserId === "" ? null : body.agentUserId;
       if (requestedAgentUserId !== null && (typeof requestedAgentUserId !== "string" || !isUuid(requestedAgentUserId))) {
@@ -158,7 +185,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       .from("candidates")
       .update(updates as never)
       .eq("id", candidateId)
-      .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
+      .select("id, source_row_number, branch_id, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
       .maybeSingle();
     if (error || !data) {
       console.error("Candidate update failed", error);

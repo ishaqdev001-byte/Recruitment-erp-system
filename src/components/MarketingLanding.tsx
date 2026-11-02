@@ -112,18 +112,26 @@ const previews = [
 
 export default function MarketingLanding() {
   const [activePreview, setActivePreview] = useState(0)
+  const [previewPaused, setPreviewPaused] = useState(false)
 
   const preview = previews[activePreview]
 
   const PreviewIcon = preview.icon
 
   useEffect(() => {
+    if (
+      previewPaused ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return
+    }
+
     const timer = window.setInterval(() => {
       setActivePreview((index) => (index + 1) % previews.length)
     }, 7000)
 
     return () => window.clearInterval(timer)
-  }, [])
+  }, [previewPaused])
 
   const showPrevious = () => {
     setActivePreview((index) => (index + previews.length - 1) % previews.length)
@@ -136,11 +144,11 @@ export default function MarketingLanding() {
   return (
     <main className="min-h-screen overflow-hidden bg-[#080d18] text-slate-100">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[760px] bg-[radial-gradient(ellipse_at_68%_18%,rgba(245,158,11,0.12),transparent_48%)]" />
-      <header className="relative mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8">
+      <header className="landing-enter relative mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8">
         <Link
           href="/"
           aria-label="Kilax Smart Recruit home"
-          className="flex items-center gap-3"
+          className="landing-brand flex items-center gap-3"
         >
           <img src="/branding/kilax-icon.svg" alt="" className="h-10 w-10" />
           <span className="text-sm font-700 tracking-wide sm:text-base">
@@ -150,13 +158,13 @@ export default function MarketingLanding() {
         <nav className="flex items-center gap-3">
           <Link
             href="/login"
-            className="rounded-lg px-4 py-2.5 text-sm font-600 text-slate-300 transition hover:bg-white/5 hover:text-white"
+            className="landing-button rounded-lg px-4 py-2.5 text-sm font-600 text-slate-300 transition hover:bg-white/5 hover:text-white"
           >
             Log in
           </Link>
           <Link
             href="/register"
-            className="rounded-lg bg-amber-400 px-4 py-2.5 text-sm font-700 text-slate-950 transition hover:bg-amber-300"
+            className="landing-button rounded-lg bg-amber-400 px-4 py-2.5 text-sm font-700 text-slate-950 transition hover:bg-amber-300"
           >
             Get started
           </Link>
@@ -164,7 +172,7 @@ export default function MarketingLanding() {
       </header>
 
       <section className="relative mx-auto grid max-w-7xl items-center gap-12 px-5 pb-20 pt-10 sm:px-8 lg:grid-cols-[0.88fr_1.12fr] lg:gap-16 lg:pb-28 lg:pt-16">
-        <div className="max-w-xl">
+        <div className="landing-hero max-w-xl">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-amber-300/20 bg-amber-300/5 px-3 py-1.5 text-xs font-600 text-amber-200">
             <Globe2 size={14} aria-hidden="true" />A dedicated workspace for
             every company
@@ -180,14 +188,14 @@ export default function MarketingLanding() {
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
               href="/register"
-              className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-5 py-3.5 text-sm font-700 text-slate-950 transition hover:bg-amber-300"
+              className="landing-button inline-flex items-center gap-2 rounded-lg bg-amber-400 px-5 py-3.5 text-sm font-700 text-slate-950 transition hover:bg-amber-300"
             >
               Register to get started{" "}
               <ArrowRight size={17} aria-hidden="true" />
             </Link>
             <Link
               href="/login"
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/70 px-5 py-3.5 text-sm font-600 text-slate-100 transition hover:border-slate-500"
+              className="landing-button inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/70 px-5 py-3.5 text-sm font-600 text-slate-100 transition hover:border-slate-500"
             >
               Log in to your workspace
             </Link>
@@ -213,7 +221,17 @@ export default function MarketingLanding() {
         <section
           id="features"
           aria-label="Product previews"
-          className="relative min-w-0"
+          className="landing-preview relative min-w-0"
+          onMouseEnter={() => setPreviewPaused(true)}
+          onMouseLeave={() => setPreviewPaused(false)}
+          onFocusCapture={() => setPreviewPaused(true)}
+          onBlurCapture={(event) => {
+            if (
+              !event.currentTarget.contains(event.relatedTarget as Node | null)
+            ) {
+              setPreviewPaused(false)
+            }
+          }}
         >
           <div className="absolute -inset-5 rounded-[2rem] bg-amber-300/5 blur-2xl" />
           <div className="relative overflow-hidden rounded-2xl border border-slate-700/80 bg-[#0e1524] shadow-[0_30px_100px_rgba(0,0,0,0.45)]">
@@ -263,7 +281,10 @@ export default function MarketingLanding() {
                   </p>
                 </div>
               </aside>
-              <div className="min-w-0 p-4 sm:p-5">
+              <div
+                key={activePreview}
+                className="landing-preview-content min-w-0 p-4 sm:p-5"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2 text-[10px] font-600 text-amber-200">
@@ -339,7 +360,7 @@ export default function MarketingLanding() {
                         aria-label={`Show preview ${index + 1}: ${item.eyebrow}`}
                         aria-current={index === activePreview}
                         onClick={() => setActivePreview(index)}
-                        className={`h-1.5 rounded-full transition-all ${
+                        className={`landing-indicator h-1.5 rounded-full transition-all ${
                           index === activePreview
                             ? "w-7 bg-amber-300"
                             : "w-1.5 bg-slate-600 hover:bg-slate-400"
@@ -352,7 +373,7 @@ export default function MarketingLanding() {
                       type="button"
                       onClick={showPrevious}
                       aria-label="Previous preview"
-                      className="rounded-md border border-slate-700 p-1.5 text-slate-300 hover:bg-slate-800"
+                      className="landing-control rounded-md border border-slate-700 p-1.5 text-slate-300 hover:bg-slate-800"
                     >
                       <ArrowLeft size={14} aria-hidden="true" />
                     </button>
@@ -360,7 +381,7 @@ export default function MarketingLanding() {
                       type="button"
                       onClick={showNext}
                       aria-label="Next preview"
-                      className="rounded-md border border-slate-700 p-1.5 text-slate-300 hover:bg-slate-800"
+                      className="landing-control rounded-md border border-slate-700 p-1.5 text-slate-300 hover:bg-slate-800"
                     >
                       <ArrowRight size={14} aria-hidden="true" />
                     </button>
@@ -401,7 +422,7 @@ export default function MarketingLanding() {
           ].map(({ icon: Icon, title, text }) => (
             <article
               key={title}
-              className="border-b border-slate-800/80 py-6 sm:px-5 sm:odd:border-r lg:border-b-0 lg:border-r lg:py-8 lg:first:pl-0 lg:last:border-r-0"
+              className="landing-feature border-b border-slate-800/80 py-6 sm:px-5 sm:odd:border-r lg:border-b-0 lg:border-r lg:py-8 lg:first:pl-0 lg:last:border-r-0"
             >
               <Icon size={19} className="text-amber-300" aria-hidden="true" />
               <h2 className="mt-3 text-sm font-700 text-slate-100">{title}</h2>

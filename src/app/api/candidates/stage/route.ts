@@ -197,19 +197,23 @@ export async function POST(request: Request) {
           continue;
         }
 
-        const nextDetails: Record<string, unknown> = {
-          ...details,
-          stage: "Submitted to Project",
-          assignedProjectId: project.id,
-          assignedContracts: project.project_name,
-          contracts: project.project_name,
-        };
-        const { data, error } = await supabase.from("candidates").update({ details: nextDetails as never })
-          .eq("id", candidate.id).eq("company_id", membership.company_id)
-          .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
+        const { error: submissionError } = await supabase.rpc("record_candidate_project_submission", {
+          requested_candidate_id: candidate.id,
+          requested_project_id: project.id,
+        });
+        if (submissionError) {
+          console.error("Candidate project submission could not be recorded", submissionError);
+          rejected.push({ candidateId: candidate.id, name, reasons: [submissionError.message || "Project submission could not be saved."], kind: "transition" });
+          continue;
+        }
+        const { data, error } = await supabase.from("candidates")
+          .select("id, source_row_number, branch_id, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
+          .eq("id", candidate.id)
+          .eq("company_id", membership.company_id)
           .maybeSingle();
         if (error || !data) {
-          rejected.push({ candidateId: candidate.id, name, reasons: ["project submission could not be saved; verify edit access and try again"], kind: "transition" });
+          console.error("Submitted candidate could not be reloaded", error);
+          rejected.push({ candidateId: candidate.id, name, reasons: ["Project submission was recorded, but the updated candidate could not be reloaded."], kind: "transition" });
           continue;
         }
         updated.push(data);

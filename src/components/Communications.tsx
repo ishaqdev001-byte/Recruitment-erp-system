@@ -20,6 +20,7 @@ interface Message {
   status: "Sent" | "Received" | "Draft" | "Failed" | "Logged" | "Sending" | "Unknown";
   smsLog?: boolean;
   mailLog?: boolean;
+  systemLog?: boolean;
 }
 
 type SmsContact = { id: string; type: ContactType; name: string; phone: string };
@@ -29,6 +30,7 @@ type MailFolder = "inbox" | "starred" | "sent" | "drafts";
 type Mailbox = { provider: MailProvider; email_address: string; connected_at: string; auth_type?: "oauth" | "imap_smtp" };
 type MailboxesPayload = { mailboxes?: Mailbox[]; configured?: Partial<Record<MailProvider, boolean>>; canSend?: boolean; platformEmail?: string; defaultProvider?: MailProvider; error?: string };
 type ProviderMail = { id: string; provider: MailProvider; direction: "Inbound" | "Outbound"; from: string; to: string; subject: string; body: string; date: string; status: "Received" | "Sent" | "Draft" | "Failed" | "Unknown" };
+type SystemCommunication = { id: string; contact: string; projectName: string; subject: string; body: string; created_at: string };
 
 const messages: Message[] = [
   { id: 3, contact: "Suzan Mirembe", contactType: "Candidate", channel: "Phone", direction: "Outbound", subject: "Medical certificate follow-up", body: "Called to follow up on medical certificate. Candidate confirmed she will collect it from the clinic on Aug 27.", date: "Aug 25, 2026 11:15", by: "Director Vicent", status: "Logged" },
@@ -73,6 +75,7 @@ export default function Communications({ userName = "Team", companyName = "", us
   const [mailMessages, setMailMessages] = useState<Message[]>([]);
   const [mailLoading, setMailLoading] = useState(false);
   const [mailError, setMailError] = useState("");
+  const [systemError, setSystemError] = useState("");
   const [mailNotice, setMailNotice] = useState("");
   const [mailTo, setMailTo] = useState("");
   const [mailSubject, setMailSubject] = useState("");
@@ -111,6 +114,33 @@ export default function Communications({ userName = "Team", companyName = "", us
   };
 
   useEffect(() => { void loadSmsHistory(); }, []);
+
+  const loadSystemMessages = async () => {
+    setSystemError("");
+    try {
+      const response = await fetch("/api/communications/system", { cache: "no-store" });
+      const payload = await response.json() as { messages?: SystemCommunication[]; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to load system communications.");
+      const systemMessages: Message[] = (payload.messages ?? []).map((item) => ({
+        id: `system-${item.id}`,
+        contact: item.contact,
+        contactType: "Candidate",
+        channel: "Note",
+        direction: "Outbound",
+        subject: item.subject,
+        body: `${item.body}\n\nProject: ${item.projectName}`,
+        date: new Date(item.created_at).toLocaleString(),
+        by: "RecruitOS system",
+        status: "Logged",
+        systemLog: true,
+      }));
+      setMsgs((current) => [...systemMessages, ...current.filter((item) => !item.systemLog)]);
+    } catch (error) {
+      setSystemError(error instanceof Error ? error.message : "Unable to load system communications.");
+    }
+  };
+
+  useEffect(() => { void loadSystemMessages(); }, []);
 
   const loadMailMessages = async (provider: MailProvider) => {
     setMailLoading(true);
@@ -395,6 +425,7 @@ export default function Communications({ userName = "Team", companyName = "", us
               </button>
             ))}
           </div>
+          {systemError && <p role="alert" className="border-b px-6 py-2 text-sm text-red-600" style={{ borderColor: "var(--border)" }}>{systemError}</p>}
           <div className="h-4 w-px" style={{ background: "var(--border)" }} />
           <div className="flex gap-1.5">
             {(["All", "Candidate", "Employer", "Agent", "Staff", "Other"] as const).map((ct) => (

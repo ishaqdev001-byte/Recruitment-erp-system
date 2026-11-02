@@ -14,6 +14,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ passp
     const access = await getPassportAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers: responseHeaders });
     if (!await hasPassportPermission(access, "passport.edit")) return NextResponse.json({ error: "You do not have permission to update passport custody." }, { status: 403, headers: responseHeaders });
+    if (!access.canManageStatus) return NextResponse.json({ error: "Only the Chairman, General Manager, or Supervisor can change passport status." }, { status: 403, headers: responseHeaders });
 
     const { passportId } = await context.params;
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
@@ -62,6 +63,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ passp
       .maybeSingle();
     if (error || !data) {
       console.error("Passport status update failed", error);
+      if (error?.code === "23514" || error?.code === "42501") {
+        return NextResponse.json({ error: error.message }, { status: error.code === "23514" ? 409 : 403, headers: responseHeaders });
+      }
       return NextResponse.json({ error: "Unable to update passport custody." }, { status: 403, headers: responseHeaders });
     }
     return NextResponse.json({ success: true }, { headers: responseHeaders });

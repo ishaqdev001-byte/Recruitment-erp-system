@@ -102,7 +102,7 @@ const roleAlerts: Record<WorkspaceRole, { label: string; value: string; detail: 
   Chairman: [
     { label: "Full company oversight across all branches", value: "Overview", detail: "Review all branches and operations", view: "branches" as View },
     { label: "Pending approvals requiring your decision", value: "Action", detail: "Review the approval queue", view: "approvals" as View },
-    { label: "System health and audit activity", value: "Stable", detail: "Check audit log", view: "auditlog" },
+    { label: "Company-wide operations", value: "Stable", detail: "Review branch activity", view: "branches" },
   ],
   "General Manager": [
     { label: "Leave requests pending your review", value: "Action", detail: "Review team leave requests", view: "leave" },
@@ -157,7 +157,7 @@ const roleAlerts: Record<WorkspaceRole, { label: string; value: string; detail: 
   Viewer: [
     { label: "No direct actions required", value: "Review", detail: "Monitor team performance", view: "reports" },
     { label: "Weekly KPI summary ready", value: "Ready", detail: "Open analytics dashboard", view: "analytics" },
-    { label: "Compliance snapshot fresh", value: "Stable", detail: "Review latest activity log", view: "auditlog" },
+    { label: "Compliance snapshot fresh", value: "Stable", detail: "Review company reports", view: "reports" },
   ],
   Manager: [
     { label: "Recruitment funnel slowing", value: "Watch", detail: "Check conversion in analytics", view: "analytics" },
@@ -165,8 +165,8 @@ const roleAlerts: Record<WorkspaceRole, { label: string; value: string; detail: 
     { label: "Two teams at capacity", value: "Forecast", detail: "Balance staffing load", view: "reports" },
   ],
   Administrator: [
-    { label: "System health normal", value: "Stable", detail: "No blocking alerts", view: "auditlog" },
-    { label: "2 security exceptions need review", value: "Review", detail: "Check audit log", view: "auditlog" },
+    { label: "Workspace administration", value: "Stable", detail: "Review user access", view: "users" },
+    { label: "User permissions assigned", value: "Review", detail: "Manage workspace roles", view: "users" },
     { label: "User permissions changed", value: "Today", detail: "Open users and roles", view: "users" },
   ],
   "Finance User": [

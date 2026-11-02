@@ -201,6 +201,14 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
 
     agentUserId: record.agent_user_id ?? undefined,
 
+    createdByName: record.created_by_name ?? undefined,
+
+    createdAt: record.created_at ?? undefined,
+
+    updatedByName: record.updated_by_name ?? undefined,
+
+    updatedAt: record.updated_at ?? undefined,
+
     mediaChannel: list("mediaChannel"),
 
     nin: text("nin"),

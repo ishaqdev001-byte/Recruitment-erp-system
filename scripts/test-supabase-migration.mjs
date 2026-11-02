@@ -178,6 +178,14 @@ const recruitmentAgentAccessControlsMigration = await readFile(
   "utf8",
 )
 
+const recruitmentAgentCandidateScopeMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102091421_enforce_recruitment_agent_candidate_scope.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const recruitmentAgentWorkforceAccessMigration = await readFile(
   new URL(
     "../supabase/migrations/20261030081806_restrict_recruitment_agent_workforce_access.sql",
@@ -914,6 +922,10 @@ try {
 
   await database.exec(recruitmentAgentAccessControlsMigration)
 
+  await database.exec(recruitmentAgentCandidateScopeMigration)
+
+  await database.exec(recruitmentAgentCandidateScopeMigration)
+
   await database.exec(candidateEditorNameLookupMigration)
 
   await database.exec(candidateEditorNameLookupMigration)
@@ -1347,10 +1359,14 @@ try {
       where company_id = '${companyA}' and name = 'Finance Manager';
     insert into public.candidates (id, company_id, file_number, first_name, last_name) values
       ('${candidateA}', '${companyA}', 'A-001', 'Candidate', 'A'),
+      ('40000000-0000-4000-8000-000000000003', '${companyA}', 'A-002', 'Other', 'Candidate'),
       ('${candidateB}', '${companyB}', 'B-001', 'Candidate', 'B');
     update public.candidates
       set agent_user_id = '${recruitmentAgentUser}', agent_name = 'Recruitment Agent'
       where id = '${candidateA}';
+    update public.candidates
+      set agent_user_id = '${userB}', agent_name = 'Other Agent'
+      where id = '40000000-0000-4000-8000-000000000003';
     insert into public.candidate_documents (
       id, company_id, candidate_id, file_name, original_file_name, file_type,
       mime_type, file_size, storage_path, document_type, uploaded_by
@@ -1371,6 +1387,12 @@ try {
     candidate_registration: false,
     agent_visa_finance: true,
   })
+  await database.query(
+    `update public.company_roles
+      set access_settings = jsonb_set(access_settings, '{candidate_scope}', '"company"')
+      where id = $1`,
+    [seededAgentRole.rows[0].id],
+  )
 
   const seededAgentPermissions = await database.query(
     "select permission_code from public.role_permissions where role_id = $1 order by permission_code",
@@ -1417,6 +1439,22 @@ try {
     "select set_config('request.jwt.claim.sub', $1, false)",
     [recruitmentAgentUser],
   )
+  const enforcedAgentCandidateScope = await database.query(
+    `select public.current_user_role_setting($1, 'candidate_scope', 'company') as candidate_scope`,
+    [companyA],
+  )
+  assert.equal(enforcedAgentCandidateScope.rows[0].candidate_scope, "assigned")
+  const agentCandidateAccess = await database.query(
+    `select
+      public.current_user_can_access_candidate($1, $2) as own_candidate,
+      public.current_user_can_access_candidate($1, '40000000-0000-4000-8000-000000000003') as other_candidate`,
+    [companyA, candidateA],
+  )
+  assert.deepEqual(agentCandidateAccess.rows[0], {
+    own_candidate: true,
+    other_candidate: false,
+  })
+
   const restrictedAgentModulePermissions = await database.query(
     `select code
       from public.permissions
@@ -1455,6 +1493,11 @@ try {
       [companyA, recruitmentAgentUser],
     ),
     /row-level security|permission denied/,
+  )
+
+  await database.exec("reset role")
+  await database.query(
+    "delete from public.candidates where id = '40000000-0000-4000-8000-000000000003'",
   )
 
   await database.exec("reset role; set role authenticated")

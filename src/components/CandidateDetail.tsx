@@ -127,6 +127,12 @@ const countryOptions = countryMetadata.flatMap((country) => {
   return [{ value: name, label: name, searchText: country.shortName?.trim() || name }];
 });
 
+function formatAttributionDate(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+}
+
 type CandidateSourceOption = { id: string; source: string };
 type BranchOption = { id: string; name: string };
 type CandidateStageEvent = {
@@ -508,6 +514,18 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
             {isNew ? "Register Candidate" : `Edit Candidate: ${form.firstName} ${form.lastName}`}
           </h1>
           {isNew && <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>Complete the required fields to register this candidate.</p>}
+          {!isNew && (
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+              <span>
+                Created by <strong style={{ color: "var(--foreground)" }}>{candidate.createdByName || "—"}</strong>
+                {formatAttributionDate(candidate.createdAt) && ` · ${formatAttributionDate(candidate.createdAt)}`}
+              </span>
+              <span>
+                Last edited by <strong style={{ color: "var(--foreground)" }}>{candidate.updatedByName || candidate.createdByName || "—"}</strong>
+                {(formatAttributionDate(candidate.updatedAt || candidate.createdAt)) && ` · ${formatAttributionDate(candidate.updatedAt || candidate.createdAt)}`}
+              </span>
+            </div>
+          )}
         </div>
         <button
           type="button"

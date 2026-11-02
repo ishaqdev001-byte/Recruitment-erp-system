@@ -71,6 +71,10 @@ export interface Candidate {
   contractManager: string;
   branch: string;
   branchId?: string;
+  createdByName?: string;
+  createdAt?: string;
+  updatedByName?: string;
+  updatedAt?: string;
   residenceCountry?: string;
   residenceState?: string;
   verification: string;

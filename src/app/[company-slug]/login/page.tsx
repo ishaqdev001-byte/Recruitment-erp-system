@@ -54,13 +54,6 @@ export default function CompanyLoginPage({
   const [loginError, setLoginError] = useState("");
   const [signingInProgress, setSigningInProgress] = useState("");
 
-  // Resolve async params
-  useEffect(() => {
-    params.then(({ "company-slug": slug }) => {
-      setCompanySlug(slug);
-    });
-  }, [params]);
-
   // Load company info on mount
   useEffect(() => {
     if (!companySlug) return;
@@ -114,6 +107,8 @@ export default function CompanyLoginPage({
         setLoginError("Company information is not loaded. Please refresh and try again.");
         return;
       }
+
+      let redirecting = false;
 
       try {
         setSigningIn(true);
@@ -202,15 +197,18 @@ export default function CompanyLoginPage({
 
         // Redirect to company dashboard
         setSigningInProgress("Redirecting…");
-        router.push(`/${companySlug}`);
+        redirecting = true;
+        window.location.assign(`/${encodeURIComponent(companySlug)}`);
       } catch (err) {
         console.error("Login error:", err);
         setLoginError(
           err instanceof Error ? err.message : "An unexpected error occurred."
         );
       } finally {
-        setSigningIn(false);
-        setSigningInProgress("");
+        if (!redirecting) {
+          setSigningIn(false);
+          setSigningInProgress("");
+        }
       }
     },
     [companyInfo, email, password, companySlug, router]
@@ -234,6 +232,18 @@ export default function CompanyLoginPage({
     const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, "_blank");
   }, [companyInfo]);
+
+  const signInProgressSteps = [
+    "Authenticating…",
+    "Verifying credentials…",
+    "Checking company access…",
+    "Loading your profile…",
+    "Redirecting…",
+  ];
+  const currentProgressStep = Math.max(
+    1,
+    signInProgressSteps.indexOf(signingInProgress) + 1,
+  );
 
   if (loading) {
     return (
@@ -323,7 +333,11 @@ export default function CompanyLoginPage({
           </div>
 
           {/* Form Section */}
-          <form onSubmit={handleLogin} className="px-8 py-8 space-y-5">
+          <form
+            onSubmit={handleLogin}
+            className="px-8 py-8 space-y-5"
+            aria-busy={signingIn}
+          >
             {/* Email Field */}
             <div className="space-y-2">
               <label className="block text-xs font-700 uppercase tracking-wider text-slate-300">
@@ -418,6 +432,44 @@ export default function CompanyLoginPage({
                 </>
               )}
             </button>
+            {signingIn && (
+              <div
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className="flex items-center gap-3 rounded-xl border border-blue-400/20 bg-blue-500/10 px-4 py-3"
+              >
+                <div
+                  aria-hidden="true"
+                  className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-blue-200/30 border-t-blue-300"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-600 text-blue-100">
+                      {signingInProgress || "Signing in…"}
+                    </span>
+                    <span className="shrink-0 text-xs text-blue-200/70">
+                      Step {currentProgressStep} of {signInProgressSteps.length}
+                    </span>
+                  </div>
+                  <div
+                    className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-700"
+                    role="progressbar"
+                    aria-label="Sign-in progress"
+                    aria-valuemin={1}
+                    aria-valuemax={signInProgressSteps.length}
+                    aria-valuenow={currentProgressStep}
+                  >
+                    <div
+                      className="h-full rounded-full bg-blue-400 transition-[width] duration-300"
+                      style={{
+                        width: `${(currentProgressStep / signInProgressSteps.length) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </form>
 
           {/* Divider */}

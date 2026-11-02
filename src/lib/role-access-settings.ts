@@ -45,14 +45,13 @@ export function roleAccessSettings(
   const isAgentRole = isRecruitmentAgentRole(roleName)
 
   return {
-    candidate_scope:
-      settings.candidate_scope === "assigned"
+    candidate_scope: isAgentRole
+      ? "assigned"
+      : settings.candidate_scope === "assigned"
         ? "assigned"
         : settings.candidate_scope === "company"
           ? "company"
-          : isAgentRole
-            ? "assigned"
-            : DEFAULT_ROLE_ACCESS_SETTINGS.candidate_scope,
+          : DEFAULT_ROLE_ACCESS_SETTINGS.candidate_scope,
     inquiry_scope:
       settings.inquiry_scope === "created"
         ? "created"

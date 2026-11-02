@@ -167,7 +167,6 @@ export type View =
   | "agent-invoices"
   | "tasks"
   | "communications"
-  | "auditlog"
   | "attendance"
   | "leave"
   | "human-resources"
@@ -261,8 +260,6 @@ type CompanyForm = {
   adminPhone: string;
   password: string;
   confirmPassword: string;
-  logoFile?: File;
-  logoPreview?: string;
 };
 
 const emptyCompanyForm: CompanyForm = {
@@ -280,8 +277,6 @@ const emptyCompanyForm: CompanyForm = {
   adminPhone: "",
   password: "",
   confirmPassword: "",
-  logoFile: undefined,
-  logoPreview: undefined,
 };
 
 const formatInitials = (value: string) =>
@@ -406,7 +401,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     name: userName,
     title: role,
     email: user.email ?? "",
-    phone: "",
+    phone: String(user.user_metadata?.phone ?? ""),
     password: "",
     role,
     companyId: company.id,
@@ -433,6 +428,26 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
       permissions,
     } satisfies Session,
   };
+}
+
+async function provisionPendingCompanyRegistration(user: User) {
+  if (!user.user_metadata?.company_registration) return null;
+
+  const supabase = createSupabaseBrowserClient();
+  const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  if (!currentSession) throw new Error("Sign in after verifying your email to finish setting up your company.");
+
+  const response = await fetch("/api/company-registration/provision", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${currentSession.access_token}` },
+    cache: "no-store",
+  });
+  const result = await response.json() as { companyId?: string; error?: string };
+  if (!response.ok || !result.companyId) {
+    throw new Error(result.error ?? "Unable to finish setting up your company workspace.");
+  }
+  return result.companyId;
 }
 
 /** After a successful login, check whether the user must change their password. */
@@ -466,6 +481,7 @@ export default function App() {
   const [companyForm, setCompanyForm] = useState<CompanyForm>(emptyCompanyForm);
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
   const [registerError, setRegisterError] = useState("");
+  const [registerSubmitting, setRegisterSubmitting] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [resetEmailSending, setResetEmailSending] = useState(false);
   const [resetEmailMessage, setResetEmailMessage] = useState("");
@@ -600,7 +616,7 @@ export default function App() {
       if (currentUrl.searchParams.get("view") === "communications") setView("communications");
       // Restore active view from the URL path on load / hard refresh.
       // Supports /view, /company-slug/view, and legacy ?v= / ?view= params.
-      const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","agent-invoices","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
+      const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","agent-invoices","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
       // Handle both /view and /company-slug/view path formats
       const pathParts = currentUrl.pathname.replace(/^\//, "").split("/").filter(Boolean);
       const pathView = pathParts.length >= 2 ? pathParts[1] : pathParts[0] ?? "";
@@ -617,6 +633,9 @@ export default function App() {
       const hashParams = new URLSearchParams(currentUrl.hash.slice(1));
       const inviteLink = hashParams.get("type") === "invite" || currentUrl.searchParams.get("invite") === "1";
       const recoveryLink = currentUrl.searchParams.get("view") === "reset-password" || hashParams.get("type") === "recovery";
+      const signupLink = currentUrl.searchParams.get("view") === "company-provisioning"
+        || currentUrl.searchParams.get("type") === "signup"
+        || hashParams.get("type") === "signup";
       const currentInviteId = currentUrl.searchParams.get("invitation_id") ?? "";
       if (inviteLink) setAuthView("invite");
       if (recoveryLink) {
@@ -628,18 +647,22 @@ export default function App() {
         const accessToken = hashParams.get("access_token");
         const refreshToken = hashParams.get("refresh_token");
         const recoveryCode = currentUrl.searchParams.get("code") ?? hashParams.get("code") ?? currentUrl.searchParams.get("token") ?? "";
-        if ((inviteLink || recoveryLink) && accessToken && refreshToken) {
+        if ((inviteLink || recoveryLink || signupLink) && accessToken && refreshToken) {
           const { error: sessionError } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
           if (sessionError) {
             throw new Error(recoveryLink
               ? "This password reset link is invalid or expired. Request a new one from the login screen."
+              : signupLink
+                ? "This email verification link is invalid or expired. Request a new registration link."
               : "This invitation link is invalid or expired. Ask the company administrator to send a new invitation.");
           }
           window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
-        } else if (recoveryLink && recoveryCode) {
+        } else if ((recoveryLink || signupLink) && recoveryCode) {
           const { data: { session }, error: sessionError } = await supabase.auth.exchangeCodeForSession(recoveryCode);
           if (sessionError || !session) {
-            throw new Error("This password reset link is invalid or expired. Request a new one from the login screen.");
+            throw new Error(recoveryLink
+              ? "This password reset link is invalid or expired. Request a new one from the login screen."
+              : "This email verification link is invalid or expired. Request a new registration link.");
           }
           window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}`);
         }
@@ -688,6 +711,7 @@ export default function App() {
             setResetPasswordEmail(user.email ?? "");
             return;
           }
+          const registeredCompanyId = await provisionPendingCompanyRegistration(user);
           const hasInviteMetadata = Boolean(user.app_metadata?.invitation_company_id
             || (user.user_metadata?.company_name && user.user_metadata?.role_name));
           if (hasInviteMetadata) {
@@ -699,7 +723,7 @@ export default function App() {
               return;
             }
           }
-          const workspace = await resolveUserWorkspace(user);
+          const workspace = await resolveUserWorkspace(user, registeredCompanyId ?? undefined);
           if (!cancelled) {
             setCompanies([workspace.company]);
             setUsers([workspace.user]);
@@ -1035,7 +1059,6 @@ export default function App() {
       projects:              "Projects",
       tasks:                 "Tasks",
       communications:        "Communications",
-      auditlog:              "Audit Log",
       attendance:            "Attendance",
       leave:                 "Leave",
       "human-resources":     "My HR Profile",
@@ -1092,7 +1115,7 @@ export default function App() {
 
   // Handle browser back / forward buttons
   useEffect(() => {
-    const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","agent-invoices","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","auditlog","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
+    const validViews = new Set<string>(["dashboard","candidates","candidate-inquiries","agents","suppliers","jobs","interviews","offers","analytics","finance","agent-invoices","accounts","payments","paychecks","passport","documents","ai","reports","users","settings","contractors","projects","invoices","tasks","communications","attendance","leave","human-resources","medical-appointments","medical-management","hospital-management","branches","approvals","requisitions","drive"]);
     const authViewSet = new Set<string>(["login","register","invite","reset-password"]);
     const onPopState = (event: PopStateEvent) => {
       const state = event.state as { view?: string; authView?: string; companySlug?: string } | null;
@@ -1132,9 +1155,76 @@ export default function App() {
     }
   }, [activeUser, session]);
 
-  const handleRegisterSubmit = (event: FormEvent) => {
+  const handleRegisterSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    setRegisterError("Company provisioning must be completed by a platform administrator.");
+    setRegisterError("");
+    const form = companyForm;
+    if (form.password !== form.confirmPassword) {
+      setRegisterError("The passwords do not match.");
+      return;
+    }
+    setRegisterSubmitting(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const redirectOrigin = (process.env.NEXT_PUBLIC_SITE_URL || window.location.origin).replace(/\/+$/, "");
+      const { data, error } = await supabase.auth.signUp({
+        email: form.adminEmail.trim(),
+        password: form.password,
+        options: {
+          emailRedirectTo: `${redirectOrigin}/?view=company-provisioning`,
+          data: {
+            full_name: form.fullName.trim(),
+            phone: form.adminPhone.trim(),
+            company_registration: {
+              companyName: form.companyName.trim(),
+              registrationNumber: form.registrationNumber.trim(),
+              country: form.country.trim(),
+              city: form.city.trim(),
+              officeAddress: form.officeAddress.trim(),
+              phone: form.phone.trim(),
+              email: form.email.trim(),
+              website: form.website.trim(),
+              fullName: form.fullName.trim(),
+              position: form.position.trim(),
+              adminPhone: form.adminPhone.trim(),
+            },
+          },
+        },
+      });
+      if (error) throw error;
+      if (!data.user) throw new Error("Supabase did not return the new user account.");
+
+      setCompanyForm({ ...form, password: "", confirmPassword: "" });
+      if (!data.session) {
+        if (data.user.identities?.length === 0) {
+          throw new Error("An account with this email already exists. Sign in or use the password reset link.");
+        }
+        setAuthView("verify");
+        return;
+      }
+
+      try {
+        const companyId = await provisionPendingCompanyRegistration(data.user);
+        if (!companyId) throw new Error("The new account is missing its company registration details.");
+        const workspace = await resolveUserWorkspace(data.user, companyId);
+        setCompanies([workspace.company]);
+        setUsers([workspace.user]);
+        setRole(workspace.user.role);
+        setSession(workspace.session);
+        setMustChangePassword(false);
+      } catch (error) {
+        await supabase.auth.signOut();
+        throw new Error(
+          `Your account was created, but company setup did not finish. Sign in with this email and password to retry. ${
+            error instanceof Error ? error.message : "Please try again."
+          }`,
+        );
+      }
+    } catch (error) {
+      setRegisterError(error instanceof Error ? error.message : "Unable to create your company account.");
+    } finally {
+      setRegisterSubmitting(false);
+    }
   };
 
   const handleLoginSubmit = async (event: FormEvent) => {
@@ -1151,7 +1241,8 @@ export default function App() {
         return;
       }
 
-      const workspace = await resolveUserWorkspace(data.user);
+      const registeredCompanyId = await provisionPendingCompanyRegistration(data.user);
+      const workspace = await resolveUserWorkspace(data.user, registeredCompanyId ?? undefined);
       setCompanies([workspace.company]);
       setUsers([workspace.user]);
       setRole(workspace.user.role);
@@ -1421,15 +1512,28 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    const companyLoginPath = session?.companySlug
+      ? `/${encodeURIComponent(session.companySlug)}/login`
+      : "/login";
+
     try {
       await removeBrowserPushSubscription().catch((error: unknown) =>
         console.error("Push subscription cleanup failed during sign-out.", error),
       );
-      await createSupabaseBrowserClient().auth.signOut();
+      const supabase = createSupabaseBrowserClient();
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error("Unable to revoke the current sign-in session.", error);
+        const { error: localSignOutError } = await supabase.auth.signOut({
+          scope: "local",
+        });
+        if (localSignOutError) throw localSignOutError;
+      }
     } finally {
       if (session) {
         window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`);
       }
+      window.sessionStorage.removeItem("session");
       idleLockedRef.current = false;
       setIdleLocked(false);
       setUnlockPassword("");
@@ -1441,6 +1545,7 @@ export default function App() {
     setView("dashboard");
     setLoginError("");
     setRegisterError("");
+    window.location.replace(companyLoginPath);
   };
 
   const renderView = () => {
@@ -1557,6 +1662,7 @@ export default function App() {
         companyForm={companyForm}
         onCompanyFormChange={setCompanyForm}
         onRegister={handleRegisterSubmit}
+        registerSubmitting={registerSubmitting}
         registerError={registerError}
         loginForm={loginForm}
         onLoginFormChange={setLoginForm}
@@ -1850,6 +1956,7 @@ function AuthenticationExperience({
   companyForm,
   onCompanyFormChange,
   onRegister,
+  registerSubmitting,
   registerError,
   loginForm,
   onLoginFormChange,
@@ -1882,7 +1989,8 @@ function AuthenticationExperience({
   onSwitchView: (view: "landing" | "login" | "register" | "verify" | "invite" | "reset-password") => void;
   companyForm: CompanyForm;
   onCompanyFormChange: (next: CompanyForm) => void;
-  onRegister: (event: FormEvent) => void;
+  onRegister: (event: FormEvent) => void | Promise<void>;
+  registerSubmitting: boolean;
   registerError: string;
   loginForm: { email: string; password: string };
   onLoginFormChange: (next: { email: string; password: string }) => void;
@@ -2076,21 +2184,21 @@ function AuthenticationExperience({
           </div>
           <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full text-2xl" style={{ background: "rgba(16,185,129,0.14)", color: "#34d399" }}>✓</div>
           <div className="text-xs font-700 uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Account created</div>
-          <h2 className="mt-3 text-3xl font-700" style={{ color: "var(--foreground)" }}>Your company workspace is ready.</h2>
+          <h2 className="mt-3 text-3xl font-700" style={{ color: "var(--foreground)" }}>Verify your email to activate your workspace.</h2>
           <p className="mt-3 text-base leading-7" style={{ color: "var(--muted-foreground)" }}>
-            The person registering this company becomes the Primary Administrator and has full control over the company account.
+            The person registering this company becomes its Chairman. Your workspace will be provisioned automatically after you verify your email.
           </p>
           <div className="mt-6 rounded border p-4 text-left" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}>
             <div className="text-xs uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Email verification</div>
             <div className="mt-2 text-lg font-700" style={{ color: "var(--foreground)" }}>{companyForm.adminEmail || "admin@company.com"}</div>
-            <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>Verification link sent. Continue to first-time setup.</div>
+            <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>Use the verification link sent to this address, then sign in to open your workspace.</div>
           </div>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <button onClick={() => onSwitchView("login")} className="px-5 py-3 rounded border font-600" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--foreground)" }}>
               Go to login
             </button>
-            <button onClick={() => onSwitchView("landing")} className="px-5 py-3 rounded font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              Continue to dashboard setup
+            <button onClick={() => onSwitchView("register")} className="px-5 py-3 rounded font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+              Back to registration
             </button>
           </div>
         </div>
@@ -2121,7 +2229,7 @@ function AuthenticationExperience({
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Name</label>
-              <input value={companyForm.companyName} onChange={(event) => onCompanyFormChange({ ...companyForm, companyName: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
+              <input required maxLength={200} value={companyForm.companyName} onChange={(event) => onCompanyFormChange({ ...companyForm, companyName: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Registration Number</label>
@@ -2153,46 +2261,21 @@ function AuthenticationExperience({
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Logo</label>
-              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded border border-dashed px-3 py-3 transition-colors hover:border-current" style={{ borderColor: companyForm.logoPreview ? "var(--primary)" : "var(--border)", color: "var(--muted-foreground)" }}>
-                {companyForm.logoPreview ? (
-                  <img src={companyForm.logoPreview} alt="Logo preview" className="h-14 w-14 rounded object-contain" />
-                ) : (
-                  <span className="text-sm">Click to upload logo (PNG, JPG, SVG)</span>
-                )}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/svg+xml,image/webp"
-                  className="sr-only"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    const preview = URL.createObjectURL(file);
-                    onCompanyFormChange({ ...companyForm, logoFile: file, logoPreview: preview });
-                  }}
-                />
-              </label>
-              {companyForm.logoPreview && (
-                <button
-                  type="button"
-                  className="mt-1 text-xs"
-                  style={{ color: "var(--muted-foreground)" }}
-                  onClick={() => onCompanyFormChange({ ...companyForm, logoFile: undefined, logoPreview: undefined })}
-                >
-                  Remove
-                </button>
-              )}
+              <div className="flex h-[54px] items-center rounded border px-3 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
+                Logo upload is not available during signup.
+              </div>
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Full Name</label>
-              <input value={companyForm.fullName} onChange={(event) => onCompanyFormChange({ ...companyForm, fullName: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
+              <input required maxLength={200} value={companyForm.fullName} onChange={(event) => onCompanyFormChange({ ...companyForm, fullName: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Position / Title</label>
-              <input value={companyForm.position} onChange={(event) => onCompanyFormChange({ ...companyForm, position: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
+              <input maxLength={150} value={companyForm.position} onChange={(event) => onCompanyFormChange({ ...companyForm, position: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Email Address</label>
-              <input type="email" value={companyForm.adminEmail} onChange={(event) => onCompanyFormChange({ ...companyForm, adminEmail: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
+              <input required type="email" maxLength={254} autoComplete="email" value={companyForm.adminEmail} onChange={(event) => onCompanyFormChange({ ...companyForm, adminEmail: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
             </div>
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Phone Number</label>
@@ -2201,7 +2284,7 @@ function AuthenticationExperience({
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Password</label>
               <div className="relative">
-                <input type={showRegisterPassword ? "text" : "password"} value={companyForm.password} onChange={(event) => onCompanyFormChange({ ...companyForm, password: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 outline-none" style={formInputStyle} />
+                <input required minLength={8} autoComplete="new-password" type={showRegisterPassword ? "text" : "password"} value={companyForm.password} onChange={(event) => onCompanyFormChange({ ...companyForm, password: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 outline-none" style={formInputStyle} />
                 <button type="button" aria-label={showRegisterPassword ? "Hide password" : "Show password"} aria-pressed={showRegisterPassword} onClick={() => setShowRegisterPassword(!showRegisterPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
                   {showRegisterPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
                 </button>
@@ -2210,7 +2293,7 @@ function AuthenticationExperience({
             <div>
               <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Confirm Password</label>
               <div className="relative">
-                <input type={showRegisterConfirmPassword ? "text" : "password"} value={companyForm.confirmPassword} onChange={(event) => onCompanyFormChange({ ...companyForm, confirmPassword: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 outline-none" style={formInputStyle} />
+                <input required minLength={8} autoComplete="new-password" type={showRegisterConfirmPassword ? "text" : "password"} value={companyForm.confirmPassword} onChange={(event) => onCompanyFormChange({ ...companyForm, confirmPassword: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 outline-none" style={formInputStyle} />
                 <button type="button" aria-label={showRegisterConfirmPassword ? "Hide password" : "Show password"} aria-pressed={showRegisterConfirmPassword} onClick={() => setShowRegisterConfirmPassword(!showRegisterConfirmPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
                   {showRegisterConfirmPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
                 </button>
@@ -2218,16 +2301,16 @@ function AuthenticationExperience({
             </div>
           </div>
 
-          {registerError ? <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm" style={{ color: "#fca5a5" }}>{registerError}</div> : null}
+          {registerError ? <div role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm" style={{ color: "#fca5a5" }}>{registerError}</div> : null}
 
           <div className="flex items-center gap-3 pt-2">
-            <input type="checkbox" className="h-4 w-4" />
-            <span className="text-sm" style={{ color: "var(--muted-foreground)" }}>I agree to the terms and understand the company account will be owned by the Primary Administrator.</span>
+            <input required type="checkbox" className="h-4 w-4" />
+            <span className="text-sm" style={{ color: "var(--muted-foreground)" }}>I agree to the terms and understand the company account will be owned by the Chairman.</span>
           </div>
 
           <div className="flex justify-end">
-            <button type="submit" className="px-5 py-3 rounded font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              Create Company Account
+            <button type="submit" disabled={registerSubmitting} className="px-5 py-3 rounded font-600 disabled:cursor-not-allowed disabled:opacity-60" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+              {registerSubmitting ? "Creating your account…" : "Create Company Account"}
             </button>
           </div>
         </form>

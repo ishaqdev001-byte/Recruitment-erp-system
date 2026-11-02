@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 
 import type { View, WorkspaceRole } from "../App"
+import { isRecruitmentAgentRole } from "@/lib/role-access-settings"
 
 type VisaTrend = {
   months: {
@@ -473,7 +474,9 @@ export default function LiveDashboard({
           className="mt-1 text-sm"
           style={{ color: "var(--muted-foreground)" }}
         >
-          Company-wide recruitment activity, filtered by your role permissions.
+          {isRecruitmentAgentRole(role)
+            ? "Candidate metrics show only candidates assigned to you."
+            : "Company-wide recruitment activity, filtered by your role permissions."}{" "}
           Candidate registrations compare this month with the previous month.
         </p>
       </header>

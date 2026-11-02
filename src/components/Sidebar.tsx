@@ -12,7 +12,6 @@ import {
   ClipboardList,
   FileText,
   GitBranch,
-  History,
   IdCard,
   LayoutDashboard,
   MessageSquareText,
@@ -91,7 +90,6 @@ const nav: NavItem[] = [
   { type: "item",  id: "reports",        label: "Reports & Analytics", icon: ChartNoAxesCombined },
   { type: "item",  id: "users",          label: "Users & Roles",     icon: ShieldCheck },
   { type: "item",  id: "branches",       label: "Branches",           icon: GitBranch },
-  { type: "item",  id: "auditlog",       label: "Audit Log",         icon: History },
   { type: "item",  id: "settings",       label: "Settings",          icon: Settings },
 ];
 

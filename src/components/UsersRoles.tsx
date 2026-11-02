@@ -2439,16 +2439,22 @@ export default function UsersRoles({
                   Candidate pipeline
                   <select
                     value={roleEditAccessSettings.candidate_scope}
+                    disabled={isRecruitmentAgentRole(editingRole.name)}
                     onChange={(event) => setRoleEditAccessSettings((current) => ({
                       ...current,
                       candidate_scope: event.target.value as RoleAccessSettings["candidate_scope"],
                     }))}
-                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-70"
                     style={fieldStyle}
                   >
                     <option value="company">All candidates in accessible branches</option>
                     <option value="assigned">Candidates assigned to this user only</option>
                   </select>
+                  {isRecruitmentAgentRole(editingRole.name) && (
+                    <span className="mt-1 block font-normal">
+                      Recruitment Agents can only see candidates assigned to them.
+                    </span>
+                  )}
                 </label>
                 <label className="block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
                   Candidate inquiries

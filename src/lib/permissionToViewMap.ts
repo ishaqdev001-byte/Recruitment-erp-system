@@ -104,9 +104,6 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "users.invite": new Set(["users"]),
   "users.edit": new Set(["users"]),
 
-  // Audit permissions
-  "audit.view": new Set(["auditlog"]),
-
   // Tasks permissions
   "tasks.view": new Set(["tasks"]),
   "tasks.create": new Set(["tasks"]),

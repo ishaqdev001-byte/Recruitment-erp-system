@@ -985,7 +985,7 @@ export async function POST(request: Request) {
         .update({
           name,
           description,
-          access_settings: requestedAccessSettings,
+          access_settings: roleAccessSettings(requestedAccessSettings, name),
         })
 
         .eq("id", roleId)

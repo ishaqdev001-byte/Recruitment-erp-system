@@ -768,19 +768,17 @@ export async function POST(request: Request) {
         )
       }
 
-      const { error: clearPermissionsError } = await admin
-        .from("role_permissions")
+      const { data: savedPermissions, error: savePermissionsError } =
+        await admin.rpc("replace_company_role_permissions", {
+          requested_role_id: role.id,
+          requested_company_id: access.companyId,
+          requested_permissions: requestedPermissions,
+        })
 
-        .delete()
-
-        .eq("role_id", role.id)
-
-        .eq("company_id", access.companyId)
-
-      if (clearPermissionsError) {
+      if (savePermissionsError || !savedPermissions) {
         console.error(
-          `[create-role] Failed to clear automatically seeded permissions for role ${role.id}:`,
-          clearPermissionsError,
+          `[create-role] Failed to save permissions for role ${role.id}:`,
+          savePermissionsError,
         )
 
         await admin
@@ -795,55 +793,12 @@ export async function POST(request: Request) {
         )
       }
 
-      if (requestedPermissions.length) {
-        const permissionsToInsert = requestedPermissions.map(
-          (permission_code) => ({
-            role_id: role.id,
-
-            company_id: access.companyId,
-
-            permission_code,
-          }),
-        )
-
-        console.log(
-          `[create-role] Inserting ${permissionsToInsert.length} permissions for new role ${role.id}:`,
-          permissionsToInsert,
-        )
-
-        const { error } = await admin
-          .from("role_permissions")
-          .insert(permissionsToInsert)
-
-        if (error) {
-          console.error(
-            `[create-role] Failed to insert permissions for role ${role.id}:`,
-            error,
-          )
-
-          await admin
-            .from("company_roles")
-            .delete()
-            .eq("id", role.id)
-            .eq("company_id", access.companyId)
-
-          return NextResponse.json(
-            { error: "Unable to save role permissions." },
-            { status: 500, headers: responseHeaders },
-          )
-        }
-      } else {
-        console.log(
-          `[create-role] No permissions requested for new role ${role.id}`,
-        )
-      }
-
       return NextResponse.json({
         role: {
           ...role,
           access_settings: roleAccessSettings(role.access_settings, role.name),
         },
-        permissions: requestedPermissions,
+        permissions: savedPermissions,
       }, {
         status: 201,
         headers: responseHeaders,
@@ -1010,64 +965,22 @@ export async function POST(request: Request) {
 
       // Replace permissions: delete all existing, insert new set
 
-      const { error: deletePermsError } = await admin
+      const { data: savedPermissions, error: savePermissionsError } =
+        await admin.rpc("replace_company_role_permissions", {
+          requested_role_id: roleId,
+          requested_company_id: access.companyId,
+          requested_permissions: requestedPermissions,
+        })
 
-        .from("role_permissions")
-
-        .delete()
-
-        .eq("role_id", roleId)
-
-        .eq("company_id", access.companyId)
-
-      if (deletePermsError) {
+      if (savePermissionsError || !savedPermissions) {
         console.error(
-          `[update-role] Failed to delete old permissions for role ${roleId}:`,
-          deletePermsError,
+          `[update-role] Failed to save permissions for role ${roleId}:`,
+          savePermissionsError,
         )
 
         return NextResponse.json(
           { error: "Unable to update role permissions." },
           { status: 500, headers: responseHeaders },
-        )
-      }
-
-      if (requestedPermissions.length) {
-        const permissionsToInsert = requestedPermissions.map(
-          (permission_code) => ({
-            role_id: roleId,
-
-            company_id: access.companyId,
-
-            permission_code,
-          }),
-        )
-
-        console.log(
-          `[update-role] Inserting ${permissionsToInsert.length} permissions for role ${roleId}:`,
-          permissionsToInsert,
-        )
-
-        const { error: insertPermsError } = await admin
-          .from("role_permissions")
-          .insert(permissionsToInsert)
-
-        if (insertPermsError) {
-          console.error(
-            `[update-role] Failed to insert permissions for role ${roleId}:`,
-            insertPermsError,
-          )
-
-          return NextResponse.json(
-            {
-              error: "Role details saved but permissions could not be updated.",
-            },
-            { status: 500, headers: responseHeaders },
-          )
-        }
-      } else {
-        console.log(
-          `[update-role] No permissions requested for role ${roleId} - old permissions cleared`,
         )
       }
 
@@ -1080,7 +993,7 @@ export async function POST(request: Request) {
               updatedRole.name,
             ),
           },
-          permissions: requestedPermissions,
+          permissions: savedPermissions,
         },
         { headers: responseHeaders },
       )

@@ -669,7 +669,7 @@ export default function UsersRoles({
         `"${
           result.role?.name ??
           roleEditName
-        }" updated.`,
+        }" updated. Active workspaces will refresh their permissions automatically.`,
       )
       setReloadKey(
         (key) =>

@@ -17,6 +17,44 @@ type Registration = {
   adminPhone: string;
 };
 
+type CompanyLogo = {
+  dataUrl: string;
+  mimeType: "image/png" | "image/jpeg";
+  bytes: Buffer;
+  extension: "png" | "jpg";
+};
+
+function readCompanyLogo(value: unknown): CompanyLogo | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || value.length > 360_000) {
+    throw new Error("Company logo must be a PNG or JPEG image smaller than 256 KB.");
+  }
+  const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match) throw new Error("Company logo must be a valid PNG or JPEG image.");
+
+  const bytes = Buffer.from(match[2], "base64");
+  if (!bytes.length || bytes.length > 256 * 1024) {
+    throw new Error("Company logo must be a PNG or JPEG image smaller than 256 KB.");
+  }
+  const isPng = match[1] === "png"
+    && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const isJpeg = match[1] === "jpeg"
+    && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (!isPng && !isJpeg) throw new Error("The selected logo file does not match its image type.");
+
+  return {
+    dataUrl: value,
+    mimeType: isPng ? "image/png" : "image/jpeg",
+    bytes,
+    extension: isPng ? "png" : "jpg",
+  };
+}
+
+function readEmbeddedCompanyLogo(value: unknown): CompanyLogo | null {
+  if (typeof value !== "string" || !/^data:image\/(?:png|jpeg);base64,/.test(value)) return null;
+  return readCompanyLogo(value);
+}
+
 function readRegistration(value: unknown): Registration | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -35,7 +73,7 @@ function readRegistration(value: unknown): Registration | null {
   const city = readText("city", 200);
   const officeAddress = readText("officeAddress", 500);
   const phone = readText("phone", 100);
-  const email = readText("email", 254);
+  const email = readText("email", 254, true);
   const website = readText("website", 500);
   const fullName = readText("fullName", 200, true);
   const position = readText("position", 150);
@@ -45,6 +83,7 @@ function readRegistration(value: unknown): Registration | null {
     || officeAddress === null || phone === null || email === null || website === null
     || fullName === null || position === null || adminPhone === null
   ) return null;
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
 
   return {
     companyName, registrationNumber, country, city, officeAddress, phone,
@@ -61,6 +100,72 @@ function slugBase(companyName: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unexpected company setup error.";
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[character] ?? character);
+}
+
+async function sendWelcomeEmail(options: {
+  to: string[];
+  companyName: string;
+  fullName: string;
+  loginUrl: string;
+  logo: CompanyLogo | null;
+}) {
+  const smtpHost = process.env.SYSTEM_SMTP_HOST?.trim();
+  const smtpPort = Number(process.env.SYSTEM_SMTP_PORT ?? "587");
+  const smtpUser = process.env.SYSTEM_SMTP_USER?.trim();
+  const smtpPass = process.env.SYSTEM_SMTP_PASS?.trim();
+  const fromAddress = process.env.SYSTEM_SMTP_FROM?.trim() || smtpUser;
+  if (!smtpHost || !Number.isInteger(smtpPort) || !smtpUser || !smtpPass || !fromAddress) {
+    return { sent: false, error: "Welcome email delivery is not configured. Set the server-side SYSTEM_SMTP_* settings." };
+  }
+  if (!options.to.length) {
+    return { sent: false, error: "No valid welcome email recipients were provided." };
+  }
+
+  const nodemailer = (await import("nodemailer")).default;
+  const transport = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpPort === 465,
+    auth: { user: smtpUser, pass: smtpPass },
+    requireTLS: smtpPort !== 465,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
+  });
+  const companyName = escapeHtml(options.companyName);
+  const fullName = escapeHtml(options.fullName);
+  const loginUrl = escapeHtml(options.loginUrl);
+  const logoHtml = options.logo
+    ? `<img src="cid:company-logo@kilaxtech.com" alt="${companyName} logo" style="display:block;width:auto;height:auto;max-width:180px;max-height:90px;margin:0 auto 24px">`
+    : "";
+  try {
+    await transport.sendMail({
+      from: `"Kilax Smart Recruit" <${fromAddress}>`,
+      to: options.to.join(", "),
+      subject: `Welcome to ${options.companyName} | Kilax Smart Recruit`,
+      text: `Hello ${options.fullName},\n\nWelcome to ${options.companyName}. Your company workspace is ready, and you are its Chairman and primary administrator.\n\nLaunch your workspace: ${options.loginUrl}\n\nThank you,\nKilax Smart Recruit`,
+      html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#172033;text-align:center">${logoHtml}<h1>Welcome, ${fullName}!</h1><p>Your <strong>${companyName}</strong> workspace is ready. You are its Chairman and primary administrator.</p><p><a href="${loginUrl}" style="display:inline-block;padding:12px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">Launch your workspace</a></p><p>Thank you,<br> Kilax Smart Recruit</p></div>`,
+      attachments: options.logo ? [{
+        filename: `company-logo.${options.logo.extension}`,
+        content: options.logo.bytes,
+        contentType: options.logo.mimeType,
+        cid: "company-logo@kilaxtech.com",
+      }] : [],
+    });
+    return { sent: true as const };
+  } finally {
+    transport.close();
+  }
 }
 
 export async function POST(request: Request) {
@@ -99,6 +204,25 @@ export async function POST(request: Request) {
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+  let requestBody: { resendWelcomeEmail?: unknown; logoDataUrl?: unknown };
+  try {
+    requestBody = await request.json() as { resendWelcomeEmail?: unknown };
+  } catch {
+    return NextResponse.json({ error: "Invalid company provisioning request." }, { status: 400 });
+  }
+  if (
+    requestBody.resendWelcomeEmail !== undefined
+    && typeof requestBody.resendWelcomeEmail !== "boolean"
+  ) {
+    return NextResponse.json({ error: "Invalid welcome email retry request." }, { status: 400 });
+  }
+  const resendWelcomeEmail = requestBody.resendWelcomeEmail === true;
+  let uploadedLogo: CompanyLogo | null;
+  try {
+    uploadedLogo = readCompanyLogo(requestBody.logoDataUrl);
+  } catch (error) {
+    return NextResponse.json({ error: errorMessage(error) }, { status: 400 });
+  }
   const registration = readRegistration(user.user_metadata?.company_registration);
   if (!registration) {
     return NextResponse.json({ error: "Company registration details are missing or invalid. Return to registration and try again." }, { status: 400 });
@@ -159,6 +283,7 @@ export async function POST(request: Request) {
             phone: registration.phone,
             email: registration.email,
             website: registration.website,
+            logo_url: uploadedLogo?.dataUrl ?? "",
           })
           .select("id")
           .single();
@@ -171,6 +296,14 @@ export async function POST(request: Request) {
       if (!company) throw new Error("Unable to reserve a unique company URL. Please try again.");
       companyId = company.id;
       createdCompanyId = company.id;
+    }
+
+    if (uploadedLogo) {
+      const { error: logoUpdateError } = await admin
+        .from("companies")
+        .update({ logo_url: uploadedLogo.dataUrl })
+        .eq("id", companyId);
+      if (logoUpdateError) throw logoUpdateError;
     }
 
     const { data: existingMembership, error: existingMemberError } = await admin
@@ -240,7 +373,68 @@ export async function POST(request: Request) {
       if (!staff) throw new Error("The company staff profile was not created. Apply the staff-management migrations.");
     }
 
-    return NextResponse.json({ companyId });
+    const registrationCompleted =
+      user.app_metadata?.company_registration_completed_company_id !== companyId;
+    const welcomeEmailCompanyId = user.app_metadata?.company_welcome_email_company_id;
+    let welcomeEmailSent = welcomeEmailCompanyId === companyId;
+    let welcomeEmailError: string | undefined;
+    const recipients = [...new Set(
+      [user.email, registration.email]
+        .map((email) => email?.trim().toLowerCase())
+        .filter((email): email is string => Boolean(email)),
+    )];
+    if (!welcomeEmailSent || resendWelcomeEmail) {
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, "");
+      const { data: companyRecord, error: companySlugError } = await admin
+        .from("companies")
+        .select("slug, logo_url")
+        .eq("id", companyId)
+        .single();
+      if (companySlugError) {
+        console.error("Unable to load the company login URL for its welcome email:", companySlugError);
+        welcomeEmailError = "Workspace created, but its company login URL could not be loaded.";
+      } else if (!companyRecord?.slug) {
+        welcomeEmailError = "Workspace created, but its company login URL could not be loaded.";
+      } else {
+        try {
+          const delivery = await sendWelcomeEmail({
+            to: recipients,
+            companyName: registration.companyName,
+            fullName: registration.fullName,
+            loginUrl: siteUrl
+              ? `${siteUrl}/${encodeURIComponent(companyRecord.slug)}/login`
+              : `/${encodeURIComponent(companyRecord.slug)}/login`,
+            logo: uploadedLogo ?? readEmbeddedCompanyLogo(companyRecord.logo_url),
+          });
+          welcomeEmailSent = delivery.sent;
+          welcomeEmailError = delivery.sent ? undefined : delivery.error;
+        } catch (error) {
+          welcomeEmailSent = false;
+          welcomeEmailError = "The workspace is ready, but the welcome email could not be sent. Retry from this page.";
+          console.error("Company welcome email delivery failed:", error);
+        }
+      }
+    }
+
+    const appMetadata = {
+      ...user.app_metadata,
+      company_registration_completed_company_id: companyId,
+      ...(welcomeEmailSent ? { company_welcome_email_company_id: companyId } : {}),
+    };
+    const { error: metadataError } = await admin.auth.admin.updateUserById(user.id, {
+      app_metadata: appMetadata,
+    });
+    if (metadataError) {
+      console.error("Unable to persist company registration completion metadata:", metadataError);
+    }
+
+    return NextResponse.json({
+      companyId,
+      registrationCompleted,
+      welcomeEmailSent,
+      welcomeEmailRecipientCount: recipients.length,
+      welcomeEmailError,
+    });
   } catch (error) {
     if (createdCompanyId) {
       const { error: rollbackError } = await admin

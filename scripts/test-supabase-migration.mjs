@@ -532,6 +532,22 @@ const reportsAnalyticsPermissionMigration = await readFile(
   "utf8",
 )
 
+const financeManagerCashierWorkspaceAccessMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102101137_finance_manager_cashier_workspace_access.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const financeCandidateReadRolePermissionMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261102104942_finance_candidate_read_role_permission_persistence.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const candidatePassportValidationMigration = await readFile(
   new URL(
     "../supabase/migrations/20261101220355_candidate_passport_validation.sql",
@@ -3444,9 +3460,128 @@ try {
 
   await database.exec(reportsAnalyticsPermissionMigration)
   await database.exec(reportsAnalyticsPermissionMigration)
+  await database.exec(financeManagerCashierWorkspaceAccessMigration)
+  await database.exec(financeManagerCashierWorkspaceAccessMigration)
+  await database.exec(financeCandidateReadRolePermissionMigration)
+  await database.exec(financeCandidateReadRolePermissionMigration)
   await database.query("select public.seed_company_default_roles($1)", [
     companyA,
   ])
+
+  const financeWorkspacePermissions = await database.query(
+    `select role.name, role_permission.permission_code
+     from public.role_permissions role_permission
+     join public.company_roles role
+       on role.id = role_permission.role_id
+      and role.company_id = role_permission.company_id
+     where role.company_id = $1
+       and role.name in ('Finance Manager', 'Finance Officer', 'Finance User')
+       and role_permission.permission_code like 'requisitions.%'
+     order by role.name, role_permission.permission_code`,
+    [companyA],
+  )
+  assert.deepEqual(financeWorkspacePermissions.rows, [
+    { name: "Finance Manager", permission_code: "requisitions.create" },
+    { name: "Finance Manager", permission_code: "requisitions.verify" },
+    { name: "Finance Manager", permission_code: "requisitions.view" },
+    { name: "Finance Officer", permission_code: "requisitions.create" },
+    { name: "Finance Officer", permission_code: "requisitions.verify" },
+    { name: "Finance Officer", permission_code: "requisitions.view" },
+    { name: "Finance User", permission_code: "requisitions.create" },
+    { name: "Finance User", permission_code: "requisitions.verify" },
+    { name: "Finance User", permission_code: "requisitions.view" },
+  ])
+
+  const financeCandidateViewPermissions = await database.query(
+    `select role.name
+     from public.role_permissions role_permission
+     join public.company_roles role
+       on role.id = role_permission.role_id
+      and role.company_id = role_permission.company_id
+     where role.company_id = $1
+       and role.name in ('Finance Manager', 'Finance Officer', 'Finance User')
+       and role_permission.permission_code = 'candidates.view'
+     order by role.name`,
+    [companyA],
+  )
+  assert.deepEqual(
+    financeCandidateViewPermissions.rows.map((role) => role.name),
+    ["Finance Manager", "Finance Officer", "Finance User"],
+  )
+
+  const editableRoleId = "30000000-0000-4000-8000-000000000099"
+  await database.query(
+    "insert into public.company_roles (id, company_id, name) values ($1, $2, 'Permission Editor Test')",
+    [editableRoleId, companyA],
+  )
+  const replacedRolePermissions = await database.query(
+    "select public.replace_company_role_permissions($1, $2, $3) as permissions",
+    [editableRoleId, companyA, ["candidates.view", "finance.view"]],
+  )
+  assert.deepEqual(replacedRolePermissions.rows[0].permissions, [
+    "candidates.view",
+    "finance.view",
+  ])
+  const persistedRolePermissions = await database.query(
+    "select permission_code from public.role_permissions where role_id = $1 order by permission_code",
+    [editableRoleId],
+  )
+  assert.deepEqual(
+    persistedRolePermissions.rows.map((permission) => permission.permission_code),
+    ["candidates.view", "finance.view"],
+  )
+  await assert.rejects(
+    database.query(
+      "select public.replace_company_role_permissions($1, $2, $3)",
+      [editableRoleId, companyA, ["unknown.permission"]],
+    ),
+  )
+  const permissionsAfterRejectedUpdate = await database.query(
+    "select permission_code from public.role_permissions where role_id = $1 order by permission_code",
+    [editableRoleId],
+  )
+  assert.deepEqual(
+    permissionsAfterRejectedUpdate.rows.map((permission) => permission.permission_code),
+    ["candidates.view", "finance.view"],
+  )
+
+  const futureFinanceCompanyId = "50000000-0000-4000-8000-000000000001"
+  await database.query(
+    "insert into public.companies (id, name) values ($1, 'Finance trigger test')",
+    [futureFinanceCompanyId],
+  )
+  const futureFinanceManagerPermissions = await database.query(
+    `select role_permission.permission_code
+     from public.role_permissions role_permission
+     join public.company_roles role
+       on role.id = role_permission.role_id
+      and role.company_id = role_permission.company_id
+     where role.company_id = $1
+       and role.name = 'Finance Manager'
+       and role_permission.permission_code in (
+         'finance.view', 'finance.create', 'finance.edit', 'finance.approve',
+         'audit.view', 'requisitions.view', 'requisitions.create', 'requisitions.verify',
+         'candidates.view'
+       )
+     order by role_permission.permission_code`,
+    [futureFinanceCompanyId],
+  )
+  assert.deepEqual(
+    futureFinanceManagerPermissions.rows.map(
+      (permission) => permission.permission_code,
+    ),
+    [
+      "audit.view",
+      "candidates.view",
+      "finance.approve",
+      "finance.create",
+      "finance.edit",
+      "finance.view",
+      "requisitions.create",
+      "requisitions.verify",
+      "requisitions.view",
+    ],
+  )
 
   const reportsViewRoles = await database.query(
     `select role.name

@@ -260,6 +260,8 @@ type CompanyForm = {
   adminPhone: string;
   password: string;
   confirmPassword: string;
+  logoFile?: File;
+  logoPreview?: string;
 };
 
 const emptyCompanyForm: CompanyForm = {
@@ -277,6 +279,8 @@ const emptyCompanyForm: CompanyForm = {
   adminPhone: "",
   password: "",
   confirmPassword: "",
+  logoFile: undefined,
+  logoPreview: undefined,
 };
 
 const formatInitials = (value: string) =>
@@ -298,19 +302,19 @@ const toCompanySlug = (name: string) =>
 
 /**
  * Determines the default landing view for a user based on their permissions.
- * Prioritizes views in order of common use: candidates → finance → users → dashboard.
+ * Prioritizes views in order of common use: finance → candidates → users → dashboard.
  */
 function getDefaultViewByPermissions(permissions: string[], roleName?: string): View {
   if (isMedicalOnlyUser(permissions)) {
     return "medical-management";
   }
-  // Try candidates views first
-  if (permissions.some((p) => p.startsWith("candidates."))) {
-    return "candidates";
-  }
   // Then finance views
   if (permissions.some((p) => p.startsWith("finance."))) {
     return "finance";
+  }
+  // Keep recruitment access available without displacing finance as the landing view.
+  if (permissions.some((p) => p.startsWith("candidates."))) {
+    return "candidates";
   }
   // Then user/role management
   if (permissions.includes("users.view")) {
@@ -430,7 +434,20 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   };
 }
 
-async function provisionPendingCompanyRegistration(user: User) {
+type CompanyRegistrationResult = {
+  companyId: string;
+  registrationCompleted: boolean;
+  welcomeEmailSent: boolean;
+  welcomeEmailRecipientCount: number;
+  welcomeEmailError?: string;
+};
+
+const pendingCompanyLogoStorageKey = "kilax.pendingCompanyRegistrationLogo";
+
+async function provisionPendingCompanyRegistration(
+  user: User,
+  options: { resendWelcomeEmail?: boolean } = {},
+): Promise<CompanyRegistrationResult | null> {
   if (!user.user_metadata?.company_registration) return null;
 
   const supabase = createSupabaseBrowserClient();
@@ -440,14 +457,45 @@ async function provisionPendingCompanyRegistration(user: User) {
 
   const response = await fetch("/api/company-registration/provision", {
     method: "POST",
-    headers: { Authorization: `Bearer ${currentSession.access_token}` },
+    headers: {
+      Authorization: `Bearer ${currentSession.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      resendWelcomeEmail: options.resendWelcomeEmail ?? false,
+      logoDataUrl: readPendingCompanyLogo(),
+    }),
     cache: "no-store",
   });
-  const result = await response.json() as { companyId?: string; error?: string };
+  const result = await response.json() as Partial<CompanyRegistrationResult> & { error?: string };
   if (!response.ok || !result.companyId) {
     throw new Error(result.error ?? "Unable to finish setting up your company workspace.");
   }
-  return result.companyId;
+  try {
+    window.localStorage.removeItem(pendingCompanyLogoStorageKey);
+  } catch (error) {
+    console.error("Unable to clear the pending company logo after registration.", error);
+  }
+  return {
+    companyId: result.companyId,
+    registrationCompleted: Boolean(result.registrationCompleted),
+    welcomeEmailSent: Boolean(result.welcomeEmailSent),
+    welcomeEmailRecipientCount: result.welcomeEmailRecipientCount ?? 0,
+    welcomeEmailError: result.welcomeEmailError,
+  };
+}
+
+function readPendingCompanyLogo() {
+  try {
+    const pendingLogo = window.localStorage.getItem(pendingCompanyLogoStorageKey);
+    if (!pendingLogo) return null;
+    const parsed: unknown = JSON.parse(pendingLogo);
+    if (!parsed || typeof parsed !== "object" || !("dataUrl" in parsed)) return null;
+    return typeof parsed.dataUrl === "string" ? parsed.dataUrl : null;
+  } catch (error) {
+    console.error("Unable to read the pending company logo.", error);
+    return null;
+  }
 }
 
 /** After a successful login, check whether the user must change their password. */
@@ -482,6 +530,11 @@ export default function App() {
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
   const [registerError, setRegisterError] = useState("");
   const [registerSubmitting, setRegisterSubmitting] = useState(false);
+  const [registrationCompletion, setRegistrationCompletion] = useState<{
+    welcomeEmailSent: boolean;
+    welcomeEmailRecipientCount: number;
+    welcomeEmailError?: string;
+  } | null>(null);
   const [loginError, setLoginError] = useState("");
   const [resetEmailSending, setResetEmailSending] = useState(false);
   const [resetEmailMessage, setResetEmailMessage] = useState("");
@@ -711,7 +764,14 @@ export default function App() {
             setResetPasswordEmail(user.email ?? "");
             return;
           }
-          const registeredCompanyId = await provisionPendingCompanyRegistration(user);
+          const registrationResult = await provisionPendingCompanyRegistration(user);
+          if (registrationResult?.registrationCompleted) {
+            setRegistrationCompletion({
+              welcomeEmailSent: registrationResult.welcomeEmailSent,
+              welcomeEmailRecipientCount: registrationResult.welcomeEmailRecipientCount,
+              welcomeEmailError: registrationResult.welcomeEmailError,
+            });
+          }
           const hasInviteMetadata = Boolean(user.app_metadata?.invitation_company_id
             || (user.user_metadata?.company_name && user.user_metadata?.role_name));
           if (hasInviteMetadata) {
@@ -723,7 +783,7 @@ export default function App() {
               return;
             }
           }
-          const workspace = await resolveUserWorkspace(user, registeredCompanyId ?? undefined);
+          const workspace = await resolveUserWorkspace(user, registrationResult?.companyId);
           if (!cancelled) {
             setCompanies([workspace.company]);
             setUsers([workspace.user]);
@@ -1204,14 +1264,21 @@ export default function App() {
       }
 
       try {
-        const companyId = await provisionPendingCompanyRegistration(data.user);
-        if (!companyId) throw new Error("The new account is missing its company registration details.");
-        const workspace = await resolveUserWorkspace(data.user, companyId);
+        const registrationResult = await provisionPendingCompanyRegistration(data.user);
+        if (!registrationResult) throw new Error("The new account is missing its company registration details.");
+        const workspace = await resolveUserWorkspace(data.user, registrationResult.companyId);
         setCompanies([workspace.company]);
         setUsers([workspace.user]);
         setRole(workspace.user.role);
         setSession(workspace.session);
         setMustChangePassword(false);
+        if (registrationResult.registrationCompleted) {
+          setRegistrationCompletion({
+            welcomeEmailSent: registrationResult.welcomeEmailSent,
+            welcomeEmailRecipientCount: registrationResult.welcomeEmailRecipientCount,
+            welcomeEmailError: registrationResult.welcomeEmailError,
+          });
+        }
       } catch (error) {
         await supabase.auth.signOut();
         throw new Error(
@@ -1224,6 +1291,28 @@ export default function App() {
       setRegisterError(error instanceof Error ? error.message : "Unable to create your company account.");
     } finally {
       setRegisterSubmitting(false);
+    }
+  };
+
+  const handleRetryWelcomeEmail = async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error) throw error;
+      if (!user) throw new Error("Sign in again before requesting another welcome email.");
+      const result = await provisionPendingCompanyRegistration(user, { resendWelcomeEmail: true });
+      if (!result) throw new Error("Company registration details could not be found.");
+      setRegistrationCompletion({
+        welcomeEmailSent: result.welcomeEmailSent,
+        welcomeEmailRecipientCount: result.welcomeEmailRecipientCount,
+        welcomeEmailError: result.welcomeEmailError,
+      });
+    } catch (error) {
+      setRegistrationCompletion({
+        welcomeEmailSent: false,
+        welcomeEmailRecipientCount: 0,
+        welcomeEmailError: error instanceof Error ? error.message : "Unable to resend the welcome email.",
+      });
     }
   };
 
@@ -1241,14 +1330,21 @@ export default function App() {
         return;
       }
 
-      const registeredCompanyId = await provisionPendingCompanyRegistration(data.user);
-      const workspace = await resolveUserWorkspace(data.user, registeredCompanyId ?? undefined);
+      const registrationResult = await provisionPendingCompanyRegistration(data.user);
+      const workspace = await resolveUserWorkspace(data.user, registrationResult?.companyId);
       setCompanies([workspace.company]);
       setUsers([workspace.user]);
       setRole(workspace.user.role);
       setSession(workspace.session);
       const mustChange = await checkMustChangePassword(workspace.user.id);
       setMustChangePassword(mustChange);
+      if (registrationResult?.registrationCompleted) {
+        setRegistrationCompletion({
+          welcomeEmailSent: registrationResult.welcomeEmailSent,
+          welcomeEmailRecipientCount: registrationResult.welcomeEmailRecipientCount,
+          welcomeEmailError: registrationResult.welcomeEmailError,
+        });
+      }
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "Unable to load your company workspace.");
     }
@@ -1648,6 +1744,56 @@ export default function App() {
     );
   }
 
+  if (session && registrationCompletion) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ background: "var(--background)" }}>
+        <div className="w-full max-w-xl rounded-2xl border p-8 shadow-2xl text-center" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="mb-6 flex justify-center"><KilaxLogo size={72} /></div>
+          <div className="text-xs font-700 uppercase tracking-[0.22em]" style={{ color: "var(--muted-foreground)" }}>Workspace setup complete</div>
+          <h1 className="mt-3 text-3xl font-700" style={{ color: "var(--foreground)" }}>You’re ready to launch your workspace.</h1>
+          <p className="mt-3 text-base leading-7" style={{ color: "var(--muted-foreground)" }}>
+            {activeCompany?.name ?? session.companyName} is set up. Your registration is 100% complete.
+          </p>
+          <div className="mt-6" role="progressbar" aria-label="Workspace setup progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={100}>
+            <div className="mb-2 flex justify-between text-xs font-700">
+              <span style={{ color: "var(--muted-foreground)" }}>Setup progress</span>
+              <span style={{ color: "#34d399" }}>100%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full" style={{ background: "var(--secondary)" }}>
+              <div className="h-full w-full rounded-full" style={{ background: "#34d399" }} />
+            </div>
+          </div>
+          <div className="mt-6 rounded border p-4 text-left" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}>
+            <div className="text-sm font-700" style={{ color: registrationCompletion.welcomeEmailSent ? "#34d399" : "var(--primary)" }}>
+              {registrationCompletion.welcomeEmailSent ? "Welcome email sent" : "Welcome email not sent yet"}
+            </div>
+            <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
+              {registrationCompletion.welcomeEmailSent
+                ? `We sent a welcome message to ${registrationCompletion.welcomeEmailRecipientCount > 1 ? "both registered email addresses" : "the registered email address"}.`
+                : registrationCompletion.welcomeEmailError ?? "The email service could not confirm delivery."}
+            </p>
+            {!registrationCompletion.welcomeEmailSent && (
+              <button type="button" onClick={() => void handleRetryWelcomeEmail()} className="mt-3 text-sm font-700" style={{ color: "var(--primary)" }}>
+                Retry welcome email
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setRegistrationCompletion(null);
+              setView("dashboard");
+            }}
+            className="mt-7 w-full rounded px-5 py-3 font-700"
+            style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+          >
+            Launch workspace
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!session) {
     return (
       <AuthenticationExperience
@@ -1664,6 +1810,7 @@ export default function App() {
         onRegister={handleRegisterSubmit}
         registerSubmitting={registerSubmitting}
         registerError={registerError}
+        onRegisterErrorChange={setRegisterError}
         loginForm={loginForm}
         onLoginFormChange={setLoginForm}
         onLogin={handleLoginSubmit}
@@ -1958,6 +2105,7 @@ function AuthenticationExperience({
   onRegister,
   registerSubmitting,
   registerError,
+  onRegisterErrorChange,
   loginForm,
   onLoginFormChange,
   onLogin,
@@ -1992,6 +2140,7 @@ function AuthenticationExperience({
   onRegister: (event: FormEvent) => void | Promise<void>;
   registerSubmitting: boolean;
   registerError: string;
+  onRegisterErrorChange: (error: string) => void;
   loginForm: { email: string; password: string };
   onLoginFormChange: (next: { email: string; password: string }) => void;
   onLogin: (event: FormEvent) => void;
@@ -2024,11 +2173,55 @@ function AuthenticationExperience({
   const [showRegisterConfirmPassword, setShowRegisterConfirmPassword] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
   const [showResetPasswordConfirm, setShowResetPasswordConfirm] = useState(false);
+  const [registerStep, setRegisterStep] = useState(0);
+  const [registerTermsAccepted, setRegisterTermsAccepted] = useState(false);
+  const registrationStepTitles = ["Company basics", "Company contact", "Your details", "Secure account"];
   const formInputStyle = {
     background: "var(--secondary)",
     borderColor: "var(--border)",
     color: "var(--foreground)",
   } as const;
+  const advanceRegistrationStep = () => {
+    const form = document.getElementById("company-registration-form");
+    if (!(form instanceof HTMLFormElement) || !form.reportValidity()) return;
+    onRegisterErrorChange("");
+    setRegisterStep((current) => Math.min(current + 1, registrationStepTitles.length - 1));
+  };
+  const handleCompanyLogoChange = async (file?: File) => {
+    if (!file) return;
+    if (!["image/png", "image/jpeg"].includes(file.type) || file.size > 256 * 1024) {
+      onRegisterErrorChange("Choose a PNG or JPEG company logo no larger than 256 KB.");
+      return;
+    }
+
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Unable to read the selected company logo."));
+        reader.onload = () => {
+          if (typeof reader.result !== "string") {
+            reject(new Error("Unable to read the selected company logo."));
+            return;
+          }
+          resolve(reader.result);
+        };
+        reader.readAsDataURL(file);
+      });
+      window.localStorage.setItem(pendingCompanyLogoStorageKey, JSON.stringify({ dataUrl }));
+      onCompanyFormChange({ ...companyForm, logoFile: file, logoPreview: dataUrl });
+      onRegisterErrorChange("");
+    } catch (error) {
+      onRegisterErrorChange(error instanceof Error ? error.message : "Unable to keep the selected logo for signup.");
+    }
+  };
+  const handleRegistrationFormSubmit = (event: FormEvent) => {
+    if (registerStep < registrationStepTitles.length - 1) {
+      event.preventDefault();
+      advanceRegistrationStep();
+      return;
+    }
+    void onRegister(event);
+  };
 
   if (authView === "invite") {
     return (
@@ -2222,95 +2415,147 @@ function AuthenticationExperience({
           </button>
         </div>
 
-        <form onSubmit={onRegister} className="space-y-6">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="md:col-span-2">
-              <div className="mb-2 text-sm font-600" style={{ color: "var(--foreground)" }}>The person registering this company becomes the Primary Administrator and will have full administrative control over the company account.</div>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Name</label>
-              <input required maxLength={200} value={companyForm.companyName} onChange={(event) => onCompanyFormChange({ ...companyForm, companyName: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Registration Number</label>
-              <input value={companyForm.registrationNumber} onChange={(event) => onCompanyFormChange({ ...companyForm, registrationNumber: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Country</label>
-              <input value={companyForm.country} onChange={(event) => onCompanyFormChange({ ...companyForm, country: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>City</label>
-              <input value={companyForm.city} onChange={(event) => onCompanyFormChange({ ...companyForm, city: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Office Address</label>
-              <input value={companyForm.officeAddress} onChange={(event) => onCompanyFormChange({ ...companyForm, officeAddress: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Phone</label>
-              <input value={companyForm.phone} onChange={(event) => onCompanyFormChange({ ...companyForm, phone: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Email</label>
-              <input type="email" value={companyForm.email} onChange={(event) => onCompanyFormChange({ ...companyForm, email: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Website</label>
-              <input value={companyForm.website} onChange={(event) => onCompanyFormChange({ ...companyForm, website: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Logo</label>
-              <div className="flex h-[54px] items-center rounded border px-3 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
-                Logo upload is not available during signup.
-              </div>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Full Name</label>
-              <input required maxLength={200} value={companyForm.fullName} onChange={(event) => onCompanyFormChange({ ...companyForm, fullName: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Position / Title</label>
-              <input maxLength={150} value={companyForm.position} onChange={(event) => onCompanyFormChange({ ...companyForm, position: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Email Address</label>
-              <input required type="email" maxLength={254} autoComplete="email" value={companyForm.adminEmail} onChange={(event) => onCompanyFormChange({ ...companyForm, adminEmail: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Phone Number</label>
-              <input value={companyForm.adminPhone} onChange={(event) => onCompanyFormChange({ ...companyForm, adminPhone: event.target.value })} className="w-full rounded border px-3 py-2.5 outline-none" style={formInputStyle} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Password</label>
-              <div className="relative">
-                <input required minLength={8} autoComplete="new-password" type={showRegisterPassword ? "text" : "password"} value={companyForm.password} onChange={(event) => onCompanyFormChange({ ...companyForm, password: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 outline-none" style={formInputStyle} />
-                <button type="button" aria-label={showRegisterPassword ? "Hide password" : "Show password"} aria-pressed={showRegisterPassword} onClick={() => setShowRegisterPassword(!showRegisterPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
-                  {showRegisterPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
-                </button>
-              </div>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Confirm Password</label>
-              <div className="relative">
-                <input required minLength={8} autoComplete="new-password" type={showRegisterConfirmPassword ? "text" : "password"} value={companyForm.confirmPassword} onChange={(event) => onCompanyFormChange({ ...companyForm, confirmPassword: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 outline-none" style={formInputStyle} />
-                <button type="button" aria-label={showRegisterConfirmPassword ? "Hide password" : "Show password"} aria-pressed={showRegisterConfirmPassword} onClick={() => setShowRegisterConfirmPassword(!showRegisterConfirmPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
-                  {showRegisterConfirmPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
-                </button>
-              </div>
-            </div>
+        <div className="mb-6">
+          <div className="mb-2 flex items-center justify-between gap-4 text-sm">
+            <span className="font-700" style={{ color: "var(--foreground)" }}>{registrationStepTitles[registerStep]}</span>
+            <span style={{ color: "var(--muted-foreground)" }}>Step {registerStep + 1} of {registrationStepTitles.length} · {registerStep * 25}% complete</span>
           </div>
+          <div role="progressbar" aria-label="Company registration progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={registerStep * 25} className="h-2 overflow-hidden rounded-full" style={{ background: "var(--secondary)" }}>
+            <div className="h-full rounded-full transition-all duration-300" style={{ width: `${registerStep * 25}%`, background: "var(--primary)" }} />
+          </div>
+          <div className="mt-4 flex gap-2" aria-hidden="true">
+            {registrationStepTitles.map((title, index) => (
+              <div key={title} className="h-1.5 flex-1 rounded-full transition-colors" style={{ background: index < registerStep ? "#34d399" : index === registerStep ? "var(--primary)" : "var(--secondary)" }} />
+            ))}
+          </div>
+        </div>
+
+        <form id="company-registration-form" onSubmit={handleRegistrationFormSubmit} className="space-y-6">
+          <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+            The person registering becomes the company Chairman and primary administrator.
+          </p>
+
+          {registerStep === 0 && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Company Name
+                <input required maxLength={200} autoFocus value={companyForm.companyName} onChange={(event) => onCompanyFormChange({ ...companyForm, companyName: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Company Registration Number
+                <input required maxLength={200} value={companyForm.registrationNumber} onChange={(event) => onCompanyFormChange({ ...companyForm, registrationNumber: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Country
+                <input required maxLength={200} value={companyForm.country} onChange={(event) => onCompanyFormChange({ ...companyForm, country: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                City
+                <input required maxLength={200} value={companyForm.city} onChange={(event) => onCompanyFormChange({ ...companyForm, city: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+            </div>
+          )}
+
+          {registerStep === 1 && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="text-xs font-600 uppercase tracking-wider md:col-span-2" style={{ color: "var(--muted-foreground)" }}>
+                Office Address
+                <input maxLength={500} autoFocus value={companyForm.officeAddress} onChange={(event) => onCompanyFormChange({ ...companyForm, officeAddress: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Company Phone
+                <input maxLength={100} value={companyForm.phone} onChange={(event) => onCompanyFormChange({ ...companyForm, phone: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Company Email
+                <input required type="email" maxLength={254} value={companyForm.email} onChange={(event) => onCompanyFormChange({ ...companyForm, email: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+              <label className="text-xs font-600 uppercase tracking-wider md:col-span-2" style={{ color: "var(--muted-foreground)" }}>
+                Website
+                <input maxLength={500} value={companyForm.website} onChange={(event) => onCompanyFormChange({ ...companyForm, website: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Company Logo (PNG or JPEG, max 256 KB)</label>
+                <div className="flex items-center gap-4 rounded border p-3" style={{ borderColor: "var(--border)" }}>
+                  {companyForm.logoPreview
+                    ? <img src={companyForm.logoPreview} alt="Company logo preview" className="h-14 w-14 rounded object-contain" />
+                    : <div className="flex h-14 w-14 items-center justify-center rounded text-sm" style={{ background: "var(--secondary)", color: "var(--muted-foreground)" }}>Logo</div>}
+                  <input type="file" accept="image/png,image/jpeg" onChange={(event) => void handleCompanyLogoChange(event.target.files?.[0])} className="min-w-0 flex-1 text-sm" style={{ color: "var(--foreground)" }} />
+                  {companyForm.logoPreview && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.localStorage.removeItem(pendingCompanyLogoStorageKey);
+                        onCompanyFormChange({ ...companyForm, logoFile: undefined, logoPreview: undefined });
+                      }}
+                      className="text-sm font-600"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>Your logo will appear in the welcome email and your company workspace.</p>
+              </div>
+            </div>
+          )}
+
+          {registerStep === 2 && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Full Name
+                <input required maxLength={200} autoFocus value={companyForm.fullName} onChange={(event) => onCompanyFormChange({ ...companyForm, fullName: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Position / Title
+                <input maxLength={150} value={companyForm.position} onChange={(event) => onCompanyFormChange({ ...companyForm, position: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Email Address
+                <input required type="email" maxLength={254} autoComplete="email" value={companyForm.adminEmail} onChange={(event) => onCompanyFormChange({ ...companyForm, adminEmail: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Phone Number
+                <input maxLength={60} value={companyForm.adminPhone} onChange={(event) => onCompanyFormChange({ ...companyForm, adminPhone: event.target.value })} className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+              </label>
+            </div>
+          )}
+
+          {registerStep === 3 && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Password
+                <div className="relative mt-1">
+                  <input required minLength={8} autoComplete="new-password" autoFocus type={showRegisterPassword ? "text" : "password"} value={companyForm.password} onChange={(event) => onCompanyFormChange({ ...companyForm, password: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                  <button type="button" aria-label={showRegisterPassword ? "Hide password" : "Show password"} aria-pressed={showRegisterPassword} onClick={() => setShowRegisterPassword(!showRegisterPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
+                    {showRegisterPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                  </button>
+                </div>
+              </label>
+              <label className="text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+                Confirm Password
+                <div className="relative mt-1">
+                  <input required minLength={8} autoComplete="new-password" type={showRegisterConfirmPassword ? "text" : "password"} value={companyForm.confirmPassword} onChange={(event) => onCompanyFormChange({ ...companyForm, confirmPassword: event.target.value })} className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none" style={formInputStyle} />
+                  <button type="button" aria-label={showRegisterConfirmPassword ? "Hide password" : "Show password"} aria-pressed={showRegisterConfirmPassword} onClick={() => setShowRegisterConfirmPassword(!showRegisterConfirmPassword)} className="absolute inset-y-0 right-0 flex items-center px-3" style={{ color: "var(--muted-foreground)" }}>
+                    {showRegisterConfirmPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                  </button>
+                </div>
+              </label>
+              <label className="md:col-span-2 flex items-start gap-3 pt-2">
+                <input required type="checkbox" checked={registerTermsAccepted} onChange={(event) => setRegisterTermsAccepted(event.target.checked)} className="mt-1 h-4 w-4" />
+                <span className="text-sm" style={{ color: "var(--muted-foreground)" }}>I agree to the terms and understand the company account will be owned by the Chairman.</span>
+              </label>
+            </div>
+          )}
 
           {registerError ? <div role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm" style={{ color: "#fca5a5" }}>{registerError}</div> : null}
 
-          <div className="flex items-center gap-3 pt-2">
-            <input required type="checkbox" className="h-4 w-4" />
-            <span className="text-sm" style={{ color: "var(--muted-foreground)" }}>I agree to the terms and understand the company account will be owned by the Chairman.</span>
-          </div>
-
-          <div className="flex justify-end">
-            <button type="submit" disabled={registerSubmitting} className="px-5 py-3 rounded font-600 disabled:cursor-not-allowed disabled:opacity-60" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              {registerSubmitting ? "Creating your account…" : "Create Company Account"}
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <button type="button" disabled={registerStep === 0 || registerSubmitting} onClick={() => { onRegisterErrorChange(""); setRegisterStep((current) => Math.max(current - 1, 0)); }} className="rounded border px-4 py-2.5 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-40" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+              Back
+            </button>
+            <button type="submit" disabled={registerSubmitting} className="rounded px-5 py-2.5 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-60" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+              {registerSubmitting ? "Creating your account…" : registerStep === 3 ? "Register Company" : "Continue"}
             </button>
           </div>
         </form>

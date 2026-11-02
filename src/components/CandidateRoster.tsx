@@ -513,6 +513,7 @@ export default function CandidateRoster({
   }>({})
 
   const activePage = page
+  const financeReadOnly = canViewFinance && !permissions.canEditCandidates
 
   const [inquiries, setInquiries] = useState<InquiryRecord[]>([])
 
@@ -1450,23 +1451,25 @@ export default function CandidateRoster({
               </button>
             )
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setInquiryError("")
-                setInquiryNotice("")
-                setInquiryDraft(emptyInquiryDraft())
-                setShowInquiryForm(true)
-              }}
-              className="inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm font-600"
-              style={{
-                background: "var(--primary)",
-                color: "var(--primary-foreground)",
-              }}
-            >
-              <UserPlus size={16} aria-hidden="true" /> Register Candidate
-              Inquiry
-            </button>
+            permissions.canRegisterCandidates && (
+              <button
+                type="button"
+                onClick={() => {
+                  setInquiryError("")
+                  setInquiryNotice("")
+                  setInquiryDraft(emptyInquiryDraft())
+                  setShowInquiryForm(true)
+                }}
+                className="inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm font-600"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                <UserPlus size={16} aria-hidden="true" /> Register Candidate
+                Inquiry
+              </button>
+            )
           )}
         </div>
       </header>
@@ -1618,16 +1621,18 @@ export default function CandidateRoster({
                           className="h-4 w-4 accent-amber-700"
                         />
                       )}
-                      <button
-                        type="button"
-                        onClick={() => setDrawerCandidate(candidate)}
-                        aria-label={`View attachments for ${candidate.first_name} ${candidate.last_name}`}
-                        title="View attachments"
-                        className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
-                        style={{ color: "var(--primary)" }}
-                      >
-                        <Paperclip size={15} aria-hidden="true" />
-                      </button>
+                      {!financeReadOnly && (
+                        <button
+                          type="button"
+                          onClick={() => setDrawerCandidate(candidate)}
+                          aria-label={`View attachments for ${candidate.first_name} ${candidate.last_name}`}
+                          title="View attachments"
+                          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                          style={{ color: "var(--primary)" }}
+                        >
+                          <Paperclip size={15} aria-hidden="true" />
+                        </button>
+                      )}
                       {permissions.canEditCandidates && (
                         <>
                           <button

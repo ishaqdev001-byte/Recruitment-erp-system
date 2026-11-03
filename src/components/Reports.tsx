@@ -555,7 +555,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
 
         {activeSection === "staff" && (
           <div className="overflow-x-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <table className="w-full min-w-[760px] text-sm">
+            <div className="app-table-scroll"><table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b text-left" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
                   {[
@@ -583,13 +583,13 @@ export default function Reports({ permissions }: { permissions: string[] }) {
                 ))}
                 {!staffActivity.length && <EmptyRow colSpan={6} text="No team activity in this period." />}
               </tbody>
-            </table>
+            </table></div>
           </div>
         )}
 
         {activeSection === "agents" && reportData?.candidates && (
           <div className="overflow-x-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <table className="w-full min-w-[680px] text-sm">
+            <div className="app-table-scroll"><table className="w-full min-w-[680px] text-sm">
               <thead>
                 <tr className="border-b text-left" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
                   {["Agent", "New candidates", "Previous period", "Total candidates", "Travelled candidates"].map((heading) => (
@@ -609,7 +609,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
                 ))}
                 {!selectedAgents.length && <EmptyRow colSpan={5} text="No agent candidate activity is available." />}
               </tbody>
-            </table>
+            </table></div>
           </div>
         )}
 
@@ -621,7 +621,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
               <CountMetric label="New this period" value={reportData.suppliers.registered} color="#7c3aed" />
             </div>
             <div className="overflow-x-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-              <table className="w-full min-w-[480px] text-sm">
+              <div className="app-table-scroll"><table className="w-full min-w-[480px] text-sm">
                 <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
                   {["Partner", "Status", "Registered"].map((heading) => <th key={heading} className="px-4 py-3 text-xs font-700 uppercase tracking-wide">{heading}</th>)}
                 </tr></thead>
@@ -635,7 +635,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
                   ))}
                   {!selectedSuppliers.length && <EmptyRow colSpan={3} text="No partners are registered." />}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           </div>
         )}
@@ -647,7 +647,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
               <CountMetric label="New this period" value={reportData.contractors.registered} color="#7c3aed" />
             </div>
             <div className="overflow-x-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-              <table className="w-full min-w-[480px] text-sm">
+              <div className="app-table-scroll"><table className="w-full min-w-[480px] text-sm">
                 <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
                   {["Contractor", ...(reportData.permissions.projects ? ["Projects"] : []), "Registered"].map((heading) => (
                     <th key={heading} className="px-4 py-3 text-xs font-700 uppercase tracking-wide">{heading}</th>
@@ -663,7 +663,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
                   ))}
                   {!selectedContractors.length && <EmptyRow colSpan={reportData.permissions.projects ? 3 : 2} text="No contractors are registered." />}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           </div>
         )}

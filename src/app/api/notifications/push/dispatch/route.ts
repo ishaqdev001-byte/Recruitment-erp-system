@@ -8,6 +8,7 @@ import {
   createPushAdminClient,
   dispatchPushNotifications,
 } from "@/lib/server/push-notifications"
+import { dispatchQueuedTaskSms } from "@/lib/server/tasks"
 
 export const runtime = "nodejs"
 
@@ -64,6 +65,8 @@ export async function POST(request: Request) {
         throw new Error(
           `Scheduled passport follow-up dispatch failed: ${passportFollowupError.message}`,
         )
+
+      await dispatchQueuedTaskSms()
 
       const result = await dispatchPushNotifications({})
 

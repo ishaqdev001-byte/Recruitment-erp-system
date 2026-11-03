@@ -631,7 +631,7 @@ export default function LiveDashboard({
             </div>
             {summary.deploymentByCountry.length ? (
               <div className="max-h-96 overflow-auto">
-                <table className="w-full min-w-[560px] text-left text-sm">
+                <div className="app-table-scroll"><table className="w-full min-w-[560px] text-left text-sm">
                   <thead
                     className="sticky top-0"
                     style={{ background: "var(--secondary)" }}
@@ -686,7 +686,7 @@ export default function LiveDashboard({
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </div>
             ) : (
               <p

@@ -107,7 +107,7 @@ export default function Analytics() {
             Department Performance
           </h2>
         </div>
-        <table className="w-full text-sm">
+        <div className="app-table-scroll"><table className="w-full text-sm">
           <thead>
             <tr className="border-b" style={{ borderColor: "var(--border)" }}>
               {["Department", "Open Positions", "Avg Time-to-Hire", "Avg Time-to-Fill", "Acceptance Rate"].map((h) => (
@@ -148,7 +148,7 @@ export default function Analytics() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       <div className="grid grid-cols-3 gap-4 mt-6">

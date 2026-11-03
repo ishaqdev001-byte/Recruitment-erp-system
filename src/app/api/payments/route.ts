@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getInvoiceAccess, loadAllInvoices } from "@/lib/server/invoices";
+import { getInvoiceAccess } from "@/lib/server/invoices";
+import { loadPaymentLedger } from "@/lib/server/payment-ledger";
 
 export const runtime = "nodejs";
 const responseHeaders = { "Cache-Control": "private, no-store" };
@@ -10,58 +11,13 @@ export async function GET() {
     const access = await getInvoiceAccess("finance.view");
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers: responseHeaders });
 
-    const [{ data: receiptRows, error: receiptError }, invoices, { data: canRecord }] = await Promise.all([
-      access.supabase.from("financial_receipts")
-        .select("id, receipt_number, entry_type, candidate_id, account_id, received_from, category, amount, payment_method, external_reference, notes, received_at")
-        .eq("company_id", access.companyId)
-        .order("received_at", { ascending: false }),
-      loadAllInvoices(access),
+    const [{ transactions, projects }, { data: canRecord }] = await Promise.all([
+      loadPaymentLedger(access),
       access.supabase.rpc("current_user_has_company_permission", {
         requested_company_id: access.companyId,
         requested_permission: "finance.create",
       }),
     ]);
-    if (receiptError) {
-      console.error("Financial receipt query failed", receiptError);
-      return NextResponse.json({ error: "Unable to load payments and deposits. Apply the latest finance migration if setup is incomplete." }, { status: 500, headers: responseHeaders });
-    }
-
-    const transactions = [
-      ...(receiptRows ?? []).map((receipt) => ({
-        id: `receipt-${receipt.id}`,
-        recordType: "receipt" as const,
-        reference: receipt.receipt_number,
-        entryType: receipt.entry_type,
-        category: receipt.category,
-        receivedFrom: receipt.received_from,
-        candidateId: receipt.candidate_id,
-        accountId: receipt.account_id,
-        invoiceId: null,
-        invoiceNumber: null,
-        amount: Number(receipt.amount),
-        paymentMethod: receipt.payment_method,
-        externalReference: receipt.external_reference,
-        notes: receipt.notes,
-        receivedAt: receipt.received_at,
-      })),
-      ...invoices.flatMap((invoice) => invoice.payments.map((payment, installmentIndex) => ({
-        id: `invoice-payment-${payment.id}`,
-        recordType: "invoice_payment" as const,
-        reference: `${invoice.invoice_number}-${String(installmentIndex + 1).padStart(2, "0")}`,
-        entryType: "invoice_payment",
-        category: "Invoice payment",
-        receivedFrom: invoice.recipient_name,
-        candidateId: invoice.recipient_type === "candidate" ? invoice.recipient_id : null,
-        accountId: payment.account_id,
-        invoiceId: invoice.id,
-        invoiceNumber: invoice.invoice_number,
-        amount: Number(payment.amount),
-        paymentMethod: "Invoice",
-        externalReference: invoice.invoice_number,
-        notes: invoice.description,
-        receivedAt: payment.paid_at,
-      }))),
-    ].sort((left, right) => right.receivedAt.localeCompare(left.receivedAt));
 
     let candidates: { candidate_id: string; file_number: string; candidate_name: string }[] = [];
     if (canRecord) {
@@ -76,6 +32,7 @@ export async function GET() {
     const candidateDeposits = transactions.filter((transaction) => transaction.entryType === "candidate_deposit");
     return NextResponse.json({
       transactions,
+      projects,
       candidates,
       permissions: { canRecord: Boolean(canRecord) },
       totals: {

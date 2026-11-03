@@ -80,7 +80,7 @@ export default function DocumentsPage() {
         </div>
 
         <div className="rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-          <table className="w-full text-sm">
+          <div className="app-table-scroll"><table className="w-full text-sm">
             <thead>
               <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                 {["Candidate", "File No", "Type", "File Name", "Status", "Upload Date", "Uploaded By", ""].map((h) => (
@@ -113,7 +113,7 @@ export default function DocumentsPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </div>
       </div>
     </div>

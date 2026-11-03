@@ -85,7 +85,7 @@ export default function Jobs() {
         </div>
 
         <div className="overflow-auto flex-1">
-          <table className="w-full text-sm">
+          <div className="app-table-scroll"><table className="w-full text-sm">
             <thead>
               <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                 {["Role", "Department", "Location", "Status", "Days Open", "Candidates", "Posted"].map((h) => (
@@ -128,7 +128,7 @@ export default function Jobs() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </div>
       </div>
 

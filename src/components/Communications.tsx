@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, Mail, MessageSquare, MessagesSquare, Phone, StickyNote, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Mail, MessageSquare, MessagesSquare, StickyNote, X, type LucideIcon } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
 import SmsWorkspace from "@/components/SmsWorkspace";
 import WhatsAppWorkspace from "@/components/WhatsAppWorkspace";
 
-type Channel = "Email" | "SMS" | "Phone" | "WhatsApp" | "Note";
+type Channel = "Email" | "SMS" | "WhatsApp" | "Note";
 type ContactType = "Candidate" | "Employer" | "Agent" | "Staff" | "Other";
 
 interface Message {
@@ -32,10 +32,6 @@ type MailboxesPayload = { mailboxes?: Mailbox[]; configured?: Partial<Record<Mai
 type ProviderMail = { id: string; provider: MailProvider; direction: "Inbound" | "Outbound"; from: string; to: string; subject: string; body: string; date: string; status: "Received" | "Sent" | "Draft" | "Failed" | "Unknown" };
 type SystemCommunication = { id: string; contact: string; projectName: string; subject: string; body: string; created_at: string };
 
-const messages: Message[] = [
-  { id: 3, contact: "Suzan Mirembe", contactType: "Candidate", channel: "Phone", direction: "Outbound", subject: "Medical certificate follow-up", body: "Called to follow up on medical certificate. Candidate confirmed she will collect it from the clinic on Aug 27.", date: "Aug 25, 2026 11:15", by: "Director Vicent", status: "Logged" },
-];
-
 const templates = [
   { name: "Payment Reminder", body: "Dear [CANDIDATE_NAME], your payment of UGX [AMOUNT] is due on [DATE]. Please contact us to arrange payment." },
   { name: "Stage Update", body: "Dear [CANDIDATE_NAME], your application has been updated to [STAGE]. Contact us for more details." },
@@ -44,12 +40,12 @@ const templates = [
   { name: "Invoice to Employer", body: "Dear [CONTACT_NAME], please find attached invoice [INVOICE_REF] for [DESCRIPTION]. Amount due: [AMOUNT]." },
 ];
 
-const channelColor: Record<Channel, string> = { Email: "#3b82f6", SMS: "#10b981", Phone: "#f59e0b", WhatsApp: "#25d366", Note: "#6b7280" };
-const channelIcon: Record<Channel, LucideIcon> = { Email: Mail, SMS: MessageSquare, Phone, WhatsApp: MessagesSquare, Note: StickyNote };
+const channelColor: Record<Channel, string> = { Email: "#3b82f6", SMS: "#10b981", WhatsApp: "#25d366", Note: "#6b7280" };
+const channelIcon: Record<Channel, LucideIcon> = { Email: Mail, SMS: MessageSquare, WhatsApp: MessagesSquare, Note: StickyNote };
 const contactColor: Record<ContactType, string> = { Candidate: "#6366f1", Employer: "#f59e0b", Agent: "#3b82f6", Staff: "#8b5cf6", Other: "#6b7280" };
 
 export default function Communications({ userName = "Team", companyName = "", userEmail = "" }: { userName?: string; companyName?: string; userEmail?: string }) {
-  const [msgs, setMsgs] = useState<Message[]>(messages);
+  const [msgs, setMsgs] = useState<Message[]>([]);
   const [channelFilter, setChannelFilter] = useState<Channel | "All">("All");
   const [contactFilter, setContactFilter] = useState<ContactType | "All">("All");
   const [selected, setSelected] = useState<Message | null>(null);
@@ -395,14 +391,14 @@ export default function Communications({ userName = "Team", companyName = "", us
   if (channelFilter === "WhatsApp") return <WhatsAppWorkspace onExit={() => setChannelFilter("All")} />;
 
   return (
-    <div className="flex h-full overflow-hidden">
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-6 py-4 border-b flex items-center justify-between shrink-0" style={{ borderColor: "var(--border)" }}>
-          <div>
+    <div className="flex h-full w-full min-w-0 overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex shrink-0 flex-col items-start gap-3 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6" style={{ borderColor: "var(--border)" }}>
+          <div className="min-w-0">
             <h1 className="text-xl font-700" style={{ color: "var(--foreground)" }}>Communication Center</h1>
-            <p className="text-sm mono mt-0.5" style={{ color: "var(--muted-foreground)" }}>All communications with candidates, employers, and staff</p>
+            <p className="mono mt-0.5 text-sm" style={{ color: "var(--muted-foreground)" }}>All communications with candidates, employers, and staff</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:shrink-0">
             <button onClick={() => setShowTemplates(true)} className="px-3 py-1.5 text-sm rounded border" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--secondary)" }}>
               Templates
             </button>
@@ -412,9 +408,9 @@ export default function Communications({ userName = "Team", companyName = "", us
           </div>
         </div>
 
-        <div className="px-6 py-3 border-b flex items-center gap-3 flex-wrap shrink-0" style={{ borderColor: "var(--border)" }}>
-          <div className="flex gap-1.5">
-            {(["All", "Email", "SMS", "Phone", "WhatsApp", "Note"] as const).map((c) => (
+        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-4 py-3 sm:px-6" style={{ borderColor: "var(--border)" }}>
+          <div className="flex min-w-0 flex-wrap gap-1.5">
+            {(["All", "Email", "SMS", "WhatsApp", "Note"] as const).map((c) => (
               <button key={c} onClick={() => setChannelFilter(c as Channel | "All")}
                 className="flex items-center gap-1 px-2.5 py-1 text-xs font-600 rounded"
                 style={{ background: channelFilter === c ? (c === "All" ? "var(--primary)" : channelColor[c as Channel]) : "var(--secondary)", color: channelFilter === c ? "#fff" : "var(--muted-foreground)" }}>
@@ -426,8 +422,8 @@ export default function Communications({ userName = "Team", companyName = "", us
             ))}
           </div>
           {systemError && <p role="alert" className="border-b px-6 py-2 text-sm text-red-600" style={{ borderColor: "var(--border)" }}>{systemError}</p>}
-          <div className="h-4 w-px" style={{ background: "var(--border)" }} />
-          <div className="flex gap-1.5">
+          <div className="hidden h-4 w-px sm:block" style={{ background: "var(--border)" }} />
+          <div className="flex min-w-0 flex-wrap gap-1.5">
             {(["All", "Candidate", "Employer", "Agent", "Staff", "Other"] as const).map((ct) => (
               <button key={ct} onClick={() => setContactFilter(ct as ContactType | "All")}
                 className="px-2.5 py-1 text-xs font-600 rounded"
@@ -561,7 +557,7 @@ export default function Communications({ userName = "Team", companyName = "", us
           <form onSubmit={(event) => void (composeChannel === "Email" ? sendEmail(event) : sendSms(event))} className="my-auto max-h-[94dvh] w-full max-w-lg overflow-y-auto border p-5 sm:p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
             <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>New communication</h2><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{composeChannel === "Email" ? "Send from your linked mailbox." : "SMS sends immediately through SMSUG."}</p></div><button type="button" aria-label="Close compose" onClick={() => setShowCompose(false)} className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
             <div className="space-y-4">
-              <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Channel</span><select value={composeChannel} onChange={(event) => setComposeChannel(event.target.value as Channel)} className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}><option>SMS</option><option>Email</option><option>Phone</option><option>WhatsApp</option><option>Note</option></select></label>
+              <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Channel</span><select value={composeChannel} onChange={(event) => setComposeChannel(event.target.value as Channel)} className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}><option>SMS</option><option>Email</option><option>WhatsApp</option><option>Note</option></select></label>
               {composeChannel === "SMS" ? <>
                 {smsConfigured === false && <div role="status" className="border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs" style={{ color: "var(--foreground)" }}>SMSUG is not configured. A server administrator must set SMSUG_API_KEY privately and enable API access in SMSUG Settings.</div>}
                 <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Contact</span><SearchableSelect ariaLabel="Search SMS contact" value={smsRecipientId} onChange={setSmsRecipientId} disabled={contactsLoading} options={contacts.map((contact) => ({ value: contact.id, label: contact.name, description: `${contact.type} · ${contact.phone}`, searchText: `${contact.type} ${contact.phone}` }))} placeholder="Type a name or phone number" className="disabled:opacity-50" /></label>

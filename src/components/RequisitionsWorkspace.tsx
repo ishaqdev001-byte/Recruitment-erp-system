@@ -241,7 +241,7 @@ function LineItemsEditor({
       {/* Items table */}
       {items.length > 0 && (
         <div className="overflow-x-auto rounded border" style={{ borderColor: "var(--border)" }}>
-          <table className="w-full text-sm">
+          <div className="app-table-scroll"><table className="w-full text-sm">
             <thead>
               <tr className="border-b text-left" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
                 {["Description", "Qty", "Rate", "Total", "Actions"].map((h) => (
@@ -287,7 +287,7 @@ function LineItemsEditor({
                 <td />
               </tr>
             </tfoot>
-          </table>
+          </table></div>
         </div>
       )}
 
@@ -316,18 +316,28 @@ function LookupSelect({
   const [loading, setLoading] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const isEditingQuery = useRef(false);
+  const searchRequestId = useRef(0);
 
-  useEffect(() => { setQuery(displayValue); }, [displayValue]);
+  useEffect(() => {
+    if (!isEditingQuery.current) setQuery(displayValue);
+  }, [displayValue]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      if (timer.current) clearTimeout(timer.current);
+      searchRequestId.current += 1;
+    };
   }, []);
 
   const search = async (q: string) => {
+    if (q.trim().length < 2) return;
+    const requestId = ++searchRequestId.current;
     setLoading(true);
     try {
       const sep = apiPath.includes("?") ? "&" : "?";
@@ -335,19 +345,35 @@ function LookupSelect({
       const res = await fetch(url, { cache: "no-store" });
       const payload = await res.json() as Record<string, LookupItem[]>;
       const key = Object.keys(payload)[0];
-      setResults((payload[key] ?? []).filter((item) => item.is_active !== false));
-    } catch { setResults([]); } finally { setLoading(false); }
+      if (requestId === searchRequestId.current) {
+        setResults((payload[key] ?? []).filter((item) => item.is_active !== false));
+      }
+    } catch {
+      if (requestId === searchRequestId.current) setResults([]);
+    } finally {
+      if (requestId === searchRequestId.current) setLoading(false);
+    }
   };
 
   const handleInput = (v: string) => {
+    isEditingQuery.current = true;
     setQuery(v);
-    if (!v) { onClear(); setResults([]); setOpen(false); return; }
+    if (value) onClear();
+    if (v.trim().length < 2) {
+      if (timer.current) clearTimeout(timer.current);
+      searchRequestId.current += 1;
+      setResults([]);
+      setLoading(false);
+      setOpen(false);
+      return;
+    }
     setOpen(true);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => void search(v), 250);
+    timer.current = setTimeout(() => void search(v.trim()), 250);
   };
 
   const select = (item: LookupItem) => {
+    isEditingQuery.current = false;
     onChange(item);
     setQuery(String(item[labelKey] ?? ""));
     setOpen(false); setResults([]);
@@ -360,11 +386,15 @@ function LookupSelect({
       </label>
       <div className="relative flex items-center">
         <input type="text" value={query} onChange={(e) => handleInput(e.target.value)}
-          onFocus={() => { setOpen(true); if (!results.length) void search(query); }}
+          onFocus={() => {
+            if (query.trim().length < 2) return;
+            setOpen(true);
+            if (!results.length) void search(query.trim());
+          }}
           className="w-full rounded border px-3 py-2.5 pr-8 text-sm outline-none"
           style={fieldStyle} placeholder={placeholder} autoComplete="off" />
         {value ? (
-          <button type="button" onClick={() => { onClear(); setQuery(""); setResults([]); setOpen(false); }}
+          <button type="button" onClick={() => { isEditingQuery.current = false; onClear(); setQuery(""); setResults([]); setOpen(false); }}
             className="absolute right-2 top-1/2 -translate-y-1/2" style={{ color: "var(--muted-foreground)" }}>
             <X size={14} aria-hidden="true" />
           </button>
@@ -373,13 +403,13 @@ function LookupSelect({
         )}
       </div>
       {open && (
-        <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto rounded border shadow-lg"
-          style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+        <div className="requisition-lookup-results relative z-30 mt-1 max-h-52 overflow-y-auto rounded border">
           {loading && <div className="flex items-center gap-2 px-3 py-2.5 text-xs" style={{ color: "var(--muted-foreground)" }}><Loader2 size={12} className="animate-spin" aria-hidden="true" /> Searching…</div>}
-          {!loading && results.length === 0 && <div className="px-3 py-2.5 text-xs" style={{ color: "var(--muted-foreground)" }}>{query ? "No results found." : "Start typing to search."}</div>}
+          {!loading && results.length === 0 && <div className="px-3 py-2.5 text-xs" style={{ color: "var(--muted-foreground)" }}>No results found.</div>}
           {!loading && results.map((item) => (
             <button key={item.id} type="button" onMouseDown={() => select(item)}
-              className="w-full px-3 py-2.5 text-left text-sm hover:bg-[var(--secondary)] transition-colors"
+              data-lookup-option
+              className="w-full px-3 py-2.5 text-left text-sm transition-colors"
               style={{ color: "var(--foreground)" }}>
               {String(item[labelKey] ?? "")}
               {item.code && item.code !== item.name && <span className="ml-2 text-xs mono" style={{ color: "var(--muted-foreground)" }}>{item.code}</span>}
@@ -434,6 +464,11 @@ function ApprovalTimeline({ req }: { req: Requisition }) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function RequisitionsWorkspace() {
+  const currentMonthYear = new Intl.DateTimeFormat("en", {
+    month: "long",
+    year: "numeric",
+  }).format(new Date());
+
   // ── List state ──────────────────────────────────────────────────────────────
   const [requisitions, setRequisitions] = useState<Requisition[]>([]);
   const [permissions, setPermissions] = useState<Permissions>({ canCreate: false, canReview: false, canVerify: false, canAuthorize: false });
@@ -864,7 +899,7 @@ export default function RequisitionsWorkspace() {
       {listError && <div role="alert" className="mx-6 mt-4 shrink-0 rounded border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{listError}</div>}
 
       {/* List table */}
-      <div className="flex-1 overflow-auto">
+      <div className="finance-table-scroll flex-1">
         {loading && (
           <div className="flex items-center justify-center py-20 gap-2" style={{ color: "var(--muted-foreground)" }}>
             <Loader2 size={18} className="animate-spin" aria-hidden="true" />
@@ -1026,7 +1061,7 @@ export default function RequisitionsWorkspace() {
                       <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>No items loaded.</p>
                     ) : (
                       <div className="overflow-x-auto rounded border" style={{ borderColor: "var(--border)" }}>
-                        <table className="w-full text-sm">
+                        <div className="app-table-scroll"><table className="w-full text-sm">
                           <thead>
                             <tr className="border-b text-left" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
                               {["Description", "Qty", "Rate", "Total"].map((h) => (
@@ -1050,7 +1085,7 @@ export default function RequisitionsWorkspace() {
                               <td className="whitespace-nowrap px-3 py-2.5 mono font-700 text-base" style={{ color: "#6366f1" }}>{fmtAmount(detailReq.total_amount, detailReq.currency_code)}</td>
                             </tr>
                           </tfoot>
-                        </table>
+                        </table></div>
                       </div>
                     )}
                   </div>
@@ -1060,7 +1095,7 @@ export default function RequisitionsWorkspace() {
                     <div>
                       <h3 className="mb-3 text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment History</h3>
                       <div className="overflow-x-auto rounded border" style={{ borderColor: "var(--border)" }}>
-                        <table className="w-full text-sm">
+                        <div className="app-table-scroll"><table className="w-full text-sm">
                           <thead>
                             <tr className="border-b text-left" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
                               {["Date", "Amount", "Reference", "Notes"].map((h) => (
@@ -1078,7 +1113,7 @@ export default function RequisitionsWorkspace() {
                               </tr>
                             ))}
                           </tbody>
-                        </table>
+                        </table></div>
                       </div>
                     </div>
                   )}
@@ -1125,10 +1160,10 @@ export default function RequisitionsWorkspace() {
 
       {/* ── Create / Edit form ── */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 py-8"
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:py-8"
           onMouseDown={(e) => { if (e.target === e.currentTarget) { setShowForm(false); resetForm(); } }}>
-          <form onSubmit={submitForm} className="w-full max-w-3xl rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <div className="sticky top-0 z-10 border-b px-6 py-4 flex items-center justify-between"
+          <form onSubmit={submitForm} className="flex max-h-[calc(100dvh-2rem)] w-full max-w-3xl flex-col rounded border sm:max-h-[calc(100dvh-4rem)]" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+            <div className="z-10 flex shrink-0 items-center justify-between border-b px-6 py-4"
               style={{ borderColor: "var(--border)", background: "var(--card)" }}>
               <h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>
                 <FileText size={18} className="inline mr-2" aria-hidden="true" />
@@ -1138,13 +1173,13 @@ export default function RequisitionsWorkspace() {
                 <X size={18} aria-hidden="true" />
               </button>
             </div>
-            <div className="p-6 space-y-5">
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
               {formError && <div role="alert" className="rounded border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{formError}</div>}
               <div>
                 <label className="mb-1 block text-xs font-600 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Title <span className="text-red-400">*</span></label>
                 <input type="text" required maxLength={200} value={formTitle} onChange={(e) => setFormTitle(e.target.value)}
                   className="w-full rounded border px-3 py-2.5 text-sm outline-none" style={fieldStyle}
-                  placeholder="e.g. Office Supplies — October 2026" />
+                  placeholder={`e.g. Office Supplies — ${currentMonthYear}`} />
               </div>
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                 <div>
@@ -1176,7 +1211,7 @@ export default function RequisitionsWorkspace() {
               <LineItemsEditor items={formItems} onItemsChange={setFormItems} currencyCode={formCurrencyCode}
                 error={formItemError} onErrorChange={setFormItemError} />
             </div>
-            <div className="sticky bottom-0 border-t px-6 py-4 flex items-center justify-between gap-4"
+            <div className="flex shrink-0 items-center justify-between gap-4 border-t px-6 py-4"
               style={{ borderColor: "var(--border)", background: "var(--card)" }}>
               <div className="text-sm" style={{ color: "var(--muted-foreground)" }}>
                 {formItems.length > 0 && <span>Total: <span className="mono font-700" style={{ color: "#6366f1" }}>{fmtAmount(formTotals, formCurrencyCode)}</span></span>}

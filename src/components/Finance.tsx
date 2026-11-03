@@ -706,7 +706,7 @@ export default function Finance() {
               </div>
             ) : (
               <div
-                className="overflow-x-auto rounded border"
+                className="finance-table-scroll rounded border"
                 style={{
                   borderColor: "var(--border)",
                   background: "var(--card)",

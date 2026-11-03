@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ArrowUpRight, CircleDollarSign, Plus, Search, X } from "lucide-react";
+import { ArrowUpRight, CircleDollarSign, FileSpreadsheet, FileText, Plus, Search, X } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
 import { matchesSearch } from "@/lib/search";
 
 type ReceiptType = "candidate_deposit" | "other_income" | "invoice_payment";
 type CandidateOption = { candidate_id: string; file_number: string; candidate_name: string; account_id: string | null };
 type AccountOption = { id: string; name: string; account_type: string; account_number: string };
+type ProjectOption = { id: string; name: string };
 type PaymentTransaction = {
   id: string;
   recordType: "receipt" | "invoice_payment";
@@ -17,6 +18,8 @@ type PaymentTransaction = {
   accountId: string | null;
   invoiceId: string | null;
   invoiceNumber: string | null;
+  projectId: string | null;
+  projectName: string | null;
   amount: number;
   paymentMethod: string;
   externalReference: string;
@@ -25,6 +28,7 @@ type PaymentTransaction = {
 };
 type LedgerPayload = {
   transactions?: PaymentTransaction[];
+  projects?: ProjectOption[];
   candidates?: CandidateOption[];
   accounts?: AccountOption[];
   permissions?: { canRecord?: boolean };
@@ -44,13 +48,16 @@ const localDate = () => {
 
 export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => void }) {
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [candidates, setCandidates] = useState<CandidateOption[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [canRecord, setCanRecord] = useState(false);
   const [totals, setTotals] = useState({ totalReceived: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
   const [search, setSearch] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
   const [error, setError] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [entryType, setEntryType] = useState<"candidate_deposit" | "other_income">("candidate_deposit");
@@ -83,6 +90,7 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
         if (!accountsResponse.ok) throw new Error(accountsPayload.error ?? "Unable to load company accounts.");
         if (cancelled) return;
         setTransactions(payload.transactions ?? []);
+        setProjects(payload.projects ?? []);
         setCandidates(payload.candidates ?? []);
         setAccounts(accountsPayload.accounts ?? []);
         setCanRecord(Boolean(payload.permissions?.canRecord));
@@ -98,8 +106,33 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
   }, [reloadKey]);
 
   const filteredTransactions = useMemo(() => {
-    return transactions.filter((transaction) => matchesSearch(search, transaction.reference, transaction.receivedFrom, transaction.category, transaction.externalReference, transaction.invoiceNumber, transaction.notes));
-  }, [search, transactions]);
+    return transactions.filter((transaction) =>
+      (projectFilter === "all" || transaction.projectId === projectFilter)
+      && matchesSearch(search, transaction.reference, transaction.receivedFrom, transaction.category, transaction.externalReference, transaction.invoiceNumber, transaction.projectName, transaction.notes));
+  }, [projectFilter, search, transactions]);
+
+  const exportPayments = async (format: "pdf" | "excel") => {
+    setExporting(format);
+    setError("");
+    try {
+      const query = new URLSearchParams({ format, projectId: projectFilter });
+      const response = await fetch(`/api/payments/export?${query.toString()}`);
+      if (!response.ok) {
+        const payload = await response.json() as { error?: string };
+        throw new Error(payload.error ?? "Unable to export payments.");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `payments-${projectFilter === "all" ? "all-projects" : projects.find((project) => project.id === projectFilter)?.name.replace(/[^a-z0-9-]+/gi, "-") ?? "project"}.${format === "excel" ? "xlsx" : "pdf"}`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : "Unable to export payments.");
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const resetForm = () => {
     setEntryType("candidate_deposit");
@@ -153,21 +186,31 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-        <label className="flex w-full max-w-md items-center gap-2 border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search receipts" placeholder="Search receipt, candidate, source, or invoice" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex w-full max-w-md items-center gap-2 border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search receipts" placeholder="Search receipt, candidate, source, or invoice" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
+          <label className="sr-only" htmlFor="payments-project-filter">Filter by project</label>
+          <select id="payments-project-filter" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="border px-3 py-2 text-sm outline-none" style={fieldStyle}>
+            <option value="all">All projects</option>
+            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
+          <button type="button" onClick={() => void exportPayments("pdf")} disabled={Boolean(exporting) || loading} className="inline-flex items-center gap-2 border px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><FileText size={14} aria-hidden="true" />{exporting === "pdf" ? "Preparing PDF…" : "PDF"}</button>
+          <button type="button" onClick={() => void exportPayments("excel")} disabled={Boolean(exporting) || loading} className="inline-flex items-center gap-2 border px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><FileSpreadsheet size={14} aria-hidden="true" />{exporting === "excel" ? "Preparing Excel…" : "Excel"}</button>
+        </div>
         <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{filteredTransactions.length} receipts</span>
       </div>
 
       {error && <div role="alert" className="mx-6 mt-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
       <div className="min-h-0 flex-1 overflow-auto p-6">
-        <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+        <div className="finance-table-scroll border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-240 text-sm">
-            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Received", "Receipt", "Received from", "Type", "Category", "Account", "Method", "Amount", "Reference", "Invoice", "Notes"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Received", "Receipt", "Project", "Received from", "Type", "Category", "Account", "Method", "Amount", "Reference", "Invoice", "Notes"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={11} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading receipt history…</td></tr>}
-              {!loading && !error && filteredTransactions.length === 0 && <tr><td colSpan={11} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{transactions.length ? "No receipts match this search." : "No receipts recorded yet."}</td></tr>}
+              {loading && <tr><td colSpan={12} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading receipt history…</td></tr>}
+              {!loading && !error && filteredTransactions.length === 0 && <tr><td colSpan={12} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{transactions.length ? "No receipts match these filters." : "No receipts recorded yet."}</td></tr>}
               {!loading && filteredTransactions.map((transaction) => <tr key={transaction.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{new Date(transaction.receivedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "var(--primary)" }}>{transaction.reference}</td>
+                <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{transaction.projectName || "—"}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs font-600" style={{ color: "var(--foreground)" }}>{transaction.receivedFrom}</td>
                 <td className="whitespace-nowrap px-3 py-3"><span className="px-2 py-1 text-xs font-600" style={{ color: typeColor[transaction.entryType], background: `${typeColor[transaction.entryType]}1a` }}>{typeLabel[transaction.entryType]}</span></td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{transaction.category}</td>

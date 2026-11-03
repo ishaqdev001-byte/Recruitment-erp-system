@@ -51,11 +51,17 @@ export async function GET() {
       return NextResponse.json({ error: "Unable to load company contractors." }, { status: 500, headers: responseHeaders });
     }
 
-    const { data: canViewFinance, error: financePermissionError } = await access.supabase.rpc("current_user_has_company_permission", {
-      requested_company_id: access.companyId,
-      requested_permission: "finance.view",
-    });
-    if (financePermissionError) throw financePermissionError;
+    const [{ data: canViewFinance, error: financePermissionError }, { data: canCreate, error: createPermissionError }] = await Promise.all([
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "finance.view",
+      }),
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "employers.create",
+      }),
+    ]);
+    if (financePermissionError || createPermissionError) throw financePermissionError ?? createPermissionError;
     let financeByContractor = new Map<string, { projectId: string; projectName: string; visaCount: number; contractorServiceCharge: number; amountDue: number; accountId: string }[]>();
     if (canViewFinance) {
       const { data: projectFinance, error: projectFinanceError } = await access.supabase.rpc("list_project_contractor_finance", {
@@ -79,7 +85,10 @@ export async function GET() {
 
     return NextResponse.json({
       employers: (data ?? []).map((employer) => ({ ...employer, financeProjects: financeByContractor.get(employer.id) ?? [] })),
-      permissions: { canViewFinance: Boolean(canViewFinance) },
+      permissions: {
+        canViewFinance: Boolean(canViewFinance),
+        canCreate: Boolean(canCreate),
+      },
     }, { headers: responseHeaders });
   } catch (error) {
     console.error("Employer list request failed", error);

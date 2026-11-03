@@ -146,7 +146,7 @@ export default function PassportCustodyWorkspace({ companyName, onRegisterCandid
   };
 
   return (
-    <section className="flex h-full min-h-0 flex-col" aria-labelledby="passport-custody-title">
+    <section className="flex min-h-full flex-col" aria-labelledby="passport-custody-title">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4" style={{ borderColor: "var(--border)" }}>
         <div><h1 id="passport-custody-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Passport Custody</h1><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Tracking, storage, withdrawals, and transfers</p></div>
         <button type="button" onClick={onRegisterCandidate} className="inline-flex items-center gap-2 border px-3 py-2 text-sm font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Plus size={16} aria-hidden="true" />Register candidate</button>
@@ -167,8 +167,8 @@ export default function PassportCustodyWorkspace({ companyName, onRegisterCandid
       </div>
 
       {error && <div role="alert" className="mx-6 mt-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
-      <div className="min-h-0 flex-1 overflow-auto p-6">
-        <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+      <div className="flex min-h-0 flex-1 p-6" style={{ minHeight: "20rem" }}>
+        <div className="app-table-scroll min-h-0 flex-1 border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-220 text-sm">
             <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Passport ID", "Holder's name", "Passport number", "Agent", "Storage location", "Status"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>

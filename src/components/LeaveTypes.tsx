@@ -197,7 +197,7 @@ export default function LeaveTypes() {
           <section aria-label="Active leave types">
             <h3 className="mb-3 text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Active ({active.length})</h3>
             <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-              <table className="w-full min-w-160 text-sm">
+              <div className="app-table-scroll"><table className="w-full min-w-160 text-sm">
                 <thead>
                   <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
                     {["Leave type", "Days per year", "Description", canManage ? "Actions" : ""].filter(Boolean).map((h) => (
@@ -249,7 +249,7 @@ export default function LeaveTypes() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           </section>
         )}
@@ -258,7 +258,7 @@ export default function LeaveTypes() {
           <section aria-label="Inactive leave types">
             <h3 className="mb-3 text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Inactive ({inactive.length})</h3>
             <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-              <table className="w-full min-w-160 text-sm">
+              <div className="app-table-scroll"><table className="w-full min-w-160 text-sm">
                 <thead>
                   <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
                     {["Leave type", "Days per year", "Description", canManage ? "Actions" : ""].filter(Boolean).map((h) => (
@@ -309,7 +309,7 @@ export default function LeaveTypes() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           </section>
         )}

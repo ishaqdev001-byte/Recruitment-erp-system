@@ -366,7 +366,7 @@ export default function HospitalManagement() {
               </p>
             ) : (
               <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-                <table className="w-full text-sm">
+                <div className="app-table-scroll"><table className="w-full text-sm">
                   <thead>
                     <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                       <th className="px-4 py-3 text-left font-700 text-xs uppercase" style={{ color: "var(--muted-foreground)" }}>Doctor</th>
@@ -405,7 +405,7 @@ export default function HospitalManagement() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </div>
             )}
           </>

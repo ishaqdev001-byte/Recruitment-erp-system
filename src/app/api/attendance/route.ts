@@ -60,11 +60,48 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Choose a valid attendance period ending today or earlier." }, { status: 400, headers: responseHeaders });
     }
 
-    const [canViewTeam, canClock] = await Promise.all([
+    const [
+      canViewTeamPermission,
+      canClockPermission,
+      canManageTeamPermission,
+      canViewReportsPermission,
+      companyResult,
+    ] = await Promise.all([
       hasWorkforcePermission(access, "attendance.view"),
       hasWorkforcePermission(access, "attendance.clock"),
+      hasWorkforcePermission(access, "attendance.manage"),
+      hasWorkforcePermission(access, "attendance.view_reports"),
+      access.supabase
+        .from("companies")
+        .select("primary_admin_user_id")
+        .eq("id", access.companyId)
+        .maybeSingle(),
     ]);
+    if (companyResult.error) {
+      console.error("Attendance company-owner lookup failed", companyResult.error);
+      return NextResponse.json({ error: "Unable to verify attendance access." }, { status: 500, headers: responseHeaders });
+    }
+    if (!companyResult.data) return NextResponse.json({ error: "Company not found." }, { status: 404, headers: responseHeaders });
+    const isChairman = companyResult.data.primary_admin_user_id === access.userId;
+    const canManageTeam = canManageTeamPermission && !isChairman;
+    const canViewReports = canViewReportsPermission && isChairman;
+    const canViewTeam =
+      canViewTeamPermission || canManageTeamPermission || canViewReports;
+    const canClock = !isChairman && canClockPermission;
+    if (mode !== "daily" && !canViewReports) {
+      return NextResponse.json({ error: "Only the company Chairman can view weekly and monthly attendance reports." }, { status: 403, headers: responseHeaders });
+    }
     if (!canViewTeam && !canClock) return NextResponse.json({ error: "You do not have permission to view attendance. Check your role permissions and apply the latest attendance and leave migration if setup is incomplete." }, { status: 403, headers: responseHeaders });
+
+    const { data: officeOpen, error: officeScheduleError } =
+      await access.supabase.rpc("company_attendance_day_is_open", {
+        requested_company_id: access.companyId,
+        requested_date: selectedDate,
+      });
+    if (officeScheduleError) {
+      console.error("Attendance office schedule lookup failed", officeScheduleError);
+      return NextResponse.json({ error: "Unable to load the office schedule." }, { status: 500, headers: responseHeaders });
+    }
 
     const range = dateRange(mode, selectedDate);
     const startDate = canViewTeam ? range.startDate : range.startDate < threeMonthsAgo(kampalaWorkDate()) ? threeMonthsAgo(kampalaWorkDate()) : range.startDate;
@@ -124,6 +161,7 @@ export async function GET(request: Request) {
         name: names.get(membership.user_id) || (membership.user_id === access.userId ? "You" : "Employee"),
         status: membership.status,
       })),
+      officeOpen: Boolean(officeOpen),
       records: (attendanceResult.data ?? []).map((record) => ({
         ...record,
         employee_name: names.get(record.employee_id) || (record.employee_id === access.userId ? "You" : "Employee"),
@@ -135,7 +173,14 @@ export async function GET(request: Request) {
               ? Math.max(0, Math.floor((now - Date.parse(record.check_in_at)) / 60000))
               : null,
       })),
-      permissions: { canViewTeam, canClock },
+      permissions: {
+        canViewTeam,
+        canClock,
+        canManageTeam,
+        canViewReports,
+        canExport: canViewReports,
+        isChairman,
+      },
     }, { headers: responseHeaders });
   } catch (error) {
     console.error("Attendance request failed", error);
@@ -147,21 +192,37 @@ export async function POST(request: Request) {
   try {
     const access = await getWorkforceAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers: responseHeaders });
-    if (!await hasWorkforcePermission(access, "attendance.clock")) return NextResponse.json({ error: "You do not have permission to record attendance." }, { status: 403, headers: responseHeaders });
-
-    const body = await request.json().catch(() => null) as { action?: unknown; comment?: unknown } | null;
+    const body = await request.json().catch(() => null) as { action?: unknown; comment?: unknown; employeeId?: unknown } | null;
     if (body?.action !== "check-in" && body?.action !== "check-out") {
       return NextResponse.json({ error: "Choose check-in or check-out." }, { status: 400, headers: responseHeaders });
     }
+    const hasEmployeeId = Object.prototype.hasOwnProperty.call(body ?? {}, "employeeId");
+    if (hasEmployeeId && (typeof body?.employeeId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.employeeId))) {
+      return NextResponse.json({ error: "Choose a valid staff member." }, { status: 400, headers: responseHeaders });
+    }
+    const canManageTeam = await hasWorkforcePermission(access, "attendance.manage");
+    if (hasEmployeeId) {
+      if (!canManageTeam) return NextResponse.json({ error: "You do not have permission to manage staff attendance." }, { status: 403, headers: responseHeaders });
+    } else if (!await hasWorkforcePermission(access, "attendance.clock")) {
+      return NextResponse.json({ error: "You do not have permission to record attendance." }, { status: 403, headers: responseHeaders });
+    }
     const comment = typeof body.comment === "string" ? body.comment.trim() : "";
     if (!comment || comment.length > 1000) return NextResponse.json({ error: "Add a comment up to 1,000 characters." }, { status: 400, headers: responseHeaders });
-    const { data, error } = await access.supabase.rpc("record_attendance_action", {
-      requested_company_id: access.companyId,
-      requested_action: body.action,
-      requested_comment: comment,
-    });
+    const { data, error } = hasEmployeeId
+      ? await access.supabase.rpc("record_attendance_action_for_employee", {
+        requested_company_id: access.companyId,
+        requested_employee_id: body.employeeId,
+        requested_action: body.action,
+        requested_comment: comment,
+      })
+      : await access.supabase.rpc("record_attendance_action", {
+        requested_company_id: access.companyId,
+        requested_action: body.action,
+        requested_comment: comment,
+      });
     if (error || !data) {
       if (error?.code === "23505" || error?.code === "P0002") return NextResponse.json({ error: error.message }, { status: 409, headers: responseHeaders });
+      if (error?.code === "42501") return NextResponse.json({ error: error.message }, { status: 403, headers: responseHeaders });
       console.error("Attendance action failed", error);
       return NextResponse.json({ error: "Unable to update today's attendance." }, { status: 400, headers: responseHeaders });
     }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTaskAccess, hasTaskPermission } from "@/lib/server/tasks";
+import { createTaskAdminClient, getTaskAccess, hasTaskPermission, isUuid } from "@/lib/server/tasks";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
@@ -44,11 +44,36 @@ export async function GET() {
     const { data: profile, error: profileError } = await access.supabase.from("profiles")
       .select("id, display_name").eq("id", access.userId).maybeSingle();
     if (profileError) throw profileError;
+    const members = [{ id: access.userId, name: profile?.display_name || `Staff ${access.userId.slice(0, 8)}` }];
+    const admin = createTaskAdminClient();
+    if (admin) {
+      const { data: memberships, error: membershipError } = await admin.from("company_memberships")
+        .select("user_id").eq("company_id", access.companyId).eq("status", "active");
+      if (membershipError) throw membershipError;
+      const memberIds = [...new Set((memberships ?? []).map((membership) => membership.user_id))];
+      if (memberIds.length) {
+        const { data: profiles, error: memberProfileError } = await admin.from("profiles")
+          .select("id, display_name").in("id", memberIds);
+        if (memberProfileError) throw memberProfileError;
+        const names = new Map((profiles ?? []).map((memberProfile) => [memberProfile.id, memberProfile.display_name]));
+        members.splice(0, members.length, ...memberIds.map((id) => ({
+          id,
+          name: names.get(id) || `Staff ${id.slice(0, 8)}`,
+        })));
+      }
+    }
     return NextResponse.json({
       tasks: tasks ?? [],
       lists: taskLists,
-      members: [{ id: access.userId, name: profile?.display_name || `Staff ${access.userId.slice(0, 8)}` }],
-      permissions: { canCreate, canEdit, canDelete, canSendSms: !canSendSmsResult.error && Boolean(canSendSmsResult.data) },
+      members,
+      currentUserId: access.userId,
+      permissions: {
+        canCreate,
+        canEdit,
+        canDelete,
+        canAssign: canCreate && Boolean(admin),
+        canSendSms: !canSendSmsResult.error && Boolean(canSendSmsResult.data),
+      },
     }, { headers });
   } catch (error) {
     console.error("Task list request failed", error);
@@ -69,20 +94,20 @@ export async function POST(request: Request) {
     const reminderAt = body?.reminderAt === null || body?.reminderAt === "" ? null : body?.reminderAt;
     const parentTaskId = body?.parentTaskId === null || body?.parentTaskId === "" ? null : body?.parentTaskId;
     const smsReminderEnabled = body?.smsReminderEnabled === true;
+    const assignedTo = body?.assignedTo === undefined || body.assignedTo === null || body.assignedTo === ""
+      ? access.userId
+      : body.assignedTo;
     const priority = body?.priority ?? "Medium";
     const recurrence = body?.recurrence ?? "none";
     if (!title || title.length > 300 || notes.length > 10000 || !/^[0-9a-f-]{36}$/i.test(listId)
       || (dueAt !== null && (typeof dueAt !== "string" || Number.isNaN(Date.parse(dueAt))))
       || (reminderAt !== null && (typeof reminderAt !== "string" || Number.isNaN(Date.parse(reminderAt))))
       || (parentTaskId !== null && (typeof parentTaskId !== "string" || !/^[0-9a-f-]{36}$/i.test(parentTaskId)))
+      || !isUuid(assignedTo)
       || !["High", "Medium", "Low"].includes(String(priority))
       || !["none", "daily", "weekly", "monthly", "yearly"].includes(String(recurrence))) {
       return NextResponse.json({ error: "Enter a task title and valid task details." }, { status: 400, headers });
     }
-    if (body?.assignedTo !== undefined && body.assignedTo !== null && body.assignedTo !== "" && body.assignedTo !== access.userId) {
-      return NextResponse.json({ error: "Tasks and their reminders can only be assigned to you." }, { status: 400, headers });
-    }
-
     const [canCreate, smsPermission] = await Promise.all([
       hasTaskPermission(access, "tasks.create"),
       smsReminderEnabled && reminderAt
@@ -95,6 +120,14 @@ export async function POST(request: Request) {
     if (!canCreate) return NextResponse.json({ error: "You do not have permission to create tasks. Apply the Google Tasks migration if task permissions have not been configured." }, { status: 403, headers });
     if (smsReminderEnabled && (!reminderAt || !smsPermission || smsPermission.error || !smsPermission.data)) {
       return NextResponse.json({ error: "SMS reminders require a scheduled reminder and the communications.sms.send permission." }, { status: 403, headers });
+    }
+    if (assignedTo !== access.userId) {
+      const admin = createTaskAdminClient();
+      if (!admin) return NextResponse.json({ error: "Staff assignment is unavailable because server-side membership verification is not configured." }, { status: 503, headers });
+      const { data: membership, error: membershipError } = await admin.from("company_memberships")
+        .select("user_id").eq("company_id", access.companyId).eq("user_id", assignedTo).eq("status", "active").maybeSingle();
+      if (membershipError) throw membershipError;
+      if (!membership) return NextResponse.json({ error: "Choose an active staff member in your company." }, { status: 400, headers });
     }
 
     const parentLookup = parentTaskId
@@ -116,7 +149,7 @@ export async function POST(request: Request) {
       notes,
       due_at: dueAt,
       reminder_at: reminderAt,
-      assigned_to: access.userId,
+      assigned_to: assignedTo,
       priority,
       recurrence,
       sms_reminder_enabled: smsReminderEnabled,

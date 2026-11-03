@@ -250,7 +250,7 @@ export default function Projects() {
           <h1 id="projects-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Projects</h1>
           <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>{loading ? "Loading projects" : error ? "Project records unavailable" : `${projects.length} total projects`}</p>
         </div>
-        <button type="button" onClick={openNewProject} disabled={!permissions.canCreate} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />Add project</button>
+        {permissions.canCreate && <button type="button" onClick={openNewProject} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />Add project</button>}
       </header>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
@@ -261,7 +261,7 @@ export default function Projects() {
       {error && <div role="alert" className="mx-6 mt-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-          <table className="w-full min-w-275 text-sm">
+          <div className="app-table-scroll"><table className="w-full min-w-275 text-sm">
             <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Project", "Contractor", "Country", "Salary range", "Age bracket", "Vacancies", "Submitted", "Shortfall", "Visas", "Candidate fee", "Contractor fee", "Book", "Tickets", "Status", "Actions"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
               {loading && <tr><td colSpan={15} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading projects…</td></tr>}
@@ -284,7 +284,7 @@ export default function Projects() {
                 <td className="whitespace-nowrap px-3 py-3"><div className="flex items-center gap-1"><button type="button" aria-label={`Edit ${project.project_name}`} title="Edit project" disabled={!permissions.canEdit} onClick={() => openEditProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "var(--muted-foreground)" }}><Pencil size={15} aria-hidden="true" /></button><button type="button" aria-label={`View visa candidates for ${project.project_name}`} title="View visa candidates" onClick={() => openVisaCandidates(project)} className="p-2" style={{ color: "var(--foreground)" }}><Eye size={15} aria-hidden="true" /></button><button type="button" aria-label={`Delete ${project.project_name}`} title="Delete project" disabled={!permissions.canDelete} onClick={() => void deleteProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "#ef4444" }}><Trash2 size={15} aria-hidden="true" /></button></div></td>
               </tr>)}
             </tbody>
-          </table>
+          </table></div>
         </div>
       </div>
 
@@ -318,7 +318,7 @@ export default function Projects() {
           {!visaCandidatesLoading && visaCandidates.length === 0 && <div className="py-8 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No candidates have received visas for this project yet.</div>}
           {!visaCandidatesLoading && visaCandidates.length > 0 && (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-600 text-sm">
+              <div className="app-table-scroll"><table className="w-full min-w-600 text-sm">
                 <thead>
                   <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                     {["Candidate Name", "Passport Number", "Date Visa Received"].map((heading) => (
@@ -337,7 +337,7 @@ export default function Projects() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           )}
         </div>

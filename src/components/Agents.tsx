@@ -234,7 +234,7 @@ export default function Agents({
             )}
             {!agentCandidatesLoading && agentCandidates.length > 0 && (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-600 text-sm">
+                <div className="app-table-scroll"><table className="w-full min-w-600 text-sm">
                   <thead>
                     <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                       {["Candidate Name", "File Number", "Phone", "Position", "Passport Number", "Visa Status", "Visa Received Date"].map((heading) => (
@@ -266,7 +266,7 @@ export default function Agents({
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </div>
             )}
           </section>
@@ -310,7 +310,7 @@ export default function Agents({
       {error && <div role="alert" className="mx-6 mt-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-          <table className="w-full min-w-225 text-sm">
+          <div className="app-table-scroll"><table className="w-full min-w-225 text-sm">
             <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Agent", "Phone", "Email address", "Registered branch", "Candidates", "Status", ""].map((heading) => <th key={heading} className="whitespace-nowrap px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
               {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading agent records…</td></tr>}
@@ -329,7 +329,7 @@ export default function Agents({
                 </tr>;
               })}
             </tbody>
-          </table>
+          </table></div>
         </div>
       </div>
 

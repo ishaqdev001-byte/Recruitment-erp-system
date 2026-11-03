@@ -141,6 +141,7 @@ const permissionActionLabels: Record<string, string> = {
 const permissionCodeLabels: Record<string, string> = {
   "candidates.project_submit": "Submit candidates to projects",
   "candidates.stage": "Update candidate stages",
+  "attendance.view_reports": "View weekly and monthly reports",
 }
 
 const permissionModuleOrder = [
@@ -872,7 +873,12 @@ export default function UsersRoles({
 
   const manageUser = async (
     user: UserRecord,
-    action: "change-role" | "set-status" | "revoke-invite" | "delete-user",
+    action:
+      | "change-role"
+      | "set-status"
+      | "resend-invite"
+      | "revoke-invite"
+      | "delete-user",
     roleId?: string,
   ) => {
     const prompts: Partial<Record<typeof action, string>> = {
@@ -881,6 +887,7 @@ export default function UsersRoles({
         "disabled"
           ? `Activate ${user.name}'s company access?`
           : `Deactivate ${user.name}'s company access?`,
+      "resend-invite": `Send a fresh invitation link to ${user.email}? The new link will be valid for one hour.`,
       "revoke-invite": `Revoke the pending invitation for ${user.name}?`,
       "delete-user": `Remove ${user.name} from this company? If they have no other company memberships, their account will be deactivated and removed while keeping historical finance records intact.`,
     }
@@ -923,7 +930,9 @@ export default function UsersRoles({
         action ===
           "change-role"
           ? `Role updated for ${user.name}.`
-          : action ===
+          : action === "resend-invite"
+            ? `A fresh invitation link was sent to ${user.email}.`
+            : action ===
               "set-status"
             ? `Access updated for ${user.name}.`
             : action ===
@@ -1239,7 +1248,7 @@ export default function UsersRoles({
                 borderColor: "var(--border)",
               }}
             >
-              <table className="w-full min-w-155 text-sm">
+              <div className="app-table-scroll"><table className="w-full min-w-155 text-sm">
                 <thead>
                   <tr
                     className="border-b"
@@ -1453,23 +1462,42 @@ export default function UsersRoles({
                             </span>
                           ) : user.status ===
                             "invited" ? (
-                            <button
-                              type="button"
-                              disabled={
-                                userActionPending ===
-                                user.id
-                              }
-                              onClick={() =>
-                                void manageUser(user, "revoke-invite")
-                              }
-                              className="rounded border px-2 py-1 text-xs disabled:opacity-50"
-                              style={{
-                                borderColor: "var(--border)",
-                                color: "var(--muted-foreground)",
-                              }}
-                            >
-                              Revoke invite
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                disabled={
+                                  userActionPending ===
+                                  user.id
+                                }
+                                onClick={() =>
+                                  void manageUser(user, "resend-invite")
+                                }
+                                className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "var(--primary)",
+                                }}
+                              >
+                                Resend invite
+                              </button>
+                              <button
+                                type="button"
+                                disabled={
+                                  userActionPending ===
+                                  user.id
+                                }
+                                onClick={() =>
+                                  void manageUser(user, "revoke-invite")
+                                }
+                                className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "var(--muted-foreground)",
+                                }}
+                              >
+                                Revoke invite
+                              </button>
+                            </>
                           ) : (
                             <button
                               type="button"
@@ -1533,7 +1561,7 @@ export default function UsersRoles({
                     </tr>
                   )}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           )}
 
@@ -1912,7 +1940,7 @@ export default function UsersRoles({
               )}
 
               <div className="overflow-x-auto">
-                <table className="w-full min-w-225 text-sm">
+                <div className="app-table-scroll"><table className="w-full min-w-225 text-sm">
                   <thead>
                     <tr
                       className="border-b"
@@ -2053,7 +2081,7 @@ export default function UsersRoles({
                       </tr>
                     )}
                   </tbody>
-                </table>
+                </table></div>
               </div>
             </div>
           </div>
@@ -3250,7 +3278,7 @@ function LegacyUsersRoles() {
             className="rounded border"
             style={{ background: "var(--card)", borderColor: "var(--border)" }}
           >
-            <table className="w-full text-sm">
+            <div className="app-table-scroll"><table className="w-full text-sm">
               <thead>
                 <tr
                   className="border-b"
@@ -3366,7 +3394,7 @@ function LegacyUsersRoles() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           </div>
         )}
 
@@ -3469,7 +3497,7 @@ function LegacyUsersRoles() {
                   </button>
                 </div>
                 <div className="overflow-auto">
-                  <table className="w-full text-xs">
+                  <div className="app-table-scroll"><table className="w-full text-xs">
                     <thead>
                       <tr
                         className="border-b"
@@ -3522,7 +3550,7 @@ function LegacyUsersRoles() {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </table></div>
                 </div>
               </div>
             ) : (

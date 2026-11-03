@@ -32,7 +32,7 @@ async function getInvitation(invitationId: string) {
   }
   if (invitation.accepted_at) return { error: "This invitation has already been accepted. Log in with your password.", status: 410 as const };
   if (new Date(invitation.expires_at).getTime() <= Date.now()) {
-    return { error: "This invitation has expired. Ask the company administrator to send a new one.", status: 410 as const };
+    return { error: "This invitation has expired. Ask the company administrator to resend it from Users & Roles.", status: 410 as const };
   }
 
   const [{ data: membership, error: membershipError }, { data: company, error: companyError }, { data: role, error: roleError }] = await Promise.all([
@@ -87,7 +87,7 @@ async function getLegacyInvitation() {
     user_id: user.id,
     role_id: membership.role_id,
   }).select("id").single();
-  if (insertError || !invitation) return { error: "Unable to create a short-lived acceptance record. Ask the administrator to send a new invitation.", status: 500 as const };
+  if (insertError || !invitation) return { error: "Unable to create a one-hour acceptance record. Ask the administrator to send a new invitation.", status: 500 as const };
   return getInvitation(invitation.id);
 }
 

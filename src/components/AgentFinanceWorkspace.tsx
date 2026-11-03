@@ -105,7 +105,7 @@ export default function AgentFinanceWorkspace() {
         <h2 className="border-b px-4 py-3 text-sm font-700" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
           Invoices
         </h2>
-        <table className="w-full min-w-180 text-sm">
+        <div className="app-table-scroll"><table className="w-full min-w-180 text-sm">
           <thead>
             <tr className="border-b text-left" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
               {["Invoice", "Billed to", "Description", "Amount", "Paid", "Balance", "Due date"].map((heading) => (
@@ -131,14 +131,14 @@ export default function AgentFinanceWorkspace() {
               )
             })}
           </tbody>
-        </table>
+        </table></div>
       </section>
 
       <section className="overflow-x-auto border" style={{ borderColor: "var(--border)" }}>
         <h2 className="border-b px-4 py-3 text-sm font-700" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
           Candidate receipts
         </h2>
-        <table className="w-full min-w-140 text-sm">
+        <div className="app-table-scroll"><table className="w-full min-w-140 text-sm">
           <thead>
             <tr className="border-b text-left" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
               {["Receipt", "Candidate", "Category", "Amount", "Method", "Received"].map((heading) => (
@@ -160,7 +160,7 @@ export default function AgentFinanceWorkspace() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </section>
     </section>
   )

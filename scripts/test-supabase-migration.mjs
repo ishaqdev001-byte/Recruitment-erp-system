@@ -268,6 +268,13 @@ const attendanceHistoryMigration = await readFile(
 
   "utf8",
 )
+const companyAttendanceScheduleMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261103103918_company_attendance_schedule_and_closures.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
 const leaveTypesWorkflowMigration = await readFile(
   new URL(
     "../supabase/migrations/202610170004_leave_types_workflow.sql",
@@ -279,6 +286,15 @@ const leaveTypesWorkflowMigration = await readFile(
 const workspaceInvitationExpiryMigration = await readFile(
   new URL(
     "../supabase/migrations/202610040018_workspace_invitation_expiry.sql",
+    import.meta.url,
+  ),
+
+  "utf8",
+)
+
+const workspaceInvitationOneHourExpiryMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261103055849_workspace_invitation_one_hour_expiry.sql",
     import.meta.url,
   ),
 
@@ -414,6 +430,14 @@ const googleTasksMigration = await readFile(
 const enableTasksForAllMembersMigration = await readFile(
   new URL(
     "../supabase/migrations/20261102133528_enable_tasks_for_all_members.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const taskAssignmentWorkflowMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261103065113_task_assignment_and_todo_workflow.sql",
     import.meta.url,
   ),
   "utf8",
@@ -646,6 +670,8 @@ const companyC = "10000000-0000-4000-8000-000000000003"
 
 const companyD = "10000000-0000-4000-8000-000000000004"
 
+const attendanceCompany = "10000000-0000-4000-8000-000000000005"
+
 const userA = "20000000-0000-4000-8000-000000000001"
 
 const userB = "20000000-0000-4000-8000-000000000002"
@@ -778,11 +804,67 @@ try {
   await database.exec(attendanceHistoryMigration)
 
   await database.exec(attendanceHistoryMigration)
+  await database.exec(companyAttendanceScheduleMigration)
+  await database.exec(companyAttendanceScheduleMigration)
+
+  const attendanceReportPermission = await database.query(
+    "select code from public.permissions where code = 'attendance.view_reports'",
+  )
+  assert.equal(
+    attendanceReportPermission.rows.length,
+    1,
+    "the attendance report permission is registered idempotently",
+  )
+  const attendanceScheduleTablePrivileges = await database.query(
+    `select
+       has_table_privilege('authenticated', 'public.company_attendance_schedule', 'select') as authenticated_can_read,
+       has_table_privilege('service_role', 'public.company_attendance_schedule', 'select') as service_role_can_read`,
+  )
+  assert.deepEqual(attendanceScheduleTablePrivileges.rows[0], {
+    authenticated_can_read: false,
+    service_role_can_read: true,
+  })
+  const attendanceProcedurePrivileges = await database.query(
+    `select
+       has_function_privilege('authenticated', 'public.save_company_attendance_settings(uuid, text, jsonb, jsonb)', 'execute') as authenticated_can_save_settings,
+       has_function_privilege('service_role', 'public.save_company_attendance_settings(uuid, text, jsonb, jsonb)', 'execute') as service_role_can_save_settings,
+       has_function_privilege('anon', 'public.record_attendance_action_for_employee(uuid, uuid, text, text)', 'execute') as anon_can_manage_attendance,
+       has_function_privilege('authenticated', 'public.record_attendance_action_for_employee(uuid, uuid, text, text)', 'execute') as authenticated_can_manage_attendance`,
+  )
+  assert.deepEqual(attendanceProcedurePrivileges.rows[0], {
+    authenticated_can_save_settings: false,
+    service_role_can_save_settings: true,
+    anon_can_manage_attendance: false,
+    authenticated_can_manage_attendance: true,
+  })
+  await database.query(
+    "insert into public.companies (id, name) values ($1, 'Attendance Schedule Test')",
+    [attendanceCompany],
+  )
+  await database.query(
+    `insert into public.company_attendance_schedule (
+       company_id, weekday, is_open, opens_at, closes_at
+     ) values ($1, 1, false, null, null)`,
+    [attendanceCompany],
+  )
+  const attendanceClosedWeekday = await database.query(
+    "select public.company_attendance_day_is_open($1, '2026-11-02') as is_open",
+    [attendanceCompany],
+  )
+  assert.equal(
+    attendanceClosedWeekday.rows[0].is_open,
+    false,
+    "attendance schedule closures are enforced for configured weekdays",
+  )
   await database.exec(leaveTypesWorkflowMigration)
 
   await database.exec(workspaceInvitationExpiryMigration)
 
   await database.exec(workspaceInvitationExpiryMigration)
+
+  await database.exec(workspaceInvitationOneHourExpiryMigration)
+
+  await database.exec(workspaceInvitationOneHourExpiryMigration)
 
   await database.exec(invitedMemberWorkspaceAccessMigration)
 
@@ -1948,7 +2030,7 @@ try {
     [invitationId],
   )
 
-  assert.equal(invitationExpiry.rows[0].lifetime_seconds, 300)
+  assert.equal(invitationExpiry.rows[0].lifetime_seconds, 3600)
 
   await database.exec("reset role; set role authenticated")
 
@@ -2098,14 +2180,6 @@ try {
   assert.deepEqual(selfAttendancePermissions.rows, [
     { can_clock: false, can_request_leave: false },
   ])
-  await database.exec("reset role; set role service_role")
-  await database.query(
-    `insert into public.role_permissions (role_id, company_id, permission_code)
-      values ($1, $2, 'attendance.clock'), ($1, $2, 'leave.create'), ($1, $2, 'attendance.manage')`,
-    [roleA, companyA],
-  )
-  await database.exec("reset role; set role authenticated")
-
   const tooOldAttendanceDate = await database.query(
     "select ((now() at time zone 'Africa/Kampala')::date - interval '4 months')::date as work_date",
   )
@@ -2115,9 +2189,16 @@ try {
       companyA,
       tooOldAttendanceDate.rows[0].work_date,
     ]),
-
     /Personal attendance history is limited to three months/,
   )
+
+  await database.exec("reset role; set role service_role")
+  await database.query(
+    `insert into public.role_permissions (role_id, company_id, permission_code)
+      values ($1, $2, 'attendance.clock'), ($1, $2, 'leave.create')`,
+    [roleA, companyA],
+  )
+  await database.exec("reset role; set role authenticated")
 
   await assert.rejects(
     database.query(
@@ -2264,14 +2345,17 @@ try {
     [companyA],
   )
 
-  assert.deepEqual(customRoleAttendanceScope.rows, [{ can_view_team: false }])
+  assert.deepEqual(customRoleAttendanceScope.rows, [{ can_view_team: true }])
 
-  const coworkerStillCannotReadTeam = await database.query(
+  const coworkerCanReadTeam = await database.query(
     "select employee_id from public.attendance_records where company_id = $1",
     [companyA],
   )
 
-  assert.deepEqual(coworkerStillCannotReadTeam.rows, [])
+  assert.deepEqual(
+    coworkerCanReadTeam.rows.map((record) => record.employee_id),
+    [userA, userA],
+  )
 
   await database.query(
     "select set_config('request.jwt.claim.sub', $1, false)",
@@ -3542,6 +3626,8 @@ try {
     create table public.company_branches (
       id uuid primary key,
       company_id uuid not null,
+      name text,
+      code text,
       manager_user_id uuid
     );
     create table public.branch_approval_requests (
@@ -4281,6 +4367,203 @@ try {
     [completedTaskId],
   )
   assert.deepEqual(completedReminder.rows, [])
+
+  await database.exec(taskAssignmentWorkflowMigration)
+
+  const taskAssignmentId = "30000000-0000-4000-8000-000000000192"
+  const taskProgressId = "30000000-0000-4000-8000-000000000191"
+  const taskDueId = "30000000-0000-4000-8000-000000000190"
+  const sameBranchId = "90000000-0000-4000-8000-000000000001"
+  const otherBranchId = "90000000-0000-4000-8000-000000000002"
+  await database.query(
+    `insert into public.company_branches (id, company_id, name, code)
+     values ($1, $3, 'Task Workflow Branch A', 'TASK-A'),
+            ($2, $3, 'Task Workflow Branch B', 'TASK-B')`,
+    [sameBranchId, otherBranchId, companyA],
+  )
+  await database.query(
+    `update public.company_memberships
+     set branch_id = case when user_id = $1 then $3::uuid else $4::uuid end
+     where company_id = $2 and user_id in ($1, $5, $6, $7)`,
+    [userA, companyA, sameBranchId, otherBranchId, userB, userD, userE],
+  )
+  await database.query(
+    `update public.company_memberships
+     set branch_id = $2::uuid
+     where company_id = $1 and user_id in ($3, $4)`,
+    [companyA, sameBranchId, userB, userD],
+  )
+  await database.query(
+    `update public.company_memberships
+     set role_id = (
+       select id from public.company_roles
+       where company_id = $1 and name = 'Supervisor' limit 1
+     )
+     where company_id = $1 and user_id = $2`,
+    [companyA, userE],
+  )
+  const assignmentTask = await database.query(
+    `insert into public.tasks (
+       id, company_id, list_id, title, assigned_to, created_by
+     ) values ($1, $2, $3, 'Assigned task branch test', $4, $5)
+     returning id`,
+    [taskAssignmentId, companyA, personalTaskListId, userB, userA],
+  )
+  assert.equal(assignmentTask.rows[0].id, taskAssignmentId)
+  const assignmentRecipients = await database.query(
+    `select recipient_id, body from public.task_notifications
+     where task_id = $1 and notification_type = 'assignment'
+     order by recipient_id`,
+    [taskAssignmentId],
+  )
+  assert.deepEqual(
+    assignmentRecipients.rows.map((notification) => notification.recipient_id),
+    [userB, userD].sort(),
+    "assignment alerts go to the assignee and only CC roles in the creator's branch",
+  )
+
+  await assert.rejects(
+    database.query(
+      `insert into public.tasks (company_id, list_id, title, assigned_to, created_by)
+       values ($1, $2, 'Cross-company assignment test', $3, $4)`,
+      [companyA, personalTaskListId, userC, userA],
+    ),
+    /active member of the same company/i,
+    "database trigger rejects inactive or cross-company assignees",
+  )
+
+  await database.query(
+    `insert into public.tasks (
+       id, company_id, list_id, title, due_at, reminder_at, assigned_to, created_by
+     ) values (
+       $1, $2, $3, 'Assigned reminder workflow test',
+       now() + interval '1 hour', null, $4, $5
+     )`,
+    [taskProgressId, companyA, personalTaskListId, userB, userA],
+  )
+  await database.query(
+    `update public.tasks set assigned_at = now() - interval '11 minutes'
+     where id = $1`,
+    [taskProgressId],
+  )
+  await database.query("select public.dispatch_due_task_notifications()")
+  const initialTaskReminderEvents = await database.query(
+    `select notification_type, sms_status from public.task_notifications
+     where task_id = $1 and notification_type in ('acknowledgement_reminder', 'progress_reminder')
+     order by notification_type`,
+    [taskProgressId],
+  )
+  assert.deepEqual(initialTaskReminderEvents.rows, [
+    { notification_type: "acknowledgement_reminder", sms_status: "queued" },
+    { notification_type: "progress_reminder", sms_status: "not_requested" },
+  ])
+
+  await database.exec(
+    "grant select, update on public.task_notifications to authenticated",
+  )
+  await database.exec(
+    "grant select, update on public.tasks to authenticated",
+  )
+  await database.exec("set role authenticated")
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userB])
+  await database.query(
+    `update public.task_notifications set read_at = now()
+     where task_id = $1 and recipient_id = $2 and notification_type = 'assignment'`,
+    [taskProgressId, userB],
+  )
+  const acknowledgedTask = await database.query(
+    `select assignment_acknowledged_at from public.tasks where id = $1`,
+    [taskProgressId],
+  )
+  assert.ok(acknowledgedTask.rows[0].assignment_acknowledged_at)
+  const cancelledAcknowledgementSms = await database.query(
+    `select sms_status from public.task_notifications
+     where task_id = $1 and notification_type = 'acknowledgement_reminder'`,
+    [taskProgressId],
+  )
+  assert.deepEqual(cancelledAcknowledgementSms.rows, [{ sms_status: "not_requested" }])
+
+  await database.exec("reset role")
+  await database.query("select set_config('request.jwt.claim.sub', '', false)")
+  await database.query(
+    `update public.tasks
+     set last_progress_reminder_at = now() - interval '11 minutes'
+     where id = $1`,
+    [taskProgressId],
+  )
+  await database.query("select public.dispatch_due_task_notifications()")
+  const repeatedProgressReminders = await database.query(
+    `select count(*)::integer as count from public.task_notifications
+     where task_id = $1 and notification_type = 'progress_reminder'`,
+    [taskProgressId],
+  )
+  assert.equal(repeatedProgressReminders.rows[0].count, 2)
+
+  await database.exec("set role authenticated")
+  await database.query("select set_config('request.jwt.claim.sub', $1, false)", [userA])
+  await database.query(
+    "update public.tasks set is_completed = true where id = $1",
+    [taskProgressId],
+  )
+  await database.exec("reset role")
+  await database.query("select set_config('request.jwt.claim.sub', '', false)")
+  const completionRecipients = await database.query(
+    `select recipient_id, body from public.task_notifications
+     where task_id = $1 and notification_type = 'completion'
+     order by recipient_id`,
+    [taskProgressId],
+  )
+  assert.deepEqual(
+    completionRecipients.rows.map((notification) => notification.recipient_id),
+    [userA, userD].sort(),
+    "completion alerts go to the creator and original branch CC recipients",
+  )
+  const expectedCompleterName = await database.query(
+    `select coalesce(nullif(trim(display_name), ''), 'A colleague') as name
+     from public.profiles where id = $1`,
+    [userA],
+  )
+  assert(
+    completionRecipients.rows.every((notification) =>
+      notification.body.startsWith(`${expectedCompleterName.rows[0]?.name ?? "A colleague"} completed`),
+    ),
+    "completion feedback identifies the actual task completer",
+  )
+  await database.query("select public.dispatch_due_task_notifications()")
+  const completedProgressCount = await database.query(
+    `select count(*)::integer as count from public.task_notifications
+     where task_id = $1 and notification_type = 'progress_reminder'`,
+    [taskProgressId],
+  )
+  assert.equal(completedProgressCount.rows[0].count, 2, "completed tasks stop receiving progress reminders")
+
+  await database.query(
+    `insert into public.tasks (
+       id, company_id, list_id, title, due_at, reminder_at, assigned_to, created_by
+     ) values (
+       $1, $2, $3, 'Due reminder uniqueness test',
+       now() - interval '1 minute', now() - interval '2 minutes', $4, $4
+     )`,
+    [taskDueId, companyA, personalTaskListId, userA],
+  )
+  await database.query("select public.dispatch_due_task_notifications()")
+  await database.query("select public.dispatch_due_task_notifications()")
+  const uniqueDueReminder = await database.query(
+    `select count(*)::integer as count from public.task_notifications
+     where task_id = $1 and notification_type = 'due_reminder'`,
+    [taskDueId],
+  )
+  assert.equal(uniqueDueReminder.rows[0].count, 1, "due-time notifications remain unique after adding event types")
+
+  await database.query(
+    `update public.company_memberships
+     set role_id = (
+       select id from public.company_roles
+       where company_id = $1 and name = 'Finance Manager' limit 1
+     )
+     where company_id = $1 and user_id = $2`,
+    [companyA, userE],
+  )
 
   await database.exec(`
     alter table public.medical_appointments

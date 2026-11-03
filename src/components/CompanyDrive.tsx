@@ -819,7 +819,7 @@ export default function CompanyDrive({ companyName, permissions: accessPermissio
               </div>
             ) : !error && explorerEntries.length > 0 && viewMode === "list" ? (
               <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-                <table className="w-full min-w-160 text-sm">
+                <div className="app-table-scroll"><table className="w-full min-w-160 text-sm">
                   <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["File name", "Date added", "Size", "Creator", "Actions", "Last edited by"].map((heading) => <th key={heading} className="whitespace-nowrap px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
                   <tbody>{explorerEntries.map((entry) => <tr key={`${entry.kind}-${entry.id}`} className="border-b last:border-0 hover:bg-black/5" style={{ borderColor: "var(--border)" }}>
                     <td className="px-4 py-2.5"><button type="button" onClick={() => openExplorerEntry(entry)} className="flex min-w-0 items-center gap-2 text-left"><span style={{ color: entry.kind === "folder" || entry.kind === "candidate" ? "#d89a28" : "var(--primary)" }}>{entry.kind === "folder" || entry.kind === "candidate" ? <Folder size={17} aria-hidden="true" /> : <File size={16} aria-hidden="true" />}</span><span className="max-w-105 truncate font-600" style={{ color: "var(--foreground)" }}>{entry.name}</span></button></td>
@@ -847,7 +847,7 @@ export default function CompanyDrive({ companyName, permissions: accessPermissio
                     </div></td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-xs" style={{ color: "var(--muted-foreground)" }}>{entry.lastEditedBy}</td>
                   </tr>)}</tbody>
-                </table>
+                </table></div>
               </div>
             ) : !error && explorerEntries.length > 0 ? (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">

@@ -85,6 +85,13 @@ as $$
       and membership.company_id = requested_company_id
       and membership.status = 'active'
       and role_permission.permission_code = requested_permission
+      and (
+        requested_permission not in ('medical.view', 'medical.update', 'medical_documents.view')
+        or (
+          role.is_system_default
+          and lower(trim(role.name)) in ('doctor', 'medical examiner')
+        )
+      )
       and not (
         lower(trim(role.name)) = 'recruitment agent'
         and (

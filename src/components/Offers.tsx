@@ -76,7 +76,7 @@ export default function Offers() {
         </div>
 
         <div className="overflow-auto flex-1">
-          <table className="w-full text-sm">
+          <div className="app-table-scroll"><table className="w-full text-sm">
             <thead>
               <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                 {["Candidate", "Role", "Compensation", "Equity", "Status", "Sent", "Deadline"].map((h) => (
@@ -123,7 +123,7 @@ export default function Offers() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </div>
       </div>
 

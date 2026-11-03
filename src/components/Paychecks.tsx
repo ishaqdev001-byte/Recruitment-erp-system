@@ -230,7 +230,7 @@ export default function Paychecks() {
       {error && <div role="alert" className="mx-6 mt-4 rounded border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
       {notice && <div role="status" className="mx-6 mt-4 rounded border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">{notice}</div>}
       <div className="min-h-0 flex-1 overflow-auto p-6">
-        <div className="overflow-x-auto rounded border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+        <div className="finance-table-scroll rounded border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-225 text-sm">
             <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Pay period", "Staff member", "Gross pay", "Benefits", "Deductions", "Net paid", "Payment date", "Payslip"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
@@ -249,7 +249,7 @@ export default function Paychecks() {
             </tbody>
           </table>
         </div>
-        <div className="mt-6 overflow-x-auto rounded border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+        <div className="finance-table-scroll mt-6 rounded border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <div className="border-b px-4 py-3 text-sm font-700" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>Recorded benefits and deductions</div>
           <table className="w-full min-w-225 text-sm">
             <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Pay month", "Staff member", "Type", "Description", "Amount", "Method", "Reference", "Payslip"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>

@@ -534,7 +534,7 @@ export default function Candidates() {
 
       {/* Table */}
       <div className="flex-1 overflow-auto">
-        <table className="w-full text-sm">
+        <div className="app-table-scroll"><table className="w-full text-sm">
           <thead className="sticky top-0" style={{ background: "var(--card)" }}>
             <tr className="border-b" style={{ borderColor: "var(--border)" }}>
               <th className="px-3 py-3 w-8">
@@ -627,7 +627,7 @@ export default function Candidates() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       {/* Attachment drawer */}

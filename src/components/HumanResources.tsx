@@ -163,6 +163,14 @@ type MyPayslip = {
   payslipUrl: string
 }
 
+type ProfileSection =
+  | "personal"
+  | "identification"
+  | "academicQualifications"
+  | "professionalQualifications"
+  | "workExperience"
+  | "languages"
+
 const emptyQualification = (): Qualification => ({
   qualification: "",
   institution: "",
@@ -227,9 +235,13 @@ const documentTypeOptions = [
 export default function HumanResources({
   companyId,
   isOwner,
+  forcePersonalDetailsUpdate = false,
+  onPersonalDetailsComplete,
 }: {
   companyId: string;
   isOwner: boolean;
+  forcePersonalDetailsUpdate?: boolean;
+  onPersonalDetailsComplete?: (complete: boolean) => void;
 }) {
   const [profile, setProfile] = useState<StaffProfile>(emptyProfile)
 
@@ -252,6 +264,9 @@ export default function HumanResources({
   const [detailLoading, setDetailLoading] = useState(false)
 
   const [saving, setSaving] = useState(false)
+  const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set())
+  const [editingSection, setEditingSection] =
+    useState<ProfileSection | null>("personal")
 
   const [uploading, setUploading] = useState(false)
 
@@ -373,6 +388,7 @@ export default function HumanResources({
 
         const result = (await response.json()) as {
           profile?: StaffProfile
+          personalDetailsComplete?: boolean
           error?: string
         }
 
@@ -398,6 +414,11 @@ export default function HumanResources({
         }
 
         setProfile(normalized)
+        setEditingSection(
+          result.personalDetailsComplete && !forcePersonalDetailsUpdate
+            ? null
+            : "personal",
+        )
 
         setLanguagesText(normalized.languages.join(", "))
 
@@ -419,7 +440,7 @@ export default function HumanResources({
     return () => {
       cancelled = true
     }
-  }, [companyId, isOwner])
+  }, [companyId, forcePersonalDetailsUpdate, isOwner])
 
   const viewHrProfile = async (staffId: string) => {
     setDetailLoading(true)
@@ -473,6 +494,11 @@ export default function HumanResources({
     key: keyof Qualification,
     value: string,
   ) => {
+    setInvalidFields((current) => {
+      const next = new Set(current)
+      next.delete(`${type}-${index}-${key}`)
+      return next
+    })
     setProfile((current) => ({
       ...current,
       [type]: current[type].map((item, itemIndex) =>
@@ -491,6 +517,11 @@ export default function HumanResources({
     key: keyof Experience,
     value: string,
   ) => {
+    setInvalidFields((current) => {
+      const next = new Set(current)
+      next.delete(`workExperience-${index}-${key}`)
+      return next
+    })
     setProfile((current) => ({
       ...current,
       workExperience: current.workExperience.map((item, itemIndex) =>
@@ -499,11 +530,87 @@ export default function HumanResources({
     }))
   }
 
-  const submitProfile = async (event: FormEvent<HTMLFormElement>) => {
+  const submitProfile = async (
+    event: FormEvent<HTMLFormElement>,
+    section: ProfileSection,
+  ) => {
     event.preventDefault()
+    if (saving) return
+
+    const incompleteFields: string[] = []
+    const requireValue = (field: string, value: string) => {
+      if (!value.trim()) incompleteFields.push(field)
+    }
+    if (section === "personal") {
+      requireValue("name", profile.name)
+      requireValue("phone", profile.phone)
+      requireValue("dateOfBirth", profile.dateOfBirth)
+      requireValue("sex", profile.sex)
+      requireValue("localAddress", profile.localAddress)
+      requireValue("nextOfKin", profile.nextOfKin)
+      requireValue("nextOfKinPhone", profile.nextOfKinPhone)
+      requireValue("emergencyContactAddress", profile.emergencyContactAddress)
+    } else if (section === "identification") {
+      if (profile.passportNumber && !profile.passportExpiry)
+        incompleteFields.push("passportExpiry")
+      if (!profile.passportNumber && profile.passportExpiry)
+        incompleteFields.push("passportNumber")
+      if (profile.nationalIdNumber && !profile.nationalIdExpiry)
+        incompleteFields.push("nationalIdExpiry")
+      if (!profile.nationalIdNumber && profile.nationalIdExpiry)
+        incompleteFields.push("nationalIdNumber")
+    } else if (
+      section === "academicQualifications" ||
+      section === "professionalQualifications"
+    ) {
+      profile[section].forEach((item, index) => {
+        const values = [item.qualification, item.institution, String(item.year)]
+        if (values.some((value) => value.trim())) {
+          if (!item.qualification.trim())
+            incompleteFields.push(`${section}-${index}-qualification`)
+          if (!item.institution.trim())
+            incompleteFields.push(`${section}-${index}-institution`)
+          if (!item.year)
+            incompleteFields.push(`${section}-${index}-year`)
+        }
+      })
+    } else if (section === "workExperience") {
+      profile.workExperience.forEach((item, index) => {
+        if (
+          [item.employer, item.position, item.location, item.startDate, item.endDate, item.responsibilities]
+            .some((value) => value.trim())
+        ) {
+          if (!item.employer.trim())
+            incompleteFields.push(`workExperience-${index}-employer`)
+          if (!item.position.trim())
+            incompleteFields.push(`workExperience-${index}-position`)
+          if (!item.location.trim())
+            incompleteFields.push(`workExperience-${index}-location`)
+          if (!item.startDate)
+            incompleteFields.push(`workExperience-${index}-startDate`)
+        }
+      })
+    } else if (section === "languages" && profile.hasCriminalRecord) {
+      requireValue("criminalCaseType", profile.criminalCaseType)
+      requireValue("criminalCaseYear", String(profile.criminalCaseYear))
+      requireValue("criminalCaseStatus", profile.criminalCaseStatus)
+    }
+    if (incompleteFields.length) {
+      setInvalidFields(new Set(incompleteFields))
+      setError("Complete the highlighted fields before saving this section.")
+      requestAnimationFrame(() => {
+        const field = document.querySelector<HTMLElement>(
+          `[data-profile-field="${incompleteFields[0]}"]`,
+        )
+        field?.scrollIntoView({ behavior: "smooth", block: "center" })
+        field?.focus()
+      })
+      return
+    }
 
     setSaving(true)
 
+    setInvalidFields(new Set())
     setError("")
 
     setNotice("")
@@ -511,6 +618,7 @@ export default function HumanResources({
     try {
       const payload = {
         ...profile,
+        section,
         languages: languagesText
           .split(",")
           .map((language) => language.trim())
@@ -546,12 +654,23 @@ export default function HumanResources({
 
       const result = (await response.json()) as {
         profile?: StaffProfile
+        personalDetailsComplete?: boolean
+        reminder?: {
+          prompt: "profile_completion" | "information_review" | null
+          updateRequired: boolean
+        }
         error?: string
       }
 
       if (result.profile) setProfile(result.profile)
+      setEditingSection(null)
+      if (section === "personal") {
+        onPersonalDetailsComplete?.(
+          Boolean(result.personalDetailsComplete),
+        )
+      }
 
-      setNotice("Your HR profile has been updated.")
+      setNotice("Your changes have been saved.")
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -649,6 +768,25 @@ export default function HumanResources({
     "mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
 
   const labelClass = "block text-xs font-700 uppercase tracking-wider"
+  const profileFieldStyle = (field: string) => ({
+    ...fieldStyle,
+    ...(invalidFields.has(field)
+      ? {
+          borderColor: "#ef4444",
+          boxShadow: "0 0 0 1px #ef4444",
+        }
+      : {}),
+  })
+  const personalDetailsComplete = Boolean(
+    profile.name.trim()
+    && profile.phone.trim()
+    && profile.dateOfBirth
+    && profile.sex
+    && profile.localAddress.trim()
+    && profile.nextOfKin.trim()
+    && profile.nextOfKinPhone.trim()
+    && profile.emergencyContactAddress.trim()
+  )
 
   if (isOwner) {
     const detailGroups: [string, string | number | null | undefined][] =
@@ -776,7 +914,7 @@ export default function HumanResources({
               className="overflow-x-auto rounded border"
               style={{ borderColor: "var(--border)" }}
             >
-              <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+              <div className="app-table-scroll"><table className="w-full min-w-[760px] border-collapse text-left text-sm">
                 <thead
                   style={{
                     background: "var(--secondary)",
@@ -844,7 +982,7 @@ export default function HumanResources({
                     </tr>
                   )}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           )}
         </div>
@@ -944,7 +1082,7 @@ export default function HumanResources({
                       className="overflow-x-auto rounded border"
                       style={{ borderColor: "var(--border)" }}
                     >
-                      <table className="w-full text-left text-sm">
+                      <div className="app-table-scroll"><table className="w-full text-left text-sm">
                         <thead>
                           <tr style={{ color: "var(--muted-foreground)" }}>
                             <th className="p-2">Qualification</th>
@@ -968,7 +1106,7 @@ export default function HumanResources({
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </table></div>
                     </div>
                   )}
                 </section>
@@ -1094,10 +1232,22 @@ export default function HumanResources({
           className="mt-1 text-sm"
           style={{ color: "var(--muted-foreground)" }}
         >
-          Your employee record
-        </p>
-      </div>
-      <div className="mx-auto max-w-5xl space-y-4 p-6">
+          {personalDetailsComplete
+                ? forcePersonalDetailsUpdate
+                  ? "Update your personal details before continuing to the workspace."
+                  : "Your employee record"
+                : "Complete your personal details to unlock the rest of the workspace."}
+            </p>
+          </div>
+          <div className="mx-auto max-w-5xl space-y-4 p-6">
+            {forcePersonalDetailsUpdate && (
+              <div
+                role="alert"
+                className="rounded border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+              >
+                You reported that your contact or address information has changed. Update and save your personal details before continuing to use the app.
+              </div>
+            )}
         {error && (
           <div
             role="alert"
@@ -1123,7 +1273,12 @@ export default function HumanResources({
           </p>
         ) : !profile.id ? null : (
           <>
-            <form onSubmit={submitProfile} className="space-y-6">
+            <form
+              onSubmit={(event) =>
+                void submitProfile(event, editingSection ?? "personal")
+              }
+              className="space-y-6"
+            >
               <section
                 className="rounded border p-4 sm:p-5"
                 style={{
@@ -1131,25 +1286,52 @@ export default function HumanResources({
                   borderColor: "var(--border)",
                 }}
               >
-                <h2
-                  className="mb-4 text-sm font-700"
-                  style={{ color: "var(--foreground)" }}
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <h2
+                    className="text-sm font-700"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    Personal details
+                  </h2>
+                  {editingSection !== "personal" && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingSection("personal")}
+                      className="text-xs font-600"
+                      style={{ color: "var(--primary)" }}
+                    >
+                      Update your personal details
+                    </button>
+                  )}
+                </div>
+                {editingSection !== "personal" && (
+                  <p
+                    className="mb-4 text-sm"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    {profile.name || "Not completed"}
+                    {profile.phone ? ` · ${profile.phone}` : ""}
+                  </p>
+                )}
+                <div
+                  hidden={editingSection !== "personal"}
+                  className="grid gap-4 sm:grid-cols-2"
                 >
-                  Personal details
-                </h2>
-                <div className="grid gap-4 sm:grid-cols-2">
                   <label
                     className={labelClass}
                     style={{ color: "var(--muted-foreground)" }}
                   >
                     Full name
                     <input
-                      required
+                      data-profile-field="name"
                       maxLength={200}
                       value={profile.name}
-                      onChange={(event) => setField("name", event.target.value)}
+                      onChange={(event) => {
+                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "name")))
+                        setField("name", event.target.value)
+                      }}
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("name")}
                     />
                   </label>
                   <label
@@ -1170,14 +1352,17 @@ export default function HumanResources({
                   >
                     Phone number
                     <input
-                      required
+                      data-profile-field="phone"
                       maxLength={60}
                       value={profile.phone}
                       onChange={(event) =>
-                        setField("phone", event.target.value)
+                        {
+                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "phone")))
+                          setField("phone", event.target.value)
+                        }
                       }
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("phone")}
                     />
                   </label>
                   <label
@@ -1186,14 +1371,17 @@ export default function HumanResources({
                   >
                     Date of birth
                     <input
-                      required
+                      data-profile-field="dateOfBirth"
                       type="date"
                       value={profile.dateOfBirth}
                       onChange={(event) =>
-                        setField("dateOfBirth", event.target.value)
+                        {
+                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "dateOfBirth")))
+                          setField("dateOfBirth", event.target.value)
+                        }
                       }
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("dateOfBirth")}
                     />
                   </label>
                   <label
@@ -1202,11 +1390,14 @@ export default function HumanResources({
                   >
                     Sex
                     <select
-                      required
+                      data-profile-field="sex"
                       value={profile.sex}
-                      onChange={(event) => setField("sex", event.target.value)}
+                      onChange={(event) => {
+                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "sex")))
+                        setField("sex", event.target.value)
+                      }}
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("sex")}
                     >
                       <option value="">Select</option>
                       <option>Female</option>
@@ -1221,14 +1412,17 @@ export default function HumanResources({
                   >
                     Local address
                     <input
-                      required
+                      data-profile-field="localAddress"
                       maxLength={500}
                       value={profile.localAddress}
                       onChange={(event) =>
-                        setField("localAddress", event.target.value)
+                        {
+                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "localAddress")))
+                          setField("localAddress", event.target.value)
+                        }
                       }
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("localAddress")}
                     />
                   </label>
                   <label
@@ -1237,7 +1431,6 @@ export default function HumanResources({
                   >
                     Permanent address
                     <input
-                      required
                       maxLength={500}
                       value={profile.permanentAddress}
                       onChange={(event) =>
@@ -1253,14 +1446,17 @@ export default function HumanResources({
                   >
                     Next of kin
                     <input
-                      required
+                      data-profile-field="nextOfKin"
                       maxLength={200}
                       value={profile.nextOfKin}
                       onChange={(event) =>
-                        setField("nextOfKin", event.target.value)
+                        {
+                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "nextOfKin")))
+                          setField("nextOfKin", event.target.value)
+                        }
                       }
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("nextOfKin")}
                     />
                   </label>
                   <label
@@ -1269,14 +1465,17 @@ export default function HumanResources({
                   >
                     Next of kin phone
                     <input
-                      required
+                      data-profile-field="nextOfKinPhone"
                       maxLength={60}
                       value={profile.nextOfKinPhone}
                       onChange={(event) =>
-                        setField("nextOfKinPhone", event.target.value)
+                        {
+                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "nextOfKinPhone")))
+                          setField("nextOfKinPhone", event.target.value)
+                        }
                       }
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("nextOfKinPhone")}
                     />
                   </label>
                   <label
@@ -1285,14 +1484,17 @@ export default function HumanResources({
                   >
                     Emergency contact address
                     <input
-                      required
+                      data-profile-field="emergencyContactAddress"
                       maxLength={500}
                       value={profile.emergencyContactAddress}
                       onChange={(event) =>
-                        setField("emergencyContactAddress", event.target.value)
+                        {
+                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "emergencyContactAddress")))
+                          setField("emergencyContactAddress", event.target.value)
+                        }
                       }
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("emergencyContactAddress")}
                     />
                   </label>
                 </div>
@@ -1305,12 +1507,34 @@ export default function HumanResources({
                   borderColor: "var(--border)",
                 }}
               >
-                <h2
-                  className="mb-4 text-sm font-700"
-                  style={{ color: "var(--foreground)" }}
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <h2
+                    className="text-sm font-700"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    Identification
+                  </h2>
+                  {editingSection !== "identification" && (
+                    <button
+                      type="button"
+                      disabled={forcePersonalDetailsUpdate}
+                      onClick={() => setEditingSection("identification")}
+                      className="text-xs font-600"
+                      style={{ color: "var(--primary)" }}
+                    >
+                      Update your identification
+                    </button>
+                  )}
+                </div>
+                <p
+                  className="mb-4 text-sm"
+                  style={{ color: "var(--muted-foreground)" }}
                 >
-                  Identification
-                </h2>
+                  {profile.passportNumber || profile.nationalIdNumber
+                    ? "Identification details saved"
+                    : "No identification details added yet"}
+                </p>
+                <div hidden={editingSection !== "identification"}>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label
                     className={labelClass}
@@ -1318,14 +1542,15 @@ export default function HumanResources({
                   >
                     Passport number
                     <input
-                      required
+                      data-profile-field="passportNumber"
                       maxLength={30}
                       value={profile.passportNumber}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "passportNumber")))
                         setField("passportNumber", event.target.value)
-                      }
+                      }}
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("passportNumber")}
                     />
                   </label>
                   <label
@@ -1334,14 +1559,15 @@ export default function HumanResources({
                   >
                     Passport expiry date
                     <input
-                      required
+                      data-profile-field="passportExpiry"
                       type="date"
                       value={profile.passportExpiry}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "passportExpiry")))
                         setField("passportExpiry", event.target.value)
-                      }
+                      }}
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("passportExpiry")}
                     />
                   </label>
                   <label
@@ -1350,14 +1576,15 @@ export default function HumanResources({
                   >
                     National ID number
                     <input
-                      required
+                      data-profile-field="nationalIdNumber"
                       maxLength={40}
                       value={profile.nationalIdNumber}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "nationalIdNumber")))
                         setField("nationalIdNumber", event.target.value)
-                      }
+                      }}
                       className={inputClass}
-                      style={fieldStyle}
+                      style={profileFieldStyle("nationalIdNumber")}
                     />
                   </label>
                   <label
@@ -1366,16 +1593,17 @@ export default function HumanResources({
                   >
                     National ID expiry date
                     <input
-                      required
+                      data-profile-field="nationalIdExpiry"
                       type="date"
                       value={profile.nationalIdExpiry}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "nationalIdExpiry")))
                         setField("nationalIdExpiry", event.target.value)
-                      }
+                      }}
                       className={inputClass}
-                      style={fieldStyle}
                     />
                   </label>
+                </div>
                 </div>
               </section>
 
@@ -1400,24 +1628,52 @@ export default function HumanResources({
                         ? "Academic qualifications"
                         : "Professional qualifications"}
                     </h2>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setProfile((current) => ({
-                          ...current,
-                          [type]: [...current[type], emptyQualification()],
-                        }))
-                      }
-                      className="rounded border px-3 py-1.5 text-xs font-600"
-                      style={{
-                        borderColor: "var(--border)",
-                        color: "var(--foreground)",
-                      }}
-                    >
-                      Add qualification
-                    </button>
+                    {editingSection === type ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setProfile((current) => ({
+                            ...current,
+                            [type]: [...current[type], emptyQualification()],
+                          }))
+                        }
+                        className="rounded border px-3 py-1.5 text-xs font-600"
+                        style={{
+                          borderColor: "var(--border)",
+                          color: "var(--foreground)",
+                        }}
+                      >
+                        Add qualification
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={forcePersonalDetailsUpdate}
+                        onClick={() => setEditingSection(type)}
+                        className="text-xs font-600"
+                        style={{ color: "var(--primary)" }}
+                      >
+                        Update your{" "}
+                        {type === "academicQualifications"
+                          ? "academic qualifications"
+                          : "professional qualifications"}
+                      </button>
+                    )}
                   </div>
-                  <div className="space-y-4">
+                  {editingSection !== type && (
+                    <p
+                      className="mb-3 text-sm"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {profile[type].filter((item) => item.qualification).length
+                        ? `${profile[type].filter((item) => item.qualification).length} saved`
+                        : "No qualifications added yet"}
+                    </p>
+                  )}
+                  <div
+                    hidden={editingSection !== type}
+                    className="space-y-4"
+                  >
                     {profile[type].map((qualification, index) => (
                       <div
                         key={`${type}-${index}`}
@@ -1430,7 +1686,7 @@ export default function HumanResources({
                         >
                           Qualification
                           <input
-                            required
+                            data-profile-field={`${type}-${index}-qualification`}
                             maxLength={200}
                             value={qualification.qualification}
                             onChange={(event) =>
@@ -1442,7 +1698,7 @@ export default function HumanResources({
                               )
                             }
                             className={inputClass}
-                            style={fieldStyle}
+                            style={profileFieldStyle(`${type}-${index}-qualification`)}
                           />
                         </label>
                         <label
@@ -1451,7 +1707,7 @@ export default function HumanResources({
                         >
                           Institution
                           <input
-                            required
+                            data-profile-field={`${type}-${index}-institution`}
                             maxLength={200}
                             value={qualification.institution}
                             onChange={(event) =>
@@ -1463,7 +1719,7 @@ export default function HumanResources({
                               )
                             }
                             className={inputClass}
-                            style={fieldStyle}
+                            style={profileFieldStyle(`${type}-${index}-institution`)}
                           />
                         </label>
                         <label
@@ -1472,7 +1728,7 @@ export default function HumanResources({
                         >
                           Year
                           <input
-                            required
+                            data-profile-field={`${type}-${index}-year`}
                             type="number"
                             min={1900}
                             max={new Date().getFullYear()}
@@ -1486,7 +1742,7 @@ export default function HumanResources({
                               )
                             }
                             className={inputClass}
-                            style={fieldStyle}
+                            style={profileFieldStyle(`${type}-${index}-year`)}
                           />
                         </label>
                         {profile[type].length > 2 && (
@@ -1537,27 +1793,52 @@ export default function HumanResources({
                       Enter your most recent employment first.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setProfile((current) => ({
-                        ...current,
-                        workExperience: [
-                          emptyExperience(),
-                          ...current.workExperience,
-                        ],
-                      }))
-                    }
-                    className="rounded border px-3 py-1.5 text-xs font-600"
-                    style={{
-                      borderColor: "var(--border)",
-                      color: "var(--foreground)",
-                    }}
-                  >
-                    Add experience
-                  </button>
+                  {editingSection === "workExperience" ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setProfile((current) => ({
+                          ...current,
+                          workExperience: [
+                            emptyExperience(),
+                            ...current.workExperience,
+                          ],
+                        }))
+                      }
+                      className="rounded border px-3 py-1.5 text-xs font-600"
+                      style={{
+                        borderColor: "var(--border)",
+                        color: "var(--foreground)",
+                      }}
+                    >
+                      Add experience
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={forcePersonalDetailsUpdate}
+                      onClick={() => setEditingSection("workExperience")}
+                      className="text-xs font-600"
+                      style={{ color: "var(--primary)" }}
+                    >
+                      Update your employment experience
+                    </button>
+                  )}
                 </div>
-                <div className="space-y-4">
+                {editingSection !== "workExperience" && (
+                  <p
+                    className="mb-3 text-sm"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    {profile.workExperience.length
+                      ? `${profile.workExperience.length} saved`
+                      : "No employment experience added yet"}
+                  </p>
+                )}
+                <div
+                  hidden={editingSection !== "workExperience"}
+                  className="space-y-4"
+                >
                   {profile.workExperience.map((experience, index) => (
                     <div
                       key={`experience-${index}`}
@@ -1570,7 +1851,7 @@ export default function HumanResources({
                       >
                         {index === 0 ? "Most recent employer" : "Employer"}
                         <input
-                          required
+                          data-profile-field={`workExperience-${index}-employer`}
                           maxLength={200}
                           value={experience.employer}
                           onChange={(event) =>
@@ -1581,7 +1862,7 @@ export default function HumanResources({
                             )
                           }
                           className={inputClass}
-                          style={fieldStyle}
+                          style={profileFieldStyle(`workExperience-${index}-employer`)}
                         />
                       </label>
                       <label
@@ -1590,7 +1871,7 @@ export default function HumanResources({
                       >
                         Position
                         <input
-                          required
+                          data-profile-field={`workExperience-${index}-position`}
                           maxLength={150}
                           value={experience.position}
                           onChange={(event) =>
@@ -1601,7 +1882,7 @@ export default function HumanResources({
                             )
                           }
                           className={inputClass}
-                          style={fieldStyle}
+                          style={profileFieldStyle(`workExperience-${index}-position`)}
                         />
                       </label>
                       <label
@@ -1610,7 +1891,7 @@ export default function HumanResources({
                       >
                         Location
                         <input
-                          required
+                          data-profile-field={`workExperience-${index}-location`}
                           maxLength={200}
                           value={experience.location}
                           onChange={(event) =>
@@ -1621,7 +1902,7 @@ export default function HumanResources({
                             )
                           }
                           className={inputClass}
-                          style={fieldStyle}
+                          style={profileFieldStyle(`workExperience-${index}-location`)}
                         />
                       </label>
                       <div className="grid grid-cols-2 gap-3">
@@ -1631,7 +1912,7 @@ export default function HumanResources({
                         >
                           Start date
                           <input
-                            required
+                            data-profile-field={`workExperience-${index}-startDate`}
                             type="date"
                             value={experience.startDate}
                             onChange={(event) =>
@@ -1642,7 +1923,7 @@ export default function HumanResources({
                               )
                             }
                             className={inputClass}
-                            style={fieldStyle}
+                            style={profileFieldStyle(`workExperience-${index}-startDate`)}
                           />
                         </label>
                         <label
@@ -1715,19 +1996,40 @@ export default function HumanResources({
                   borderColor: "var(--border)",
                 }}
               >
-                <h2
-                  className="mb-4 text-sm font-700"
-                  style={{ color: "var(--foreground)" }}
-                >
-                  Languages and declarations
-                </h2>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <h2
+                    className="text-sm font-700"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    Languages and declarations
+                  </h2>
+                  {editingSection !== "languages" && (
+                    <button
+                      type="button"
+                      disabled={forcePersonalDetailsUpdate}
+                      onClick={() => setEditingSection("languages")}
+                      className="text-xs font-600"
+                      style={{ color: "var(--primary)" }}
+                    >
+                      Update your languages and declarations
+                    </button>
+                  )}
+                </div>
+                {editingSection !== "languages" && (
+                  <p
+                    className="mb-4 text-sm"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    {languagesText || "No languages recorded"}
+                  </p>
+                )}
+                <div hidden={editingSection !== "languages"}>
                 <label
                   className={labelClass}
                   style={{ color: "var(--muted-foreground)" }}
                 >
                   Languages known
                   <input
-                    required
                     value={languagesText}
                     onChange={(event) => setLanguagesText(event.target.value)}
                     className={inputClass}
@@ -1774,14 +2076,14 @@ export default function HumanResources({
                     >
                       Type of case
                       <input
-                        required
+                        data-profile-field="criminalCaseType"
                         maxLength={200}
                         value={profile.criminalCaseType}
                         onChange={(event) =>
                           setField("criminalCaseType", event.target.value)
                         }
                         className={inputClass}
-                        style={fieldStyle}
+                        style={profileFieldStyle("criminalCaseType")}
                       />
                     </label>
                     <label
@@ -1790,7 +2092,7 @@ export default function HumanResources({
                     >
                       Year
                       <input
-                        required
+                        data-profile-field="criminalCaseYear"
                         type="number"
                         min={1900}
                         max={new Date().getFullYear()}
@@ -1804,7 +2106,7 @@ export default function HumanResources({
                           )
                         }
                         className={inputClass}
-                        style={fieldStyle}
+                        style={profileFieldStyle("criminalCaseYear")}
                       />
                     </label>
                     <label
@@ -1813,18 +2115,19 @@ export default function HumanResources({
                     >
                       Current case status
                       <input
-                        required
+                        data-profile-field="criminalCaseStatus"
                         maxLength={200}
                         value={profile.criminalCaseStatus}
                         onChange={(event) =>
                           setField("criminalCaseStatus", event.target.value)
                         }
                         className={inputClass}
-                        style={fieldStyle}
+                        style={profileFieldStyle("criminalCaseStatus")}
                       />
                     </label>
                   </div>
                 )}
+                </div>
               </section>
 
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1841,17 +2144,33 @@ export default function HumanResources({
                     ? "Hide personal documents"
                     : "Update personal documents"}
                 </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded px-5 py-2.5 text-sm font-600 disabled:opacity-50"
-                  style={{
-                    background: "var(--primary)",
-                    color: "var(--primary-foreground)",
-                  }}
-                >
-                  {saving ? "Saving…" : "Save HR profile"}
-                </button>
+                {editingSection && (
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="rounded px-5 py-2.5 text-sm font-600 disabled:opacity-50"
+                    style={{
+                      background: "var(--primary)",
+                      color: "var(--primary-foreground)",
+                    }}
+                  >
+                    {saving
+                      ? "Saving…"
+                      : `Save ${
+                          editingSection === "personal"
+                            ? "personal details"
+                            : editingSection === "identification"
+                              ? "identification"
+                              : editingSection === "academicQualifications"
+                                ? "academic qualifications"
+                                : editingSection === "professionalQualifications"
+                                  ? "professional qualifications"
+                                  : editingSection === "workExperience"
+                                    ? "employment experience"
+                                    : "languages and declarations"
+                        }`}
+                  </button>
+                )}
               </div>
             </form>
 

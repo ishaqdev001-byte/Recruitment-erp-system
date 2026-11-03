@@ -31,6 +31,7 @@ export default function Employers() {
   const [form, setForm] = useState<EmployerForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [canViewFinance, setCanViewFinance] = useState(false);
+  const [canCreate, setCanCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -42,11 +43,12 @@ export default function Employers() {
       setError("");
       try {
         const response = await fetch("/api/employers", { cache: "no-store" });
-        const payload = await response.json() as { employers?: Employer[]; permissions?: { canViewFinance?: boolean }; error?: string };
+        const payload = await response.json() as { employers?: Employer[]; permissions?: { canViewFinance?: boolean; canCreate?: boolean }; error?: string };
         if (!response.ok) throw new Error(payload.error ?? "Unable to load company contractors.");
         if (!cancelled) {
           setEmployers(payload.employers ?? []);
           setCanViewFinance(Boolean(payload.permissions?.canViewFinance));
+          setCanCreate(Boolean(payload.permissions?.canCreate));
         }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load company contractors.");
@@ -142,7 +144,7 @@ export default function Employers() {
               </div>
               {selected.financeProjects?.length ? <>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-160 text-sm">
+                  <div className="app-table-scroll"><table className="w-full min-w-160 text-sm">
                     <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Project", "Visas", "Fee per visa", "Amount due"].map((heading) => <th key={heading} className="px-3 py-3 text-xs font-700 uppercase" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
                     <tbody>{selected.financeProjects.map((project) => <tr key={project.projectId} className="border-b" style={{ borderColor: "var(--border)" }}>
                       <td className="px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>{project.projectName}</td>
@@ -150,7 +152,7 @@ export default function Employers() {
                       <td className="px-3 py-3" style={{ color: "var(--foreground)" }}>UGX {project.contractorServiceCharge.toLocaleString("en-UG")}</td>
                       <td className="px-3 py-3 font-700" style={{ color: "#b7791f" }}>UGX {project.amountDue.toLocaleString("en-UG")}</td>
                     </tr>)}</tbody>
-                  </table>
+                  </table></div>
                 </div>
                 <div className="flex justify-end gap-3 border-b px-3 py-4 text-sm font-700" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><span>Total demanded</span><span className="mono">UGX {selected.financeProjects.reduce((total, project) => total + project.amountDue, 0).toLocaleString("en-UG")}</span></div>
               </> : <p className="py-5 text-sm" style={{ color: "var(--muted-foreground)" }}>No visa charges have accrued for this contractor.</p>}
@@ -171,16 +173,18 @@ export default function Employers() {
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3">
             <label className="flex items-center gap-2 rounded border px-3" style={{ background: "var(--card)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search employers" type="search" placeholder="Search employers" value={search} onChange={(e) => setSearch(e.target.value)} className="w-52 bg-transparent py-1.5 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
+            {canCreate && (
               <button type="button" onClick={() => setShowNew(true)} className="inline-flex items-center gap-2 rounded px-4 py-1.5 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
-              <Plus size={16} aria-hidden="true" /> Add contractor
-            </button>
+                <Plus size={16} aria-hidden="true" /> Add contractor
+              </button>
+            )}
           </div>
         </div>
 
         <div className="flex-1 overflow-auto p-6">
           {error && <div role="alert" className="mb-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
           <div className="overflow-x-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <table className="w-full min-w-190 text-sm">
+            <div className="app-table-scroll"><table className="w-full min-w-190 text-sm">
               <thead>
                 <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                   {["Company", "Contact person(s)", "Phone number(s)", "Email address(es)", "Country(s)"].map((h) => (
@@ -211,7 +215,7 @@ export default function Employers() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           </div>
         </div>
       </div>

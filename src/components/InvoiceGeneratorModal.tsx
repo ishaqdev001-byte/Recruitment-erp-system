@@ -653,7 +653,7 @@ function InvoicePreview({ invoice }: { invoice: InvoicePreview }) {
         </div>
 
         {/* Items Table */}
-        <table className="w-full mb-6 text-xs border-collapse">
+        <div className="app-table-scroll"><table className="w-full mb-6 text-xs border-collapse">
           <thead>
             <tr style={{ background: "#f3f4f6", borderBottom: "1px solid #ddd" }}>
               <th className="text-left p-2 font-600" style={{ color: "#333" }}>
@@ -688,7 +688,7 @@ function InvoicePreview({ invoice }: { invoice: InvoicePreview }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
 
         {/* Totals */}
         <div className="flex justify-end mb-8 text-xs">

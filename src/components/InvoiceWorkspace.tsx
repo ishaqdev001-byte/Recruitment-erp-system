@@ -51,6 +51,7 @@ export default function InvoiceWorkspace() {
   const [canCreate, setCanCreate] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InvoiceFilter>("all");
+  const [recipientFilter, setRecipientFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -107,8 +108,12 @@ export default function InvoiceWorkspace() {
   const paymentInvoice = invoices.find((invoice) => invoice.id === paymentInvoiceId) ?? null;
   const filteredInvoices = invoices.filter((invoice) => {
     const matchesFilter = filter === "all" || invoice.display_status === filter;
-    return matchesFilter && matchesSearch(search, invoice.invoice_number, invoice.recipient_name, invoice.description);
+    const matchesRecipient = recipientFilter === "all"
+      || `${invoice.recipient_type}:${invoice.recipient_id}` === recipientFilter;
+    return matchesFilter && matchesRecipient && matchesSearch(search, invoice.invoice_number, invoice.recipient_name, invoice.description);
   });
+  const employerRecipients = recipients.filter((recipient) => recipient.recipient_type === "contractor");
+  const partnerRecipients = recipients.filter((recipient) => recipient.recipient_type === "supplier");
   const totalInvoiced = invoices.reduce((sum, invoice) => sum + invoice.amount, 0);
   const totalCollected = invoices.reduce((sum, invoice) => sum + invoice.paid_amount, 0);
   const outstanding = invoices.reduce((sum, invoice) => sum + invoice.balance_due, 0);
@@ -217,7 +222,15 @@ export default function InvoiceWorkspace() {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-        <label className="flex w-full max-w-md items-center gap-2 border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search invoices" placeholder="Search invoice, description, employer, or candidate" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex w-full max-w-md items-center gap-2 border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search invoices" placeholder="Search invoice, description, employer, or candidate" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
+          <label className="sr-only" htmlFor="invoice-recipient-filter">Filter invoices by employer or partner</label>
+          <select id="invoice-recipient-filter" value={recipientFilter} onChange={(event) => setRecipientFilter(event.target.value)} className="border px-3 py-2 text-sm outline-none" style={inputStyle}>
+            <option value="all">All employers &amp; partners</option>
+            {employerRecipients.length > 0 && <optgroup label="Employers">{employerRecipients.map((recipient) => <option key={`contractor:${recipient.recipient_id}`} value={`contractor:${recipient.recipient_id}`}>{recipient.recipient_name}</option>)}</optgroup>}
+            {partnerRecipients.length > 0 && <optgroup label="Partners">{partnerRecipients.map((recipient) => <option key={`supplier:${recipient.recipient_id}`} value={`supplier:${recipient.recipient_id}`}>{recipient.recipient_name}</option>)}</optgroup>}
+          </select>
+        </div>
         <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{filteredInvoices.length} shown</span>
       </div>
       <div role="tablist" aria-label="Filter invoices by status" className="flex gap-1 overflow-x-auto border-b px-6" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
@@ -226,7 +239,7 @@ export default function InvoiceWorkspace() {
 
       {error && <div role="alert" className="mx-6 mt-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
       <div className="min-h-0 flex-1 overflow-auto p-6">
-        <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+        <div className="finance-table-scroll border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-275 text-sm">
             <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Invoice number", "Employer / partner", "Candidate", "Description", "Amount", "Paid", "Balance", "Issued", "Due date", "Status", "Actions"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>

@@ -21,6 +21,8 @@ type PushNotification = {
 
   destination?: string
 
+  taskId?: string
+
   type: NotificationType
 }
 
@@ -50,6 +52,8 @@ type PendingNotificationRow = {
   title: string
 
   body: string
+
+  task_id?: string | null
 }
 
 type PendingWorkspaceNotificationRow = {
@@ -122,6 +126,7 @@ function isPermissionAllowed(
   permissions: Set<string>,
 ) {
   if (notification.type === "workspace") {
+    if (notification.required_permission === "staff_chat.view") return true
     return Boolean(notification.required_permission && permissions.has(notification.required_permission))
   }
 
@@ -137,6 +142,10 @@ function isPermissionAllowed(
 
 function getNotificationPath(notification: PushNotification) {
   if (notification.type === "workspace") {
+    if (notification.required_permission === "staff_chat.view") {
+      return "/?notification=staff-chat"
+    }
+
     const destinations: Record<string, string> = {
       candidates: "candidates",
       "candidate-inquiries": "candidate-inquiries",
@@ -157,6 +166,8 @@ function getNotificationPath(notification: PushNotification) {
   if (type === "requisition") return "/?notification=requisitions"
 
   if (type === "candidate_inquiry") return "/?notification=candidates"
+
+  if (notification.taskId) return `/?notification=tasks&taskId=${encodeURIComponent(notification.taskId)}`
 
   return "/?notification=tasks"
 }
@@ -230,6 +241,8 @@ async function loadUnreadNotifications(
       title: pending.title,
 
       body: pending.body,
+
+      ...(typeof pending.task_id === "string" ? { taskId: pending.task_id } : {}),
 
       type: pending.notification_type,
     }

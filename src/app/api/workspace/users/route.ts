@@ -402,6 +402,7 @@ export async function POST(request: Request) {
     const lifecycleActions = new Set([
       "change-role",
       "set-status",
+      "resend-invite",
       "revoke-invite",
       "delete-user",
     ])
@@ -477,6 +478,126 @@ export async function POST(request: Request) {
               "The primary company administrator account is protected from user-management actions.",
           },
           { status: 403, headers: responseHeaders },
+        )
+      }
+
+      if (body.action === "resend-invite") {
+        if (membership.status !== "active")
+          return NextResponse.json(
+            { error: "This company membership is not active." },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const { data: authUser, error: authUserError } =
+          await admin.auth.admin.getUserById(userId)
+        if (authUserError || !authUser.user)
+          return NextResponse.json(
+            { error: "Unable to find the invited account." },
+            { status: 404, headers: responseHeaders },
+          )
+        if (authUser.user.confirmed_at)
+          return NextResponse.json(
+            { error: "This user has already accepted the invitation." },
+            { status: 409, headers: responseHeaders },
+          )
+        if (!authUser.user.email)
+          return NextResponse.json(
+            { error: "The invited account has no email address." },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const { data: companyDetails, error: companyDetailsError } =
+          await admin
+            .from("companies")
+            .select("name, slug")
+            .eq("id", access.companyId)
+            .maybeSingle()
+        if (companyDetailsError || !companyDetails?.slug)
+          return NextResponse.json(
+            { error: "Unable to load the inviting company." },
+            { status: 500, headers: responseHeaders },
+          )
+
+        const invitationId = crypto.randomUUID()
+        const { error: invitationInsertError } = await admin
+          .from("workspace_invitations")
+          .insert({
+            id: invitationId,
+            company_id: access.companyId,
+            user_id: userId,
+            role_id: membership.role_id,
+          })
+        if (invitationInsertError) {
+          console.error("Workspace invitation renewal record creation failed", invitationInsertError)
+          return NextResponse.json(
+            { error: "Unable to create a fresh invitation link." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+        const publicKey =
+          process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+        if (!supabaseUrl || !publicKey) {
+          const { error: cleanupError } = await admin
+            .from("workspace_invitations")
+            .delete()
+            .eq("id", invitationId)
+          if (cleanupError)
+            console.error(
+              "Failed to remove invitation record without email configuration",
+              cleanupError,
+            )
+          return NextResponse.json(
+            { error: "Invitation email delivery is not configured." },
+            { status: 503, headers: responseHeaders },
+          )
+        }
+
+        const siteUrl =
+          process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+          new URL(request.url).origin
+        const redirectUrl = new URL(
+          `/${encodeURIComponent(companyDetails.slug)}`,
+          siteUrl,
+        )
+        redirectUrl.searchParams.set("invite", "1")
+        redirectUrl.searchParams.set("invitation_id", invitationId)
+
+        const mailer = createClient(supabaseUrl, publicKey, {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false,
+          },
+        })
+        const { error: emailError } = await mailer.auth.signInWithOtp({
+          email: authUser.user.email,
+          options: {
+            shouldCreateUser: false,
+            emailRedirectTo: redirectUrl.toString(),
+          },
+        })
+        if (emailError) {
+          const { error: cleanupError } = await admin
+            .from("workspace_invitations")
+            .delete()
+            .eq("id", invitationId)
+          if (cleanupError)
+            console.error(
+              "Failed to remove invitation record after email delivery failure",
+              cleanupError,
+            )
+          console.error("Workspace invitation email resend failed", emailError)
+          return NextResponse.json(
+            { error: "Unable to send the invitation email. Please try again." },
+            { status: 502, headers: responseHeaders },
+          )
+        }
+
+        return NextResponse.json(
+          { success: true },
+          { headers: responseHeaders },
         )
       }
 
@@ -1306,7 +1427,7 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error:
-              "Invitation was sent but its five-minute acceptance record could not be saved. Send a new invitation.",
+              "Invitation was sent but its one-hour acceptance record could not be saved. Send a new invitation.",
           },
           { status: 500, headers: responseHeaders },
         )

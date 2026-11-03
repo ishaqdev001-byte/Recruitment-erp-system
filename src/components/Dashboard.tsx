@@ -164,7 +164,7 @@ const roleAlerts: Record<WorkspaceRole, { label: string; value: string; detail: 
     { label: "4 vacancies need agent coverage", value: "Action", detail: "Review open roles", view: "jobs" },
     { label: "Two teams at capacity", value: "Forecast", detail: "Balance staffing load", view: "reports" },
   ],
-  Administrator: [
+  "Administration Officer": [
     { label: "Workspace administration", value: "Stable", detail: "Review user access", view: "users" },
     { label: "User permissions assigned", value: "Review", detail: "Manage workspace roles", view: "users" },
     { label: "User permissions changed", value: "Today", detail: "Open users and roles", view: "users" },

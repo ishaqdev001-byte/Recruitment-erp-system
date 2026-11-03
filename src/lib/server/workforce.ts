@@ -2,7 +2,14 @@ import "server-only";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export type WorkforcePermission = "attendance.view" | "attendance.clock" | "attendance.manage" | "leave.view" | "leave.create" | "leave.manage";
+export type WorkforcePermission =
+  | "attendance.view"
+  | "attendance.clock"
+  | "attendance.manage"
+  | "attendance.view_reports"
+  | "leave.view"
+  | "leave.create"
+  | "leave.manage";
 export type WorkforceSupabase = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 export type WorkforceAccess =
   | { supabase: WorkforceSupabase; companyId: string; userId: string }
@@ -27,15 +34,18 @@ export async function getWorkforceAccess(): Promise<WorkforceAccess> {
 
 export async function hasWorkforcePermission(access: WorkforceAccess, permission: WorkforcePermission) {
   if ("error" in access) return false;
-  const { data, error } = permission === "attendance.view" || permission === "attendance.manage"
-    ? await access.supabase.rpc("current_user_can_manage_company_attendance", {
-      requested_company_id: access.companyId,
-    })
-    : await access.supabase.rpc("current_user_has_company_permission", {
+  const { data, error } = await access.supabase.rpc(
+    "current_user_has_company_permission",
+    {
       requested_company_id: access.companyId,
       requested_permission: permission,
-    });
-  return !error && Boolean(data);
+    },
+  );
+  if (error) {
+    console.error(`Unable to verify ${permission} permission`, error);
+    return false;
+  }
+  return Boolean(data);
 }
 
 export function isIsoDate(value: unknown): value is string {

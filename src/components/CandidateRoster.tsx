@@ -151,6 +151,92 @@ interface ProjectOption {
   status: string
 }
 
+interface CandidateFilterOption {
+  value: string
+  label: string
+}
+
+function CandidateFilterInput({
+  label,
+  value,
+  query,
+  options,
+  onChange,
+  onChoose,
+}: {
+  label: string
+  value: string
+  query: string
+  options: CandidateFilterOption[]
+  onChange: (value: string) => void
+  onChoose: (value: string) => void
+}) {
+  const [focused, setFocused] = useState(false)
+  const matches = query.length >= 3
+    ? options.filter((option) => matchesSearch(query, option.label))
+    : []
+
+  return (
+    <div className="relative min-w-40 flex-1 sm:flex-none">
+      <input
+        type="search"
+        aria-label={`Filter candidates by ${label.toLocaleLowerCase()}`}
+        aria-autocomplete="list"
+        aria-expanded={focused && query.length >= 3}
+        placeholder={label}
+        value={value}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full border px-3 py-2 text-sm outline-none"
+        style={{
+          background: "var(--secondary)",
+          borderColor: "var(--border)",
+          color: "var(--foreground)",
+        }}
+      />
+      {focused && query.length >= 3 && (
+        <div
+          role="listbox"
+          aria-label={`${label} filter suggestions`}
+          className="absolute left-0 right-0 top-full z-40 mt-1 max-h-40 overflow-y-auto border shadow-lg"
+          style={{
+            background: "var(--card)",
+            borderColor: "var(--border)",
+          }}
+        >
+          {matches.length ? (
+            matches.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={value === option.label}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onChoose(option.label)
+                  setFocused(false)
+                }}
+                className="block w-full truncate px-3 py-2 text-left text-sm hover:bg-[var(--secondary)]"
+                style={{ color: "var(--foreground)" }}
+              >
+                {option.label}
+              </button>
+            ))
+          ) : (
+            <p
+              className="px-3 py-2 text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              No matching {label.toLocaleLowerCase()}.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function candidateFromRecord(record: CandidateRecord): Candidate {
   const details = record.details ?? {}
 
@@ -559,9 +645,36 @@ export default function CandidateRoster({
 
   const [search, setSearch] = useState("")
 
+  const [filterInputs, setFilterInputs] = useState({
+    agent: "",
+    project: "",
+    stage: "",
+    createdBy: "",
+  })
+
+  const [filterQueries, setFilterQueries] = useState({
+    agent: "",
+    project: "",
+    stage: "",
+    createdBy: "",
+  })
+
   const [filterResultsNotice, setFilterResultsNotice] = useState("")
 
   const filterNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFilterQueries({
+        agent: filterInputs.agent.trim().length >= 3 ? filterInputs.agent.trim() : "",
+        project: filterInputs.project.trim().length >= 3 ? filterInputs.project.trim() : "",
+        stage: filterInputs.stage.trim().length >= 3 ? filterInputs.stage.trim() : "",
+        createdBy: filterInputs.createdBy.trim().length >= 3 ? filterInputs.createdBy.trim() : "",
+      })
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [filterInputs])
 
   const [loading, setLoading] = useState(true)
 
@@ -781,14 +894,67 @@ export default function CandidateRoster({
     }
   }, [activePage, canManageCandidateWorkflow, companyName])
 
-  const filtered = candidates.filter((candidate) =>
+  const candidateProject = (candidate: CandidateRecord) => {
+    const details = candidate.details ?? {}
+    return typeof details.contracts === "string" && details.contracts
+      ? details.contracts
+      : typeof details.assignedContracts === "string"
+        ? details.assignedContracts
+        : ""
+  }
+
+  const candidateStage = (candidate: CandidateRecord) => {
+    const stage = candidate.details?.stage
+    return typeof stage === "string" && stage ? stage : "Registration"
+  }
+
+  const candidateCreatorName = (candidate: CandidateRecord) =>
+    candidate.created_by_name ||
+    (candidate.created_by
+      ? inquiryPeople.find((person) => person.user_id === candidate.created_by)
+          ?.display_name || "Former team member"
+      : "Unassigned")
+
+  const filterOptions = (values: string[]): CandidateFilterOption[] =>
+    Array.from(new Set(values))
+      .sort((a, b) => a.localeCompare(b))
+      .map((label) => ({ value: label, label }))
+
+  const agentOptions = filterOptions(
+    candidates.map((candidate) => candidate.agent_name || "Unassigned"),
+  )
+
+  const projectOptions = filterOptions(
+    candidates.map((candidate) => candidateProject(candidate) || "No project"),
+  )
+
+  const stageOptions = filterOptions(candidates.map(candidateStage))
+
+  const createdByOptions = filterOptions(
+    candidates.map(candidateCreatorName),
+  )
+
+  const candidateMatchesFilters = (
+    candidate: CandidateRecord,
+    query = search,
+  ) =>
     matchesSearch(
-      search,
+      query,
       candidate.first_name,
       candidate.last_name,
       candidate.file_number,
       candidate.phone,
-    ),
+    ) &&
+    matchesSearch(filterQueries.agent, candidate.agent_name || "Unassigned") &&
+    matchesSearch(
+      filterQueries.project,
+      candidateProject(candidate) || "No project",
+    ) &&
+    matchesSearch(filterQueries.stage, candidateStage(candidate)) &&
+    matchesSearch(filterQueries.createdBy, candidateCreatorName(candidate))
+
+  const filtered = candidates.filter((candidate) =>
+    candidateMatchesFilters(candidate),
   )
 
   const filteredInquiries = inquiries.filter((inquiry) =>
@@ -809,13 +975,7 @@ export default function CandidateRoster({
     const resultCount =
       activePage === "pipeline"
         ? candidates.filter((candidate) =>
-            matchesSearch(
-              value,
-              candidate.first_name,
-              candidate.last_name,
-              candidate.file_number,
-              candidate.phone,
-            ),
+            candidateMatchesFilters(candidate, value),
           ).length
         : inquiries.filter((inquiry) =>
             matchesSearch(
@@ -1516,6 +1676,85 @@ export default function CandidateRoster({
           )}
         </div>
       </header>
+      {activePage === "pipeline" && (
+        <div
+          className="flex flex-wrap items-center gap-2 border-b px-6 py-3"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <CandidateFilterInput
+            label="Agent"
+            value={filterInputs.agent}
+            query={filterQueries.agent}
+            options={agentOptions}
+            onChange={(value) =>
+              setFilterInputs((current) => ({ ...current, agent: value }))
+            }
+            onChoose={(value) =>
+              setFilterInputs((current) => ({ ...current, agent: value }))
+            }
+          />
+          <CandidateFilterInput
+            label="Project"
+            value={filterInputs.project}
+            query={filterQueries.project}
+            options={projectOptions}
+            onChange={(value) =>
+              setFilterInputs((current) => ({ ...current, project: value }))
+            }
+            onChoose={(value) =>
+              setFilterInputs((current) => ({ ...current, project: value }))
+            }
+          />
+          <CandidateFilterInput
+            label="Stage"
+            value={filterInputs.stage}
+            query={filterQueries.stage}
+            options={stageOptions}
+            onChange={(value) =>
+              setFilterInputs((current) => ({ ...current, stage: value }))
+            }
+            onChoose={(value) =>
+              setFilterInputs((current) => ({ ...current, stage: value }))
+            }
+          />
+          <CandidateFilterInput
+            label="Created by"
+            value={filterInputs.createdBy}
+            query={filterQueries.createdBy}
+            options={createdByOptions}
+            onChange={(value) =>
+              setFilterInputs((current) => ({ ...current, createdBy: value }))
+            }
+            onChoose={(value) =>
+              setFilterInputs((current) => ({ ...current, createdBy: value }))
+            }
+          />
+          {Object.values(filterInputs).some(Boolean) && (
+            <button
+              type="button"
+              onClick={() =>
+                setFilterInputs({
+                  agent: "",
+                  project: "",
+                  stage: "",
+                  createdBy: "",
+                })
+              }
+              className="px-2 py-2 text-sm font-600"
+              style={{ color: "var(--primary)" }}
+            >
+              Clear filters
+            </button>
+          )}
+          <span
+            className="ml-auto text-xs"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            {filtered.length.toLocaleString()} of{" "}
+            {candidates.length.toLocaleString()} candidates
+          </span>
+        </div>
+      )}
       {filterResultsNotice && (
         <div
           role="status"
@@ -1535,7 +1774,7 @@ export default function CandidateRoster({
 
       {activePage === "pipeline" ? (
         <div className="min-h-0 flex-1 overflow-auto">
-          <table className="candidate-pipeline-table w-full min-w-260 text-sm">
+          <div className="app-table-scroll"><table className="candidate-pipeline-table w-full min-w-260 text-sm">
             <thead
               className="sticky top-0"
               style={{ background: "var(--card)" }}
@@ -1784,7 +2023,7 @@ export default function CandidateRoster({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto p-6">
@@ -1808,7 +2047,7 @@ export default function CandidateRoster({
             className="overflow-x-auto border"
             style={{ borderColor: "var(--border)", background: "var(--card)" }}
           >
-            <table className="w-full min-w-280 text-sm">
+            <div className="app-table-scroll"><table className="w-full min-w-280 text-sm">
               <thead
                 className="sticky top-0"
                 style={{ background: "var(--card)" }}
@@ -1958,7 +2197,7 @@ export default function CandidateRoster({
                     </tr>
                   ))}
               </tbody>
-            </table>
+            </table></div>
           </div>
         </div>
       )}

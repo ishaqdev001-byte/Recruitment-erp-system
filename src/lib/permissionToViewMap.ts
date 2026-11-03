@@ -159,6 +159,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "attendance.view": new Set(["attendance"]),
   "attendance.clock": new Set(["attendance"]),
   "attendance.manage": new Set(["attendance"]),
+  "attendance.view_reports": new Set(["attendance"]),
 
   // Leave
   "leave.view": new Set(["leave"]),
@@ -207,6 +208,8 @@ export function viewsFromPermissions(permissions: string[]): Set<View> {
  * Returns true if the given view is accessible with the provided permissions.
  */
 export function canAccessView(view: View, permissions: string[]): boolean {
+  if (view === "staff-chat") return true
+
   if (view === "agents") {
     return (
       permissions.includes("users.view") &&

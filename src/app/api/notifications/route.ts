@@ -20,7 +20,7 @@ export async function GET() {
     }
 
     const { data, error } = await supabase.from("workspace_notifications")
-      .select("id, company_id, category, title, body, created_at, read_at")
+      .select("id, company_id, required_permission, category, title, body, created_at, read_at")
       .eq("recipient_id", user.id)
       .order("created_at", { ascending: false })
       .limit(100);

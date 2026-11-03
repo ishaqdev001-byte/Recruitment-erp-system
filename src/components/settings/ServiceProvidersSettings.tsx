@@ -181,7 +181,7 @@ export default function ServiceProvidersSettings() {
           <section>
             <h3 className="mb-3 text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Active ({active.length})</h3>
             <div className="overflow-x-auto rounded border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-              <table className="w-full text-sm">
+              <div className="app-table-scroll"><table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
                     {["Provider", "Contact", "Phone", "Email", canManage ? "Actions" : ""].filter(Boolean).map((h) => (
@@ -220,7 +220,7 @@ export default function ServiceProvidersSettings() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           </section>
         )}
@@ -229,7 +229,7 @@ export default function ServiceProvidersSettings() {
           <section>
             <h3 className="mb-3 text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Inactive ({inactive.length})</h3>
             <div className="overflow-x-auto rounded border opacity-60" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-              <table className="w-full text-sm">
+              <div className="app-table-scroll"><table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
                     {["Provider", "Contact", "Phone", "Email", canManage ? "Actions" : ""].filter(Boolean).map((h) => (
@@ -268,7 +268,7 @@ export default function ServiceProvidersSettings() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           </section>
         )}

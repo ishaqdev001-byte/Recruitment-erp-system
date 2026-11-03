@@ -142,7 +142,7 @@ export default function Interviews() {
         </div>
       ) : (
         <div className="flex-1 overflow-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-          <table className="w-full text-sm">
+          <div className="app-table-scroll"><table className="w-full text-sm">
             <thead>
               <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                 {["Candidate", "Role", "Type", "Interviewers", "Duration", "Status"].map((h) => (
@@ -175,7 +175,7 @@ export default function Interviews() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </div>
       )}
 

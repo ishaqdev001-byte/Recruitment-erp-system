@@ -15,6 +15,8 @@ export type InvoiceRecord = {
   recipient_type: "contractor" | "supplier" | "candidate";
   recipient_id: string;
   recipient_name: string;
+  project_id: string | null;
+  visa_candidate_id: string | null;
   description: string;
   amount: number;
   due_date: string;

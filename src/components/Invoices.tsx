@@ -168,7 +168,7 @@ export default function Invoices() {
 
         <div className="flex-1 overflow-auto p-6">
           <div className="rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <table className="w-full text-sm">
+            <div className="app-table-scroll"><table className="w-full text-sm">
               <thead>
                 <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                   {["Invoice", "Employer", "Candidate", "Description", "Amount", "Paid", "Balance", "Issued", "Due", "Status", ""].map((h) => (
@@ -204,7 +204,7 @@ export default function Invoices() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           </div>
         </div>
       </div>

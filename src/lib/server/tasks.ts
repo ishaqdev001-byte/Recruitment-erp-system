@@ -10,6 +10,15 @@ export type TaskAccess =
   | { supabase: TaskSupabase; companyId: string; userId: string }
   | { error: string; status: 401 | 403 };
 
+export function createTaskAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) return null;
+  return createClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
 export async function getTaskAccess(): Promise<TaskAccess> {
   const supabase = await createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -56,19 +65,18 @@ export async function dispatchDueTaskReminders(access: Extract<TaskAccess, { sup
       .lte("reminder_at", now)
       .limit(100),
     access.supabase.from("task_notifications")
-      .select("task_id, recipient_id, remind_at")
+      .select("task_id, recipient_id, notification_type, remind_at")
       .eq("company_id", access.companyId),
   ]);
   if (taskError || notificationError) {
     console.error("Task reminder lookup failed", taskError ?? notificationError);
     return;
   }
-  if (!dueTasks?.length) return;
 
-  const delivered = new Set((existing ?? []).map((item) => `${item.task_id}:${item.recipient_id}:${item.remind_at}`));
-  const notifications = dueTasks.flatMap((task) => {
+  const delivered = new Set((existing ?? []).map((item) => `${item.task_id}:${item.recipient_id}:${item.notification_type}:${item.remind_at}`));
+  const notifications = (dueTasks ?? []).flatMap((task) => {
     const recipientId = task.assigned_to ?? task.created_by ?? access.userId;
-    const key = `${task.id}:${recipientId}:${task.reminder_at}`;
+    const key = `${task.id}:${recipientId}:due_reminder:${task.reminder_at}`;
     if (delivered.has(key)) return [];
     return [{
       company_id: access.companyId,
@@ -77,59 +85,96 @@ export async function dispatchDueTaskReminders(access: Extract<TaskAccess, { sup
       title: task.title,
       body: task.due_at ? `Task reminder. Due ${new Date(task.due_at).toLocaleString()}.` : "Task reminder.",
       remind_at: task.reminder_at,
+      notification_type: "due_reminder",
       sms_status: task.sms_reminder_enabled ? "queued" : "not_requested",
     }];
   });
   if (notifications.length) {
     const { error } = await access.supabase.from("task_notifications")
-      .upsert(notifications, { onConflict: "task_id,recipient_id,remind_at", ignoreDuplicates: true });
+      .upsert(notifications, { onConflict: "task_id,recipient_id,notification_type,remind_at", ignoreDuplicates: true });
     if (error) console.error("Task reminder record creation failed", error);
   }
 
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!process.env.SMSUG_API_KEY?.trim() || !serviceRoleKey || !supabaseUrl) return;
-  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  await dispatchQueuedTaskSms(access.companyId, access.userId);
+}
 
-  const { data: queued, error: queuedError } = await admin.from("task_notifications")
-    .select("id, recipient_id, title, body")
-    .eq("company_id", access.companyId)
-    .eq("recipient_id", access.userId)
+export async function dispatchQueuedTaskSms(companyId?: string, recipientId?: string) {
+  if (!process.env.SMSUG_API_KEY?.trim()) return;
+  const admin = createTaskAdminClient();
+  if (!admin) {
+    console.error("Task SMS dispatch requires Supabase service-role configuration.");
+    return;
+  }
+
+  let queueQuery = admin.from("task_notifications")
+    .select("id, company_id, task_id, recipient_id, title, body, notification_type")
     .eq("sms_status", "queued")
     .order("sent_at", { ascending: true })
-    .limit(20);
-  if (queuedError || !queued?.length) return;
+    .limit(50);
+  if (companyId) queueQuery = queueQuery.eq("company_id", companyId);
+  if (recipientId) queueQuery = queueQuery.eq("recipient_id", recipientId);
+  const { data: queued, error: queuedError } = await queueQuery;
+  if (queuedError) throw new Error(`Unable to load queued task SMS reminders: ${queuedError.message}`);
 
-  for (const reminder of queued) {
+  for (const reminder of queued ?? []) {
     const { data: claimed, error: claimError } = await admin.from("task_notifications")
       .update({ sms_status: "sending" })
-      .eq("id", reminder.id).eq("company_id", access.companyId).eq("sms_status", "queued")
+      .eq("id", reminder.id).eq("company_id", reminder.company_id).eq("sms_status", "queued")
       .select("id").maybeSingle();
-    if (claimError || !claimed) continue;
+    if (claimError) {
+      console.error("Unable to claim queued task SMS reminder", claimError);
+      continue;
+    }
+    if (!claimed) continue;
+
+    if (reminder.notification_type === "acknowledgement_reminder") {
+      const { data: task, error: taskError } = await admin.from("tasks")
+        .select("assignment_acknowledged_at, is_completed")
+        .eq("id", reminder.task_id).eq("company_id", reminder.company_id).maybeSingle();
+      if (taskError || !task) {
+        console.error("Unable to verify task acknowledgement before SMS delivery", taskError);
+        const { error } = await admin.from("task_notifications")
+          .update({ sms_status: "failed", sms_error: "Unable to verify whether the task was acknowledged." })
+          .eq("id", reminder.id).eq("company_id", reminder.company_id);
+        if (error) console.error("Unable to record task SMS verification failure", error);
+        continue;
+      }
+      if (task.assignment_acknowledged_at || task.is_completed) {
+        const { error } = await admin.from("task_notifications")
+          .update({ sms_status: "not_requested" })
+          .eq("id", reminder.id).eq("company_id", reminder.company_id);
+        if (error) console.error("Unable to cancel acknowledged task SMS reminder", error);
+        continue;
+      }
+    }
 
     const { data: profile, error: profileError } = await admin.from("profiles")
       .select("phone").eq("id", reminder.recipient_id).maybeSingle();
+    if (profileError) console.error("Unable to load the assignee phone number for task SMS", profileError);
     const phone = profileError || !profile?.phone ? null : normalizeUgandanPhone(profile.phone);
     if (!phone) {
-      await admin.from("task_notifications").update({ sms_status: "failed", sms_error: "The assignee does not have a valid Ugandan phone number on their profile." })
-        .eq("id", reminder.id).eq("company_id", access.companyId);
+      const { error } = await admin.from("task_notifications").update({ sms_status: "failed", sms_error: profileError ? "Unable to load the assignee phone number." : "The assignee does not have a valid Ugandan phone number on their profile." })
+        .eq("id", reminder.id).eq("company_id", reminder.company_id);
+      if (error) console.error("Unable to record failed task SMS reminder", error);
       continue;
     }
 
-    const result = await sendSmsUg("Task Reminder", `${reminder.title}. ${reminder.body}`, [phone]);
+    const result = await sendSmsUg("Task Reminder", `${reminder.title}: ${reminder.body}`.slice(0, 480), [phone]);
     if (result.ok) {
-      await admin.from("task_notifications").update({
+      const { error } = await admin.from("task_notifications").update({
         sms_status: "sent",
         sms_error: "",
         sms_token: result.token,
         sms_cost: result.cost,
         sms_balance: result.balance,
-      }).eq("id", reminder.id).eq("company_id", access.companyId);
+      }).eq("id", reminder.id).eq("company_id", reminder.company_id);
+      if (error) console.error("Unable to record sent task SMS reminder", error);
     } else {
-      await admin.from("task_notifications").update({
+      const { error } = await admin.from("task_notifications").update({
         sms_status: result.code === "sms_network_error" ? "unknown" : "failed",
         sms_error: result.message,
-      }).eq("id", reminder.id).eq("company_id", access.companyId);
+      }).eq("id", reminder.id).eq("company_id", reminder.company_id);
+      if (error) console.error("Unable to record failed task SMS reminder", error);
     }
   }
 }

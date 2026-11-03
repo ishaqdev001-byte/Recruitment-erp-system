@@ -460,7 +460,7 @@ export default function MedicalAppointments() {
       <div className="min-h-0 flex-1 overflow-auto p-6">
         {canViewAppointments ? (
           <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-            <table className="w-full text-sm">
+            <div className="app-table-scroll"><table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
                   <th className="px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Candidate</th>
@@ -499,7 +499,7 @@ export default function MedicalAppointments() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           </div>
         ) : (
           <p className="border px-4 py-5 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>

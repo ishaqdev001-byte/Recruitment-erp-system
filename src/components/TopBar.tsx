@@ -44,6 +44,7 @@ type NotificationItem = {
   read: boolean;
   view?: View;
   taskNotificationId?: string;
+  taskId?: string;
   candidateInquiryNotificationId?: string;
   leaveNotificationId?: string;
   requisitionNotificationId?: string;
@@ -232,7 +233,7 @@ export default function TopBar({
           throw new Error(`Notification history request failed (${failedResponses.map((response) => response.status).join(", ")}).`);
         }
         const payload = taskResponse?.ok
-          ? await taskResponse.json() as { reminders?: { id: string; title: string; body: string; sent_at: string; read_at: string | null }[] }
+          ? await taskResponse.json() as { reminders?: { id: string; task_id: string; title: string; body: string; sent_at: string; read_at: string | null }[] }
           : { reminders: [] };
         const inquiryPayload = inquiryResponse?.ok
           ? await inquiryResponse.json() as { reminders?: { id: string; title: string; body: string; sent_at: string; read_at: string | null }[] }
@@ -247,7 +248,7 @@ export default function TopBar({
           ? await workspaceResponse.json() as {
               available?: boolean;
               warning?: string;
-              notifications?: { id: string; category: string; title: string; body: string; created_at: string; read_at: string | null }[];
+              notifications?: { id: string; required_permission: string; category: string; title: string; body: string; created_at: string; read_at: string | null }[];
             }
           : { notifications: [] };
         if (workspacePayload.available === false) {
@@ -267,7 +268,9 @@ export default function TopBar({
         const leaveNotifications = leavePayload.notifications ?? [];
         const requisitionNotifications = requisitionPayload.notifications ?? [];
         const workspaceNotifications = workspacePayload.notifications ?? [];
-        const workspaceView = (category: string): View => {
+        const workspaceView = (category: string, requiredPermission: string): View => {
+          if (requiredPermission === "staff_chat.view") return "staff-chat";
+
           switch (category) {
             case "candidate-inquiries": return "candidate-inquiries";
             case "tasks": return "tasks";
@@ -335,6 +338,7 @@ export default function TopBar({
           ...reminders.map((reminder) => ({
             id: `task-${reminder.id}`,
             taskNotificationId: reminder.id,
+            taskId: reminder.task_id,
             view: "tasks" as const,
             priority: "Important" as const,
             type: "warning" as const,
@@ -347,7 +351,7 @@ export default function TopBar({
           ...workspaceNotifications.map((notification) => ({
             id: `workspace-${notification.id}`,
             workspaceNotificationId: notification.id,
-            view: workspaceView(notification.category),
+            view: workspaceView(notification.category, notification.required_permission),
             priority: "Important" as const,
             type: "info" as const,
             title: notification.title,
@@ -744,6 +748,13 @@ export default function TopBar({
                                 type="button"
                                 onClick={() => {
                                   const destination = n.view;
+                                  void markNotificationRead(n.id);
+                                  if (n.taskId) {
+                                    const url = new URL(window.location.href);
+                                    url.searchParams.set("notification", "tasks");
+                                    url.searchParams.set("taskId", n.taskId);
+                                    window.history.replaceState(window.history.state, "", url.toString());
+                                  }
                                   if (destination) onNavigate(destination);
                                   setShowNotifs(false);
                                 }}

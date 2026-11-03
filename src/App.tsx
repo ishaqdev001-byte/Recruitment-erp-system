@@ -230,6 +230,9 @@ const Tasks = dynamic(() => import("./components/TaskWorkspace"), {
 const Communications = dynamic(() => import("./components/Communications"), {
   loading: PageLoading,
 })
+const StaffChat = dynamic(() => import("./components/StaffChat"), {
+  loading: PageLoading,
+})
 const AIAssistant = dynamic(() => import("./components/AIAssistant"), {
   loading: PageLoading,
 })
@@ -246,6 +249,10 @@ const CurrenciesSettings = dynamic(
 )
 const ServiceProvidersSettings = dynamic(
   () => import("./components/settings/ServiceProvidersSettings"),
+  { loading: PageLoading },
+)
+const AttendanceSettings = dynamic(
+  () => import("./components/AttendanceSettings"),
   { loading: PageLoading },
 )
 
@@ -275,6 +282,7 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
   tasks: () => import("./components/TaskWorkspace"),
   reports: () => import("./components/Reports"),
   communications: () => import("./components/Communications"),
+  "staff-chat": () => import("./components/StaffChat"),
   ai: () => import("./components/AIAssistant"),
   passport: () => import("./components/PassportCustodyWorkspace"),
   documents: () => import("./components/CompanyDrive"),
@@ -291,9 +299,9 @@ function preloadView(view: View) {
   void viewPreloaders[view]?.()
 }
 
-export type View = "dashboard" | "candidates" | "candidate-inquiries" | "agents" | "suppliers" | "jobs" | "interviews" | "offers" | "analytics" | "finance" | "accounts" | "payments" | "paychecks" | "passport" | "documents" | "ai" | "reports" | "users" | "settings" | "contractors" | "projects" | "invoices" | "agent-invoices" | "tasks" | "communications" | "attendance" | "leave" | "human-resources" | "medical-appointments" | "medical-management" | "hospital-management" | "branches" | "approvals" | "requisitions" | "drive"
+export type View = "dashboard" | "candidates" | "candidate-inquiries" | "agents" | "suppliers" | "jobs" | "interviews" | "offers" | "analytics" | "finance" | "accounts" | "payments" | "paychecks" | "passport" | "documents" | "ai" | "reports" | "users" | "settings" | "contractors" | "projects" | "invoices" | "agent-invoices" | "tasks" | "communications" | "staff-chat" | "attendance" | "leave" | "human-resources" | "medical-appointments" | "medical-management" | "hospital-management" | "branches" | "approvals" | "requisitions" | "drive"
 
-export type WorkspaceRole = "Chairman" | "General Manager" | "CEO" | "Recruitment Manager" | "Recruitment Agent" | "Finance Manager" | "Finance Officer" | "Document Officer" | "Medical Officer" | "Doctor" | "Supervisor" | "Viewer" | "Administrator" | "Manager" | "Finance User"
+export type WorkspaceRole = "Chairman" | "General Manager" | "CEO" | "Recruitment Manager" | "Recruitment Agent" | "Finance Manager" | "Finance Officer" | "Document Officer" | "Medical Officer" | "Doctor" | "Supervisor" | "Viewer" | "Administration Officer" | "Manager" | "Finance User"
 
 type Theme = "dark" | "light"
 type Density = "comfortable" | "compact"
@@ -525,7 +533,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     "Doctor",
     "Supervisor",
     "Viewer",
-    "Administrator",
+    "Administration Officer",
     "Manager",
     "Finance User",
   ]
@@ -753,6 +761,7 @@ async function checkMustChangePassword(userId: string): Promise<boolean> {
 
 export default function App() {
   const [view, setView] = useState<View>("dashboard")
+  const [staffChatReturnView, setStaffChatReturnView] = useState<View>("dashboard")
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [role, setRole] = useState<WorkspaceRole>("Chairman")
   const [theme, setTheme] = useState<Theme>("dark")
@@ -762,6 +771,14 @@ export default function App() {
   const [companies, setCompanies] = useState<CompanyProfile[]>([])
   const [users, setUsers] = useState<CompanyUser[]>([])
   const [session, setSession] = useState<Session | null>(null)
+  const [hrPersonalDetailsComplete, setHrPersonalDetailsComplete] =
+    useState<boolean | null>(null)
+  const [hrProfileReminder, setHrProfileReminder] =
+    useState<"profile_completion" | "information_review" | null>(null)
+  const [hrProfileUpdateRequired, setHrProfileUpdateRequired] =
+    useState(false)
+  const [hrReminderSaving, setHrReminderSaving] = useState(false)
+  const [hrReminderError, setHrReminderError] = useState("")
   const [authView, setAuthView] =
     useState<"landing" | "login" | "register" | "verify" | "invite" | "reset-password">(
       "login",
@@ -769,6 +786,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true)
   const [companyForm, setCompanyForm] = useState<CompanyForm>(emptyCompanyForm)
   const [loginForm, setLoginForm] = useState({ email: "", password: "" })
+  const [loginSubmitting, setLoginSubmitting] = useState(false)
   const [registerError, setRegisterError] = useState("")
   const [registerSubmitting, setRegisterSubmitting] = useState(false)
   const [registrationCompletion, setRegistrationCompletion] = useState<{
@@ -810,12 +828,51 @@ export default function App() {
 
   const handleNavigate = useCallback(
     (nextView: View) => {
+      if (
+        session &&
+        session.role !== "Chairman" &&
+        (hrPersonalDetailsComplete !== true || hrProfileUpdateRequired) &&
+        nextView !== "human-resources"
+      ) {
+        setView("human-resources")
+        return
+      }
       if (session && !canAccessView(nextView, session.permissions)) return
       preloadView(nextView)
       setView(nextView)
     },
-    [session],
+    [hrPersonalDetailsComplete, hrProfileUpdateRequired, session],
   )
+
+  const respondToHrProfileReminder = async (action: "reviewed" | "review_later" | "same" | "changed") => {
+    setHrReminderSaving(true)
+    setHrReminderError("")
+    try {
+      const response = await fetch("/api/workspace/staff/profile/reminder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      })
+      const result = await response.json() as {
+        reminder?: {
+          prompt: "profile_completion" | "information_review" | null
+          updateRequired: boolean
+        }
+        error?: string
+      }
+      if (!response.ok || !result.reminder) {
+        throw new Error(result.error ?? "Unable to update your HR profile reminder.")
+      }
+      setHrProfileReminder(result.reminder.prompt)
+      setHrProfileUpdateRequired(result.reminder.updateRequired)
+      if (action === "changed") setView("human-resources")
+      if (action === "review_later") setView("human-resources")
+    } catch (error) {
+      setHrReminderError(error instanceof Error ? error.message : "Unable to update your HR profile reminder.")
+    } finally {
+      setHrReminderSaving(false)
+    }
+  }
   const handleSidebarNavigate = useCallback(
     (nextView: View) => {
       handleNavigate(nextView)
@@ -981,6 +1038,7 @@ export default function App() {
         "invoices",
         "tasks",
         "communications",
+        "staff-chat",
         "attendance",
         "leave",
         "human-resources",
@@ -1020,12 +1078,17 @@ export default function App() {
       const paramView =
         currentUrl.searchParams.get("v") ??
         currentUrl.searchParams.get("view")
+      const notificationTarget = currentUrl.searchParams.get("notification")
+      const notificationView =
+        notificationTarget === "tasks" || notificationTarget === "staff-chat"
+          ? notificationTarget
+          : null
       const detectedView =
         (validViews.has(pathView) ? pathView : null) ??
         (paramView &&
         validViews.has(paramView)
           ? paramView
-          : null)
+          : notificationView)
       if (detectedView) setView(detectedView as View)
       const hashParams = new URLSearchParams(currentUrl.hash.slice(1))
       const inviteLink =
@@ -1286,6 +1349,54 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (!session) {
+      setHrPersonalDetailsComplete(null)
+      setHrProfileReminder(null)
+      setHrProfileUpdateRequired(false)
+      return
+    }
+    if (session.role === "Chairman") {
+      setHrPersonalDetailsComplete(true)
+      setHrProfileReminder(null)
+      setHrProfileUpdateRequired(false)
+      return
+    }
+
+    let cancelled = false
+    setHrPersonalDetailsComplete(null)
+    void fetch("/api/workspace/staff/profile", { cache: "no-store" })
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          personalDetailsComplete?: boolean
+          reminder?: {
+            prompt: "profile_completion" | "information_review" | null
+            updateRequired: boolean
+          }
+        }
+        if (!response.ok)
+          throw new Error("Unable to check your HR profile.")
+        if (!cancelled) {
+          setHrPersonalDetailsComplete(
+            Boolean(result.personalDetailsComplete),
+          )
+          setHrProfileReminder(result.reminder?.prompt ?? null)
+          setHrProfileUpdateRequired(Boolean(result.reminder?.updateRequired))
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("Staff HR onboarding check failed:", error)
+        if (!cancelled) {
+          setHrPersonalDetailsComplete(false)
+          setHrProfileUpdateRequired(false)
+          setHrProfileReminder(null)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [session?.companyId, session?.role, session?.userId])
+
+  useEffect(() => {
     if (!session) return
     const preloadCommonViews = () => {
       for (const commonView of [
@@ -1423,7 +1534,9 @@ export default function App() {
     let retryDelay = 1_000
     let lastRefreshError = ""
 
-    const clearWorkspace = async () => {
+    const clearWorkspace = async (
+      message = "Your active company access was removed or disabled. Sign in again or contact your administrator.",
+    ) => {
       await removeBrowserPushSubscription().catch((error: unknown) =>
         console.error(
           "[Access Refresh] Push subscription cleanup failed.",
@@ -1431,7 +1544,10 @@ export default function App() {
         ),
       )
       const { error } = await supabase.auth.signOut()
-      if (error)
+      if (
+        error &&
+        error.name !== "AuthSessionMissingError"
+      )
         console.error(
           "[Access Refresh] Unable to sign out after company access was removed.",
           error,
@@ -1442,9 +1558,7 @@ export default function App() {
       setSession(null)
       setView("dashboard")
       setAuthView("login")
-      setLoginError(
-        "Your active company access was removed or disabled. Sign in again or contact your administrator.",
-      )
+      setLoginError(message)
     }
 
     const refreshAccess = async () => {
@@ -1462,7 +1576,13 @@ export default function App() {
           data: { user },
           error: authError,
         } = await supabase.auth.getUser()
-        if (authError) throw authError
+        if (authError) {
+          if (authError.name === "AuthSessionMissingError") {
+            await clearWorkspace("Your session has expired. Sign in again.")
+            return
+          }
+          throw authError
+        }
         if (
           !user ||
           user.id !==
@@ -1746,6 +1866,7 @@ export default function App() {
       projects: "Projects",
       tasks: "Tasks",
       communications: "Communications",
+      "staff-chat": "Staff chat",
       attendance: "Attendance",
       leave: "Leave",
       "human-resources":
@@ -1841,6 +1962,7 @@ export default function App() {
       "invoices",
       "tasks",
       "communications",
+      "staff-chat",
       "attendance",
       "leave",
       "human-resources",
@@ -2076,6 +2198,8 @@ export default function App() {
 
   const handleLoginSubmit = async (event: FormEvent) => {
     event.preventDefault()
+    if (loginSubmitting) return
+    setLoginSubmitting(true)
     setLoginError("")
     try {
       const supabase = createSupabaseBrowserClient()
@@ -2116,6 +2240,8 @@ export default function App() {
           ? error.message
           : "Unable to load your company workspace.",
       )
+    } finally {
+      setLoginSubmitting(false)
     }
   }
 
@@ -2609,7 +2735,14 @@ export default function App() {
       case "leave":
         return <LeaveManagement />
       case "human-resources":
-        return <HumanResources companyId={session?.companyId ?? ""} isOwner={session?.role === "Chairman"} />
+        return (
+          <HumanResources
+            companyId={session?.companyId ?? ""}
+            isOwner={session?.role === "Chairman"}
+            forcePersonalDetailsUpdate={hrProfileUpdateRequired}
+            onPersonalDetailsComplete={setHrPersonalDetailsComplete}
+          />
+        )
       case "medical-appointments":
         return <MedicalAppointments />
       case "medical-management":
@@ -2630,6 +2763,15 @@ export default function App() {
             userName={session?.userName ?? "Team"}
             companyName={session?.companyName ?? ""}
             userEmail={activeUser?.email ?? ""}
+          />
+        )
+      case "staff-chat":
+        return (
+          <StaffChat
+            companyId={session?.companyId ?? ""}
+            userId={session?.userId ?? ""}
+            presentation="page"
+            onBack={() => handleNavigate(staffChatReturnView)}
           />
         )
       case "ai":
@@ -2816,6 +2958,7 @@ export default function App() {
         loginForm={loginForm}
         onLoginFormChange={setLoginForm}
         onLogin={handleLoginSubmit}
+        loginSubmitting={loginSubmitting}
         onGoogleContinue={handleContinueWithGoogle}
         loginError={loginError}
         onRequestPasswordReset={handlePasswordResetRequest}
@@ -2839,6 +2982,39 @@ export default function App() {
         onInvitePasswordChange={setInvitePassword}
         onInvitePasswordConfirmChange={setInvitePasswordConfirm}
         onAcceptInvitation={handleAcceptInvitation}
+      />
+    )
+  }
+
+  if (
+    session.role !== "Chairman" &&
+    (hrPersonalDetailsComplete !== true || hrProfileUpdateRequired)
+  ) {
+    if (hrPersonalDetailsComplete === null) {
+      return (
+        <div
+          className="flex min-h-screen items-center justify-center"
+          style={{ background: "var(--background)" }}
+          aria-busy="true"
+        >
+          <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+            Checking your HR profile…
+          </p>
+        </div>
+      )
+    }
+    return (
+      <HumanResources
+        companyId={session.companyId}
+        isOwner={false}
+        forcePersonalDetailsUpdate={hrProfileUpdateRequired}
+        onPersonalDetailsComplete={(complete) => {
+          setHrPersonalDetailsComplete(complete)
+          if (complete) {
+            setHrProfileUpdateRequired(false)
+            setView("dashboard")
+          }
+        }}
       />
     )
   }
@@ -2914,6 +3090,82 @@ export default function App() {
             userAvatarUrl={session.userAvatarUrl}
           />
           <OfflineBanner />
+          {hrProfileReminder && !hrProfileUpdateRequired && (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="hr-profile-reminder-title"
+            >
+              <section
+                className="w-full max-w-lg rounded-2xl border p-6 shadow-2xl"
+                style={{ background: "var(--card)", borderColor: "var(--border)" }}
+              >
+                <h2
+                  id="hr-profile-reminder-title"
+                  className="text-xl font-700"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {hrProfileReminder === "profile_completion"
+                    ? "Review your HR profile"
+                    : "Have your contact details changed?"}
+                </h2>
+                <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>
+                  {hrProfileReminder === "profile_completion"
+                    ? "Please review the remaining sections of your Human Resource profile. You can update identification, qualifications, work history, or languages at any time."
+                    : "Please confirm whether your phone number, local address, or other personal contact information is still current."}
+                </p>
+                {hrReminderError && (
+                  <p className="mt-3 text-sm text-red-400" role="alert">{hrReminderError}</p>
+                )}
+                <div className="mt-6 flex flex-wrap justify-end gap-3">
+                  {hrProfileReminder === "profile_completion" ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={hrReminderSaving}
+                        onClick={() => void respondToHrProfileReminder("review_later")}
+                        className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
+                        style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                      >
+                        Review my profile
+                      </button>
+                      <button
+                        type="button"
+                        disabled={hrReminderSaving}
+                        onClick={() => void respondToHrProfileReminder("reviewed")}
+                        className="rounded px-4 py-2 text-sm font-700 disabled:opacity-50"
+                        style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                      >
+                        I have reviewed my profile
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        disabled={hrReminderSaving}
+                        onClick={() => void respondToHrProfileReminder("same")}
+                        className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
+                        style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                      >
+                        Yes, my information is still the same
+                      </button>
+                      <button
+                        type="button"
+                        disabled={hrReminderSaving}
+                        onClick={() => void respondToHrProfileReminder("changed")}
+                        className="rounded px-4 py-2 text-sm font-700 disabled:opacity-50"
+                        style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                      >
+                        No, my information has changed
+                      </button>
+                    </>
+                  )}
+                </div>
+              </section>
+            </div>
+          )}
 
           {}
           {mustChangePassword && (
@@ -3066,6 +3318,17 @@ export default function App() {
             {renderView()}
           </main>
         </div>
+        {view !== "staff-chat" && (
+          <StaffChat
+            companyId={session.companyId}
+            userId={session.userId}
+            presentation="launcher"
+            onExpand={() => {
+              setStaffChatReturnView(view)
+              handleNavigate("staff-chat")
+            }}
+          />
+        )}
       </div>
       {idleLocked && (
         <div
@@ -3192,6 +3455,7 @@ function AuthenticationExperience({
   loginForm,
   onLoginFormChange,
   onLogin,
+  loginSubmitting,
   onGoogleContinue,
   loginError,
   onRequestPasswordReset,
@@ -3228,7 +3492,8 @@ function AuthenticationExperience({
   onRegisterErrorChange: (error: string) => void
   loginForm: { email: string; password: string }
   onLoginFormChange: (next: { email: string; password: string }) => void
-  onLogin: (event: FormEvent) => void
+  onLogin: (event: FormEvent) => void | Promise<void>
+  loginSubmitting: boolean
   onGoogleContinue: () => void
   loginError: string
   onRequestPasswordReset: () => void
@@ -3638,7 +3903,11 @@ function AuthenticationExperience({
             Log in to your workspace
           </h2>
 
-          <form onSubmit={onLogin} className="space-y-4">
+          <form
+            onSubmit={onLogin}
+            className="space-y-4"
+            aria-busy={loginSubmitting}
+          >
             <div>
               <label
                 className="mb-1 block text-xs font-600 uppercase tracking-wider"
@@ -3649,6 +3918,7 @@ function AuthenticationExperience({
               <input
                 type="email"
                 value={loginForm.email}
+                disabled={loginSubmitting}
                 onChange={(event) =>
                   onLoginFormChange({ ...loginForm, email: event.target.value })
                 }
@@ -3668,6 +3938,7 @@ function AuthenticationExperience({
                 <input
                   type={showLoginPassword ? "text" : "password"}
                   value={loginForm.password}
+                  disabled={loginSubmitting}
                   onChange={(event) =>
                     onLoginFormChange({
                       ...loginForm,
@@ -3684,8 +3955,9 @@ function AuthenticationExperience({
                     showLoginPassword ? "Hide password" : "Show password"
                   }
                   aria-pressed={showLoginPassword}
+                  disabled={loginSubmitting}
                   onClick={() => setShowLoginPassword(!showLoginPassword)}
-                  className="absolute inset-y-0 right-0 flex items-center px-3"
+                  className="absolute inset-y-0 right-0 flex items-center px-3 disabled:opacity-50"
                   style={{ color: "var(--muted-foreground)" }}
                 >
                   {showLoginPassword ? (
@@ -3700,7 +3972,7 @@ function AuthenticationExperience({
               <button
                 type="button"
                 onClick={onRequestPasswordReset}
-                disabled={resetEmailSending}
+                disabled={resetEmailSending || loginSubmitting}
                 className="text-xs font-600 disabled:opacity-50"
                 style={{ color: "var(--primary)" }}
               >
@@ -3729,6 +4001,7 @@ function AuthenticationExperience({
             <button
               type="button"
               onClick={onGoogleContinue}
+              disabled={loginSubmitting}
               className="flex w-full items-center justify-center gap-2 rounded border px-4 py-3 font-600"
               style={{
                 borderColor: "var(--border)",
@@ -3770,14 +4043,35 @@ function AuthenticationExperience({
             </div>
             <button
               type="submit"
-              className="w-full rounded px-4 py-3 font-600"
+              disabled={loginSubmitting}
+              className="flex w-full items-center justify-center gap-2 rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-70"
               style={{
                 background: "var(--primary)",
                 color: "var(--primary-foreground)",
               }}
             >
-              Log In
+              {loginSubmitting ? (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+                  />
+                  Signing in…
+                </>
+              ) : (
+                "Log In"
+              )}
             </button>
+            {loginSubmitting && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="text-center text-sm"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Signing in and loading your workspace…
+              </p>
+            )}
             <div
               className="pt-1 text-center text-sm"
               style={{ color: "var(--muted-foreground)" }}
@@ -5069,10 +5363,10 @@ function SettingsPage({
   company?: CompanyProfile
   user?: CompanyUser
 }) {
-  const [settingsTab, setSettingsTab] =
-    useState<"general" | "departments" | "currencies" | "service-providers">(
-      "general",
-    )
+  const isChairman = user?.role === "Chairman"
+  const [settingsTab, setSettingsTab] = useState<
+    "general" | "departments" | "currencies" | "service-providers" | "attendance"
+  >("general")
 
   const permissionRows = [
     ["Candidates", "View / Create / Edit / Approve", "Recruitment Agent"],
@@ -5087,6 +5381,7 @@ function SettingsPage({
     { id: "departments", label: "Departments" },
     { id: "currencies", label: "Currencies" },
     { id: "service-providers", label: "Service Providers" },
+    ...(isChairman ? [{ id: "attendance" as const, label: "Attendance" }] : []),
   ]
 
   return (
@@ -5216,7 +5511,7 @@ function SettingsPage({
                     className="overflow-hidden rounded border"
                     style={{ borderColor: "var(--border)" }}
                   >
-                    <table className="w-full text-left text-sm">
+                    <div className="app-table-scroll"><table className="w-full text-left text-sm">
                       <thead style={{ background: "var(--secondary)" }}>
                         <tr>
                           <th
@@ -5269,7 +5564,7 @@ function SettingsPage({
                           ),
                         )}
                       </tbody>
-                    </table>
+                    </table></div>
                   </div>
                 </div>
               </div>
@@ -5355,6 +5650,12 @@ function SettingsPage({
         {settingsTab === "departments" && <DepartmentsSettings />}
         {settingsTab === "currencies" && <CurrenciesSettings />}
         {settingsTab === "service-providers" && <ServiceProvidersSettings />}
+        {settingsTab === "attendance" && isChairman && company?.id && (
+          <AttendanceSettings
+            companyId={company.id}
+            companyCountry={company.country}
+          />
+        )}
       </div>
     </div>
   )

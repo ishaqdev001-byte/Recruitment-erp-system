@@ -512,7 +512,7 @@ export default function LeaveManagement() {
           {/* Table */}
           <div className="min-h-0 flex-1 overflow-auto p-6">
             <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-              <table className="w-full min-w-220 text-sm">
+              <div className="app-table-scroll"><table className="w-full min-w-220 text-sm">
                 <thead>
                   <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
                     {["Employee", "Leave type", "Dates", "Days", "Status", "Progress", ""].map((h) => (
@@ -605,7 +605,7 @@ export default function LeaveManagement() {
                     );
                   })}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           </div>
         </div>

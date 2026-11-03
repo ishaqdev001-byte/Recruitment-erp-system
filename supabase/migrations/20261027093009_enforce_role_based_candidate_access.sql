@@ -1,1 +1,0 @@
-drop policy if exists "Company members can view candidate folders" on public.candidates;

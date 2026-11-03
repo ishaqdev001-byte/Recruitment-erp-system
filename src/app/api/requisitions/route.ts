@@ -28,7 +28,7 @@ async function getAccess() {
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
   const { data: membership, error: membershipError } = await supabase
     .from("company_memberships")
-    .select("company_id, branch_id")
+    .select("company_id, branch_id, role_id")
     .eq("user_id", user.id)
     .eq("status", "active")
     .limit(1)
@@ -43,8 +43,32 @@ async function getAccess() {
     companyId: membership.company_id,
     userId: user.id,
     branchId: membership.branch_id ?? null,
+    roleId: membership.role_id,
     isMainBranch: Boolean(isMainBranch),
   };
+}
+
+async function canCreateRequisitions(access: Awaited<ReturnType<typeof getAccess>>) {
+  if ("error" in access) return false;
+  const [{ data: role, error: roleError }, { data: hasPermission, error: permissionError }] =
+    await Promise.all([
+      access.supabase
+        .from("company_roles")
+        .select("name, is_system_default")
+        .eq("id", access.roleId)
+        .eq("company_id", access.companyId)
+        .maybeSingle(),
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "requisitions.create",
+      }),
+    ]);
+  if (roleError || permissionError) throw roleError ?? permissionError;
+  return (
+    role?.name.trim().toLocaleLowerCase() === "administration officer" &&
+    role?.is_system_default === true &&
+    Boolean(hasPermission)
+  );
 }
 
 async function insertNotification(
@@ -134,17 +158,19 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const statusFilter = url.searchParams.get("status") ?? "";
     const myOnly = url.searchParams.get("mine") === "1";
-    const permissionResults = await Promise.all([
-      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.view" }),
-      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.create" }),
-      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.review" }),
-      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.verify" }),
-      access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.authorize" }),
+    const [permissionResults, canCreate] = await Promise.all([
+      Promise.all([
+        access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.view" }),
+        access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.review" }),
+        access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.verify" }),
+        access.supabase.rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "requisitions.authorize" }),
+      ]),
+      canCreateRequisitions(access),
     ]);
     if (permissionResults.some((result) => result.error)) {
       return NextResponse.json({ error: "Unable to verify requisition permissions." }, { status: 503, headers: responseHeaders });
     }
-    const [canView, canCreate, canReview, canVerify, canAuthorize] = permissionResults.map((result) => Boolean(result.data));
+    const [canView, canReview, canVerify, canAuthorize] = permissionResults.map((result) => Boolean(result.data));
     if (!canView && !canCreate && !canReview && !canVerify && !canAuthorize) {
       return NextResponse.json({ error: "You do not have permission to view requisitions." }, { status: 403, headers: responseHeaders });
     }
@@ -196,6 +222,9 @@ export async function POST(request: Request) {
   try {
     const access = await getAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers: responseHeaders });
+    if (!(await canCreateRequisitions(access))) {
+      return NextResponse.json({ error: "Only an Administration Officer can create requisitions." }, { status: 403, headers: responseHeaders });
+    }
 
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Provide requisition details." }, { status: 400, headers: responseHeaders });

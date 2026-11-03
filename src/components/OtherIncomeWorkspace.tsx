@@ -279,7 +279,7 @@ export default function OtherIncomeWorkspace({ onNavigate }: { onNavigate: (sect
                 Create an active account before configuring income sources.
               </p>
             )}
-            <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+            <div className="finance-table-scroll border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
               <table className="w-full min-w-180 text-sm">
                 <thead>
                   <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
@@ -345,7 +345,7 @@ export default function OtherIncomeWorkspace({ onNavigate }: { onNavigate: (sect
                 Only the company chairman can manage payment information.
               </p>
             )}
-            <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+            <div className="finance-table-scroll border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
               <table className="w-full min-w-180 text-sm">
                 <thead>
                   <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>

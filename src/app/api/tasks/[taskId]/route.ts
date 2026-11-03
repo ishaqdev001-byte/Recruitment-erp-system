@@ -6,6 +6,36 @@ const headers = { "Cache-Control": "private, no-store" };
 const recurrences = ["none", "daily", "weekly", "monthly", "yearly"];
 const priorities = ["High", "Medium", "Low"];
 
+export async function POST(_request: Request, context: { params: Promise<{ taskId: string }> }) {
+  try {
+    const access = await getTaskAccess();
+    if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
+    if (!await hasTaskPermission(access, "tasks.view")) return NextResponse.json({ error: "You do not have permission to view tasks." }, { status: 403, headers });
+    const { taskId } = await context.params;
+    if (!isUuid(taskId)) return NextResponse.json({ error: "Task not found." }, { status: 404, headers });
+
+    const { data: task, error: taskError } = await access.supabase.from("tasks")
+      .select("id, assigned_to, created_by").eq("id", taskId).eq("company_id", access.companyId).maybeSingle();
+    if (taskError) throw taskError;
+    if (!task || task.assigned_to !== access.userId || task.created_by === access.userId) {
+      return NextResponse.json({ error: "This assignment is not available to you." }, { status: 404, headers });
+    }
+
+    const { error } = await access.supabase.from("task_notifications")
+      .update({ read_at: new Date().toISOString() })
+      .eq("company_id", access.companyId)
+      .eq("task_id", taskId)
+      .eq("recipient_id", access.userId)
+      .in("notification_type", ["assignment", "acknowledgement_reminder"])
+      .is("read_at", null);
+    if (error) throw error;
+    return NextResponse.json({ ok: true }, { headers });
+  } catch (error) {
+    console.error("Task acknowledgement failed", error);
+    return NextResponse.json({ error: "Unable to acknowledge this task assignment." }, { status: 503, headers });
+  }
+}
+
 export async function PATCH(request: Request, context: { params: Promise<{ taskId: string }> }) {
   try {
     const access = await getTaskAccess();
@@ -101,7 +131,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ taskI
         notes: task.notes,
         due_at: nextDueAt,
         reminder_at: nextReminderAt,
-        assigned_to: access.userId,
+        assigned_to: task.assigned_to,
         priority: task.priority,
         recurrence: task.recurrence,
         sms_reminder_enabled: task.sms_reminder_enabled,

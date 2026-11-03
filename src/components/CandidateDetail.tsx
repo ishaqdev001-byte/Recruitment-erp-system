@@ -943,7 +943,7 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                 </div>
                 <h3 className="mb-3 text-xs font-700 uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Invoices and payments</h3>
                 <div className="overflow-x-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-                  <table className="w-full min-w-180 text-sm">
+                  <div className="app-table-scroll"><table className="w-full min-w-180 text-sm">
                     <thead>
                       <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                         {["Date", "Type", "Method", "Amount", "Reference", "Status"].map((heading) => (
@@ -965,7 +965,7 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                         <tr><td colSpan={6} className="px-4 py-6 text-center" style={{ color: "var(--muted-foreground)" }}>No candidate finance records found.</td></tr>
                       )}
                     </tbody>
-                  </table>
+                  </table></div>
                 </div>
               </>
             ) : null}

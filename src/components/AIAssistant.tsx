@@ -171,7 +171,7 @@ export default function AIAssistant() {
                 </label>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-212.5 text-sm">
+                <div className="app-table-scroll"><table className="w-full min-w-212.5 text-sm">
                   <thead>
                     <tr className="border-b text-left" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
                       {["Candidate", "File number", "Position / nationality", "Actions"].map((heading) => <th key={heading} className="px-4 py-3 text-[10px] font-700 uppercase tracking-wide">{heading}</th>)}
@@ -205,7 +205,7 @@ export default function AIAssistant() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </div>
               {loadingCandidates && <p className="px-4 py-5 text-sm" style={{ color: "var(--muted-foreground)" }}>Loading company candidates...</p>}
               {!loadingCandidates && !filteredCandidates.length && !error && <p className="px-4 py-8 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{candidates.length ? "No candidates match this search." : "No candidates are available in this workspace."}</p>}

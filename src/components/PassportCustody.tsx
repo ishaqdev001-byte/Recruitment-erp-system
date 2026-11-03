@@ -94,7 +94,7 @@ export default function PassportCustody() {
         </div>
 
         <div className="flex-1 overflow-auto">
-          <table className="w-full text-sm">
+          <div className="app-table-scroll"><table className="w-full text-sm">
             <thead className="sticky top-0" style={{ background: "var(--card)" }}>
               <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                 {["Candidate", "Passport No", "Expiry", "Status", "Date Received", "Received By", "Agent", "Location", ""].map((h) => (
@@ -133,7 +133,7 @@ export default function PassportCustody() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </div>
       </div>
 

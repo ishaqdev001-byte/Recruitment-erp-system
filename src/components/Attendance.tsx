@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, CalendarDays, ChevronLeft, ChevronRight, CircleCheck, Clock3, LogIn, LogOut, UsersRound, X } from "lucide-react";
+import { CalendarClock, CalendarDays, ChevronLeft, ChevronRight, CircleCheck, Clock3, FileSpreadsheet, FileText, LogIn, LogOut, UsersRound, X } from "lucide-react";
 
 type AttendanceRecord = {
   id: string;
@@ -24,12 +24,24 @@ type AttendancePayload = {
   currentUserId: string;
   employees: Employee[];
   records: AttendanceRecord[];
-  permissions: { canViewTeam: boolean; canClock: boolean };
+  officeOpen: boolean;
+  permissions: {
+    canViewTeam: boolean;
+    canClock: boolean;
+    canManageTeam: boolean;
+    canViewReports: boolean;
+    canExport: boolean;
+    isChairman: boolean;
+  };
   error?: string;
+};
+type ClockAction = {
+  action: "check-in" | "check-out";
+  employee?: Employee;
 };
 
 const clockTime = (value: string | null) => value
-  ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(value))
+  ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Kampala" }).format(new Date(value))
   : "—";
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 const todayInKampala = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Kampala", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -60,9 +72,10 @@ export default function Attendance() {
   const [selectedDate, setSelectedDate] = useState(todayInKampala);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
-  const [clockAction, setClockAction] = useState<"check-in" | "check-out" | null>(null);
+  const [clockAction, setClockAction] = useState<ClockAction | null>(null);
   const [comment, setComment] = useState("");
 
   useEffect(() => {
@@ -89,7 +102,7 @@ export default function Attendance() {
   const records = data?.records ?? [];
   const ownRecord = records.find((record) => record.employee_id === data?.currentUserId && record.work_date === todayInKampala());
   const tableRecords = useMemo(() => {
-    if (!data?.permissions.canViewTeam || view !== "daily" || selectedDate !== todayInKampala()) return records;
+    if (!data?.permissions.canViewTeam || !data.officeOpen || view !== "daily" || selectedDate !== todayInKampala()) return records;
     const presentEmployees = new Set(records.map((record) => record.employee_id));
     const notCheckedIn = data.employees.filter((employee) => employee.status === "active" && !presentEmployees.has(employee.id)).map((employee): AttendanceRecord => ({
       id: `not-checked-in-${employee.id}`,
@@ -128,7 +141,13 @@ export default function Attendance() {
       const response = await fetch("/api/attendance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: clockAction, comment: comment.trim() }),
+        body: JSON.stringify({
+          action: clockAction.action,
+          comment: comment.trim(),
+          ...(clockAction.employee
+            ? { employeeId: clockAction.employee.id }
+            : {}),
+        }),
       });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Unable to record attendance.");
@@ -139,6 +158,46 @@ export default function Attendance() {
       setError(actionError instanceof Error ? actionError.message : "Unable to record attendance.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const exportReport = async (format: "pdf" | "excel") => {
+    if (!data?.permissions.canExport) return;
+    setExporting(format);
+    setError("");
+    try {
+      const response = await fetch("/api/attendance/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          format,
+          mode: view,
+          startDate: data.range.startDate,
+          endDate: data.range.endDate,
+          rows: tableRecords,
+        }),
+      });
+      if (!response.ok) {
+        const result = (await response.json()) as { error?: string };
+        throw new Error(result.error ?? "Unable to export attendance.");
+      }
+      const file = await response.blob();
+      const url = URL.createObjectURL(file);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `attendance-${data.range.startDate}-${data.range.endDate}.${format === "excel" ? "xlsx" : "pdf"}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (exportError) {
+      setError(
+        exportError instanceof Error
+          ? exportError.message
+          : "Unable to export attendance.",
+      );
+    } finally {
+      setExporting(null);
     }
   };
 
@@ -157,13 +216,23 @@ export default function Attendance() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex border" style={{ borderColor: "var(--border)" }} role="group" aria-label="Attendance period">
-            {(["daily", "weekly", "monthly"] as const).map((period) => <button key={period} type="button" onClick={() => setView(period)} className="px-3 py-2 text-xs font-600 capitalize" style={{ background: view === period ? "var(--primary)" : "var(--secondary)", color: view === period ? "var(--primary-foreground)" : "var(--muted-foreground)" }}>{period}</button>)}
+            {(data?.permissions.canViewReports ? ["daily", "weekly", "monthly"] as const : ["daily"] as const).map((period) => <button key={period} type="button" onClick={() => setView(period)} className="px-3 py-2 text-xs font-600 capitalize" style={{ background: view === period ? "var(--primary)" : "var(--secondary)", color: view === period ? "var(--primary-foreground)" : "var(--muted-foreground)" }}>{period}</button>)}
           </div>
           <button type="button" aria-label="Previous period" onClick={() => setSelectedDate((current) => shiftDate(current, view, -1))} className="flex h-9 w-9 items-center justify-center border" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><ChevronLeft size={17} aria-hidden="true" /></button>
           <label className="sr-only" htmlFor="attendance-date">Attendance date</label>
           <input id="attendance-date" aria-label="Attendance date" type="date" value={selectedDate} min={data?.permissions.canViewTeam ? undefined : latestPersonalDate} max={todayInKampala()} onChange={(event) => setSelectedDate(event.target.value)} className="h-9 border px-2 text-sm" style={fieldStyle} />
           <button type="button" aria-label="Next period" disabled={selectedDate >= todayInKampala()} onClick={() => setSelectedDate((current) => shiftDate(current, view, 1) > todayInKampala() ? todayInKampala() : shiftDate(current, view, 1))} className="flex h-9 w-9 items-center justify-center border disabled:opacity-40" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><ChevronRight size={17} aria-hidden="true" /></button>
-          {data?.permissions.canClock && selectedDate === todayInKampala() && <button type="button" disabled={saving || loading || Boolean(ownRecord?.check_out_at)} onClick={() => setClockAction(ownRecord ? "check-out" : "check-in")} className="inline-flex items-center gap-2 px-4 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: ownRecord ? "#b45309" : "var(--primary)", color: "#fff" }}>{ownRecord ? <LogOut size={16} aria-hidden="true" /> : <LogIn size={16} aria-hidden="true" />}{ownRecord?.check_out_at ? `Completed at ${clockTime(ownRecord.check_out_at)}` : ownRecord ? "Check out" : "Check in"}</button>}
+          {data?.permissions.canClock && data.officeOpen && selectedDate === todayInKampala() && <button type="button" disabled={saving || loading || Boolean(ownRecord?.check_out_at)} onClick={() => setClockAction({ action: ownRecord ? "check-out" : "check-in" })} className="inline-flex items-center gap-2 px-4 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: ownRecord ? "#b45309" : "var(--primary)", color: "#fff" }}>{ownRecord ? <LogOut size={16} aria-hidden="true" /> : <LogIn size={16} aria-hidden="true" />}{ownRecord?.check_out_at ? `Completed at ${clockTime(ownRecord.check_out_at)}` : ownRecord ? "Check out" : "Check in"}</button>}
+          {data?.permissions.canExport && <>
+            <button type="button" onClick={() => void exportReport("pdf")} disabled={Boolean(exporting) || loading} className="inline-flex items-center gap-2 border px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+              <FileText size={15} aria-hidden="true" />
+              {exporting === "pdf" ? "Preparing PDF…" : "PDF"}
+            </button>
+            <button type="button" onClick={() => void exportReport("excel")} disabled={Boolean(exporting) || loading} className="inline-flex items-center gap-2 border px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+              <FileSpreadsheet size={15} aria-hidden="true" />
+              {exporting === "excel" ? "Preparing Excel…" : "Excel"}
+            </button>
+          </>}
         </div>
       </header>
 
@@ -181,11 +250,13 @@ export default function Attendance() {
 
       {error && <div role="alert" className="mx-6 mt-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
       <div className="min-h-0 flex-1 overflow-auto p-6">
+        {!data?.officeOpen && data?.permissions.canViewTeam && <p className="mb-3 border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">The office is closed on this date; check-in and absence expectations are paused.</p>}
+        {data?.permissions.canManageTeam && data.officeOpen && selectedDate === todayInKampala() && view === "daily" && <p className="mb-3 text-xs" style={{ color: "var(--muted-foreground)" }}>Use the Actions column to record check-in or check-out for staff. Your own attendance uses the button above.</p>}
         <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-          <table className="w-full min-w-240 text-sm">
-            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Date", "Employee", "Check in", "Check-in comment", "Check out", "Check-out comment", "Worked", "Status"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+          <div className="app-table-scroll"><table className="w-full min-w-240 text-sm">
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Date", "Employee", "Check in", "Check-in comment", "Check out", "Check-out comment", "Worked", "Status", ...(data?.permissions.canManageTeam && data.officeOpen && selectedDate === todayInKampala() && view === "daily" ? ["Actions"] : [])].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading attendance…</td></tr>}
+              {loading && <tr><td colSpan={data?.permissions.canManageTeam && data.officeOpen && selectedDate === todayInKampala() && view === "daily" ? 9 : 8} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading attendance…</td></tr>}
               {!loading && !error && tableRecords.map((record) => <tr key={record.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{dateLabel(record.work_date)}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs font-600" style={{ color: "var(--foreground)" }}>{record.employee_name}</td>
@@ -195,19 +266,28 @@ export default function Attendance() {
                 <td className="max-w-56 px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{record.check_out_comment || "—"}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{durationLabel(record.worked_minutes)}</td>
                 <td className="whitespace-nowrap px-3 py-3"><span className="text-xs font-600" style={{ color: statusColors[record.status] }}>{statusLabels[record.status]}</span></td>
+                {data?.permissions.canManageTeam && data.officeOpen && selectedDate === todayInKampala() && view === "daily" && <td className="whitespace-nowrap px-3 py-3">
+                  {record.employee_id !== data.currentUserId && (record.status === "not_checked_in" || (record.status === "present" && !record.check_out_at)) && <button type="button" disabled={saving || loading} onClick={() => setClockAction({
+                    action: record.status === "not_checked_in" ? "check-in" : "check-out",
+                    employee: { id: record.employee_id, name: record.employee_name, status: "active" },
+                  })} className="inline-flex items-center gap-1 border px-2 py-1 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--primary)" }}>
+                    {record.status === "not_checked_in" ? <LogIn size={13} aria-hidden="true" /> : <LogOut size={13} aria-hidden="true" />}
+                    {record.status === "not_checked_in" ? "Check in" : "Check out"}
+                  </button>}
+                </td>}
               </tr>)}
-              {!loading && !error && tableRecords.length === 0 && <tr><td colSpan={8} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No attendance records in this period.</td></tr>}
+              {!loading && !error && tableRecords.length === 0 && <tr><td colSpan={data?.permissions.canManageTeam && data.officeOpen && selectedDate === todayInKampala() && view === "daily" ? 9 : 8} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>No attendance records in this period.</td></tr>}
             </tbody>
-          </table>
+          </table></div>
         </div>
-        <p className="mt-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{data?.permissions.canViewTeam ? "Only the company owner, CEO, and general manager can view team attendance." : "Your personal history is limited to the most recent three months."} Attendance dates follow Africa/Kampala.</p>
+        <p className="mt-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{data?.permissions.canViewTeam ? "The Chairman can view company reports; General Managers and Supervisors can view daily attendance." : "Your personal history is limited to the most recent three months."} Attendance dates follow Africa/Kampala.</p>
       </div>
 
       {clockAction && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setClockAction(null); }}>
         <form onSubmit={recordTime} className="w-full max-w-md border p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-          <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>{clockAction === "check-in" ? "Check in" : "Check out"}</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>{dateLabel(todayInKampala(), { weekday: "long", month: "long", day: "numeric" })} · Kampala time</p></div><button type="button" onClick={() => setClockAction(null)} aria-label="Close attendance form" className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
-          <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Comment<textarea required maxLength={1000} rows={3} value={comment} onChange={(event) => setComment(event.target.value)} className="mt-1 w-full resize-y border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} placeholder={clockAction === "check-in" ? "Add a note for the start of your day." : "Add a note for the end of your day."} /></label>
-          <div className="mt-6 flex gap-3"><button type="submit" disabled={saving || !comment.trim()} className="flex-1 py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Recording…" : clockAction === "check-in" ? "Confirm check-in" : "Confirm check-out"}</button><button type="button" onClick={() => setClockAction(null)} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
+          <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>{clockAction.action === "check-in" ? "Check in" : "Check out"}{clockAction.employee ? ` · ${clockAction.employee.name}` : ""}</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>{dateLabel(todayInKampala(), { weekday: "long", month: "long", day: "numeric" })} · Kampala time</p></div><button type="button" onClick={() => setClockAction(null)} aria-label="Close attendance form" className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
+          <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Comment<textarea required maxLength={1000} rows={3} value={comment} onChange={(event) => setComment(event.target.value)} className="mt-1 w-full resize-y border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} placeholder={clockAction.action === "check-in" ? "Add a note for the start of the day." : "Add a note for the end of the day."} /></label>
+          <div className="mt-6 flex gap-3"><button type="submit" disabled={saving || !comment.trim()} className="flex-1 py-2 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Recording…" : clockAction.action === "check-in" ? "Confirm check-in" : "Confirm check-out"}</button><button type="button" onClick={() => setClockAction(null)} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
         </form>
       </div>}
     </section>

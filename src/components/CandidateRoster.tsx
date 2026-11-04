@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react"
 
 import {
   ArrowRight,
+  Eye,
   Paperclip,
   Pencil,
   RefreshCw,
@@ -18,6 +19,8 @@ import {
 import AttachmentDrawer from "./AttachmentDrawer"
 
 import CandidateDetail from "./CandidateDetail"
+
+import CandidateReadOnlyDetails from "./CandidateReadOnlyDetails"
 
 import type { Candidate } from "./Candidates"
 
@@ -686,6 +689,10 @@ export default function CandidateRoster({
     useState<CandidateRecord | null>(null)
 
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(
+    null,
+  )
+
+  const [viewingCandidate, setViewingCandidate] = useState<Candidate | null>(
     null,
   )
 
@@ -1903,6 +1910,18 @@ export default function CandidateRoster({
                           className="h-4 w-4 accent-amber-700"
                         />
                       )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setViewingCandidate(candidateFromRecord(candidate))
+                        }
+                        aria-label={`View details for ${candidate.first_name} ${candidate.last_name}`}
+                        title="View candidate details"
+                        className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                        style={{ color: "var(--foreground)" }}
+                      >
+                        <Eye size={15} aria-hidden="true" />
+                      </button>
                       {!financeReadOnly && (
                         <button
                           type="button"
@@ -2716,6 +2735,12 @@ export default function CandidateRoster({
             fileNumber: drawerCandidate.file_number,
           }}
           onClose={() => setDrawerCandidate(null)}
+        />
+      )}
+      {viewingCandidate && (
+        <CandidateReadOnlyDetails
+          candidate={viewingCandidate}
+          onClose={() => setViewingCandidate(null)}
         />
       )}
 

@@ -7,8 +7,10 @@ const chairmanRoles = new Set([
 export function canViewCandidateFinance(
   roleName: string,
   hasFinancePermission: boolean,
+  isPrimaryAdministrator = false,
 ) {
   const normalizedRole = roleName.trim().toLocaleLowerCase();
-  return chairmanRoles.has(normalizedRole) ||
+  return isPrimaryAdministrator ||
+    chairmanRoles.has(normalizedRole) ||
     (normalizedRole.includes("finance") && hasFinancePermission);
 }

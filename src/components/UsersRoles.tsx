@@ -96,6 +96,7 @@ const permissionModuleLabels: Record<string, string> = {
   communications: "Communications",
   documents: "Documents",
   drive: "Company Drive",
+  expense_requests: "Expense Requests",
   employers: "Contractors",
   finance: "Finance",
   human_resources: "Human Resources",
@@ -134,6 +135,7 @@ const permissionActionLabels: Record<string, string> = {
   types: "Manage types",
   update: "Update",
   verify: "Verify",
+  cashout: "Cash out",
   view: "View",
   upload: "Upload",
 }
@@ -166,6 +168,7 @@ const permissionModuleOrder = [
   "branches",
   "approvals",
   "requisitions",
+  "expense_requests",
   "tasks",
   "communications",
   "attendance",

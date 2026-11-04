@@ -8,6 +8,8 @@ Run `pnpm dev` to start the development server, `pnpm build` to create a product
 
 For browser and closed-browser push alerts, apply `supabase/migrations/20261031123905_browser_push_notifications.sql`, `supabase/migrations/20261031131429_notification_push_cron_scheduler.sql`, and `supabase/migrations/20261031140816_workspace_notification_events.sql`. The last migration adds permission-scoped event notifications for candidates, tasks, approvals, finance, HR, medical examinations, and inbound WhatsApp messages; legacy leave, requisition, and reminder notifications remain supported. Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, and `NOTIFICATION_DISPATCH_SECRET` only in the app server environment. In Supabase Vault, create secrets named `notification_app_base_url` (the HTTPS app origin) and `notification_dispatch_secret` (the same value as the app's `NOTIFICATION_DISPATCH_SECRET`). Supabase Cron then calls `/api/notifications/push/dispatch` every minute. Users opt in from the notification center; push subscriptions are scoped to the signed-in user and alerts are permission-filtered.
 
+For staff self-service profile names, phone numbers, and profile photos, apply `supabase/migrations/20261104093919_user_profile_photos.sql`. The migration adds `profiles.avatar_url` and a private Storage bucket; profile photos are served through the authenticated `/api/workspace/my-profile` route and are not public URLs.
+
 ## Project Structure
 
 - `src/app/page.tsx` - App Router page
@@ -42,6 +44,8 @@ For company attendance schedules, public holidays, and role-based staff attendan
 For staff HR profile reminders, apply `supabase/migrations/20261103114331_staff_hr_profile_reminders.sql` after the staff HR profile migration. The required personal details are checked at initial workspace access. Ten days after completion, staff are reminded to review remaining HR sections and may defer the reminder for another ten days or confirm their review. Six weeks after confirmation, staff are asked whether their contact/address information is unchanged; if it changed, they must update and save at least one personal contact or address field before resuming workspace access.
 
 For Finance Accounts and account-linked receipts, invoice payments, expenses, and payroll, also apply `supabase/migrations/202610130005_company_accounts_books.sql`. Company owners, CEOs, General Managers, and Finance Managers can create accounts; each new money-in or money-out transaction must select an active company account.
+
+For Finance expense requests and the Administration Officer default role, apply `supabase/migrations/20261104083230_finance_expense_requests.sql` after the company accounts and workspace notification migrations. Administration Officers submit requests with an amount, requester, purpose, due date, and comment. General Managers review, Finance staff verify, the Chairman authorizes, and only Finance Managers can cash out from an active company account. Each stage requires a comment, creates the corresponding company expense when paid, and sends permission-scoped in-app and browser/device push notifications.
 
 For Finance staff to view candidates and inquiries without editing candidates or changing pipeline stages, apply `supabase/migrations/20261102104942_finance_candidate_read_role_permission_persistence.sql`. The migration grants `candidates.view` to standard Finance roles while leaving `candidates.edit` unchanged. Role permission updates are saved atomically, and active workspaces refresh updated permissions.
 

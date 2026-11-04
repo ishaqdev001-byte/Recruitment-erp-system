@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { isUuid } from "@/lib/server/documents";
 import { canViewCandidateFinance } from "@/lib/server/candidate-finance-access";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { roleAccessSettings } from "@/lib/role-access-settings";
 import { ensureInterServerCandidateFolders } from "@/lib/storage/interserver";
 import { isPassportNumberValid, normalizePassportNumber, passportNumberRule } from "@/lib/passport-number";
 
@@ -91,7 +92,7 @@ export async function GET() {
 
     // Check if user has finance.view permission
     const [{ data: roleData, error: roleError }, { data: company, error: companyError }] = await Promise.all([
-      supabase.from("company_roles").select("name").eq("id", membership.role_id).maybeSingle(),
+      supabase.from("company_roles").select("name, access_settings").eq("id", membership.role_id).eq("company_id", membership.company_id).maybeSingle(),
       supabase.from("companies").select("primary_admin_user_id").eq("id", membership.company_id).maybeSingle(),
     ]);
     if (roleError || !roleData || companyError || !company) {
@@ -104,7 +105,6 @@ export async function GET() {
       { data: canEditCandidates, error: editPermissionError },
       { data: canRegisterCandidates, error: registerPermissionError },
       { data: canCreateCandidates, error: legacyCreatePermissionError },
-      { data: candidateScope, error: scopeError },
       { data: canViewAgentFinance, error: agentFinancePermissionError },
       { data: canManageCandidateSources, error: sourcePermissionError },
       { data: canUpdateCandidateStages, error: stagePermissionError },
@@ -126,11 +126,6 @@ export async function GET() {
         requested_company_id: membership.company_id,
         requested_permission: "candidates.create",
       }),
-      supabase.rpc("current_user_role_setting", {
-        requested_company_id: membership.company_id,
-        requested_setting: "candidate_scope",
-        fallback_value: "company",
-      }),
       supabase.rpc("current_user_can_view_agent_finance", {
         requested_company_id: membership.company_id,
       }),
@@ -147,29 +142,26 @@ export async function GET() {
         requested_permission: "candidates.project_submit",
       }),
     ]);
-    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || scopeError || agentFinancePermissionError || sourcePermissionError || stagePermissionError || projectSubmissionPermissionError) {
+    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || sourcePermissionError || stagePermissionError || projectSubmissionPermissionError) {
       return NextResponse.json({ error: "Unable to verify candidate access." }, { status: 503, headers });
     }
-    const { data: candidateRegistration, error: registrationSettingError } = await supabase.rpc(
-      "current_user_role_setting",
-      {
-        requested_company_id: membership.company_id,
-        requested_setting: "candidate_registration",
-        fallback_value: "true",
-      },
-    );
-    if (registrationSettingError) {
-      return NextResponse.json({ error: "Unable to verify candidate registration access." }, { status: 503, headers });
+    if (agentFinancePermissionError) {
+      console.error("Candidate agent-finance permission lookup failed", agentFinancePermissionError);
     }
 
     const roleName = roleData?.name || "";
+    const roleSettings = roleAccessSettings(roleData?.access_settings, roleName);
     const canViewActivityLogs = roleName.includes("Chairman") || roleName.includes("General Manager");
     const canManagePassportStatus = company.primary_admin_user_id === user.id
       || ["chairman", "company owner / primary administrator", "general manager", "supervisor"]
         .includes(roleName.trim().toLocaleLowerCase());
-    const canViewFinance = canViewCandidateFinance(roleName, Boolean(hasFinancePermission));
-    const isAgent = candidateScope === "assigned";
-    const canRegister = Boolean(canRegisterCandidates) && candidateRegistration === "true";
+    const canViewFinance = canViewCandidateFinance(
+      roleName,
+      Boolean(hasFinancePermission),
+      company.primary_admin_user_id === user.id,
+    );
+    const isAgent = roleSettings.candidate_scope === "assigned";
+    const canRegister = Boolean(canRegisterCandidates) && roleSettings.candidate_registration;
 
     let query = supabase
       .from("candidates")
@@ -181,10 +173,11 @@ export async function GET() {
       query,
       supabase.rpc("list_candidate_inquiry_people", { requested_company_id: membership.company_id }),
     ]);
-    if (error || peopleError) {
-      console.error("Candidate list query failed", error ?? peopleError);
-      return NextResponse.json({ error: "Unable to load candidates." }, { status: 403, headers });
+    if (error) {
+      console.error("Candidate list query failed", error);
+      return NextResponse.json({ error: "Unable to load candidates." }, { status: 503, headers });
     }
+    if (peopleError) console.error("Candidate staff-name lookup failed", peopleError);
     const names = new Map((people ?? []).map((person: { user_id: string; display_name: string }) => [person.user_id, person.display_name]));
 
     return NextResponse.json({
@@ -193,9 +186,10 @@ export async function GET() {
         created_by_name: candidate.created_by ? names.get(candidate.created_by) ?? "Former team member" : null,
         updated_by_name: candidate.updated_by ? names.get(candidate.updated_by) ?? "Former team member" : null,
       })),
+      ...(peopleError ? { warning: "Some candidate creator and updater names are unavailable." } : {}),
       permissions: {
         canViewFinance: Boolean(canViewFinance),
-        canViewAgentFinance: Boolean(canViewAgentFinance),
+        canViewAgentFinance: Boolean(canViewAgentFinance && !agentFinancePermissionError),
         canViewActivityLogs,
         canEditCandidates: Boolean(canEditCandidates),
         canUpdateCandidateStages: Boolean(canUpdateCandidateStages),

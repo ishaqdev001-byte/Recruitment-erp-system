@@ -78,7 +78,9 @@ body {
   scroll-behavior: smooth;
 }
 
-/* Page Transition Animations */
+/* ====== ENHANCED PAGE TRANSITION ANIMATIONS ====== */
+
+/* Fast, optimized animations with will-change and transforms */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -91,37 +93,59 @@ body {
 @keyframes slideInUp {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translate3d(0, 8px, 0);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes slideInDown {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
   }
 }
 
 @keyframes slideInLeft {
   from {
     opacity: 0;
-    transform: translateX(-12px);
+    transform: translate3d(-8px, 0, 0);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
 @keyframes slideInRight {
   from {
     opacity: 0;
-    transform: translateX(12px);
+    transform: translate3d(8px, 0, 0);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
-/* Skeleton Loading Animation */
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale3d(0.95, 0.95, 1);
+  }
+  to {
+    opacity: 1;
+    transform: scale3d(1, 1, 1);
+  }
+}
+
+/* Skeleton Loading Animation - faster shimmer */
 @keyframes shimmer {
   0% {
     background-position: -1000px 0;
@@ -131,45 +155,45 @@ body {
   }
 }
 
-/* Main content container animation */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* ====== MAIN CONTENT ANIMATIONS ====== */
 .page-content {
-  animation: fadeIn 0.3s ease-in-out;
+  will-change: opacity, transform;
+  animation: fadeIn 0.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  backface-visibility: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
-.page-content.slide-up {
-  animation: slideInUp 0.4s ease-out;
+.page-content.fadeIn {
+  animation: fadeIn 0.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-.page-content.slide-left {
-  animation: slideInLeft 0.35s ease-out;
+.page-content.slideInUp {
+  animation: slideInUp 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-.page-content.slide-right {
-  animation: slideInRight 0.35s ease-out;
+.page-content.slideInDown {
+  animation: slideInDown 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-/* Navigation transition */
-.nav-transition {
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+.page-content.slideInLeft {
+  animation: slideInLeft 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-/* Button and element transitions */
-button,
-a,
-[role="button"] {
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+.page-content.slideInRight {
+  animation: slideInRight 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-/* Loading state animation */
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--muted) 0%,
-    var(--muted-foreground) 50%,
-    var(--muted) 100%
-  );
-  background-size: 1000px 100%;
-  animation: shimmer 2s infinite;
+.page-content.scaleIn {
+  animation: scaleIn 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
 /* Smooth scroll behavior for tables */
@@ -184,6 +208,38 @@ a,
   scrollbar-color: var(--muted-foreground) transparent;
   scrollbar-width: thin;
   -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  contain: layout style paint;
+}
+
+/* Component transitions */
+.btn-transition,
+button,
+a,
+[role="button"] {
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform, background-color;
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+/* Loading state animation - faster */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    var(--muted-foreground) 50%,
+    var(--muted) 100%
+  );
+  background-size: 1000px 100%;
+  animation: shimmer 1.5s infinite;
+  contain: strict;
+}
+
+.skeleton.pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 /* Reduced motion preferences */
@@ -196,14 +252,54 @@ a,
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+
+  .page-content {
+    animation: none !important;
+    opacity: 1 !important;
+  }
 }
 
+/* Network-related optimizations */
+@media (prefers-reduced-data: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Fast transforms with GPU acceleration */
+.fast-fade {
+  animation: fadeIn 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fast-slide {
+  animation: slideInUp 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Optimize font rendering */
 body {
   font-family: 'DM Sans', sans-serif;
   background-color: var(--background);
   color: var(--foreground);
   margin: 0;
   padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Optimize images */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Containment for better paint performance */
+.card-container,
+.list-container {
+  contain: layout style paint;
 }
 
 .requisition-lookup-results {

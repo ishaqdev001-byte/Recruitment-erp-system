@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Sparkles, X } from "lucide-react";
+import {
+  ArrowLeft,
+  FileSpreadsheet,
+  FileText,
+  Loader2,
+  Sparkles,
+  X,
+} from "lucide-react";
 import type { Candidate } from "./Candidates";
 import { SearchableSelect } from "./SearchableSelect";
 import { getCountries, getCountryByShort, getStatesByShort } from "countrycitystatejson/client";
@@ -200,6 +207,7 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
   const [financeData, setFinanceData] = useState<CandidateFinancePayload | null>(null);
   const [financeLoading, setFinanceLoading] = useState(false);
   const [financeError, setFinanceError] = useState("");
+  const [financeExporting, setFinanceExporting] = useState<"excel" | "pdf" | null>(null);
   const [passportCheck, setPassportCheck] = useState<PassportCheck>({ passportNumber: "", status: "idle" });
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [branchError, setBranchError] = useState("");
@@ -477,6 +485,39 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
       ].sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
     : [];
   const formatFinanceAmount = (value: number) => `UGX ${value.toLocaleString()}`;
+  const exportCandidateFinance = async (format: "excel" | "pdf") => {
+    setFinanceExporting(format);
+    setFinanceError("");
+    try {
+      const response = await fetch(
+        `/api/candidates/${encodeURIComponent(form.id)}/finance/export?format=${format}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        const payload = await response.json() as { error?: string };
+        throw new Error(payload.error ?? "Unable to export candidate finance records.");
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") ?? "";
+      const filename = disposition.match(/filename="([^"]+)"/i)?.[1]
+        ?? `candidate-finance-${form.fileNumber || form.id}.${format === "excel" ? "xlsx" : "pdf"}`;
+      const downloadUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = downloadUrl;
+      anchor.download = filename;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
+    } catch (error) {
+      console.error("Candidate finance export failed", error);
+      setFinanceError(
+        error instanceof Error
+          ? error.message
+          : "Unable to export candidate finance records.",
+      );
+    } finally {
+      setFinanceExporting(null);
+    }
+  };
 
   const saveCandidate = async () => {
     if (isNew && !registrationComplete) {
@@ -941,7 +982,31 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                     </div>
                   ))}
                 </div>
-                <h3 className="mb-3 text-xs font-700 uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Invoices and payments</h3>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="text-xs font-700 uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>Invoices and payments</h3>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={financeExporting !== null}
+                      onClick={() => void exportCandidateFinance("excel")}
+                      className="inline-flex items-center gap-2 rounded border px-3 py-2 text-xs font-600 disabled:opacity-50"
+                      style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                    >
+                      {financeExporting === "excel" ? <Loader2 className="animate-spin" size={14} aria-hidden="true" /> : <FileSpreadsheet size={14} aria-hidden="true" />}
+                      Export Excel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={financeExporting !== null}
+                      onClick={() => void exportCandidateFinance("pdf")}
+                      className="inline-flex items-center gap-2 rounded border px-3 py-2 text-xs font-600 disabled:opacity-50"
+                      style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                    >
+                      {financeExporting === "pdf" ? <Loader2 className="animate-spin" size={14} aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
+                      Export PDF
+                    </button>
+                  </div>
+                </div>
                 <div className="overflow-x-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
                   <div className="app-table-scroll"><table className="w-full min-w-180 text-sm">
                     <thead>

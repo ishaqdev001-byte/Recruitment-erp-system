@@ -154,6 +154,12 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "requisitions.review": new Set(["requisitions"]),
   "requisitions.verify": new Set(["requisitions"]),
   "requisitions.authorize": new Set(["requisitions"]),
+  "expense_requests.view": new Set(["expense-requests"]),
+  "expense_requests.create": new Set(["expense-requests"]),
+  "expense_requests.review": new Set(["expense-requests"]),
+  "expense_requests.verify": new Set(["expense-requests"]),
+  "expense_requests.authorize": new Set(["expense-requests"]),
+  "expense_requests.cashout": new Set(["expense-requests"]),
 
   // Attendance
   "attendance.view": new Set(["attendance"]),

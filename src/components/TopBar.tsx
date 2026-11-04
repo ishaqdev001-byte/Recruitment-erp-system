@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, CircleAlert, CircleCheck, Info, Menu, Search, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
+import { Bell, Camera, CircleAlert, CircleCheck, Info, Loader2, Menu, Save, Search, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
 import type { View, WorkspaceRole } from "../App";
 import { matchesSearch } from "@/lib/search";
 
@@ -120,6 +120,16 @@ export default function TopBar({
   const [showResults, setShowResults] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [profileName, setProfileName] = useState(userName ?? "");
+  const [profilePhone, setProfilePhone] = useState("");
+  const [profilePhoto, setProfilePhoto] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState("");
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState(userAvatarUrl ?? "");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [removeProfilePhoto, setRemoveProfilePhoto] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [notifs, setNotifs] = useState<NotificationItem[]>([]);
   const [notificationError, setNotificationError] = useState("");
@@ -139,6 +149,121 @@ export default function TopBar({
   const canViewRequisitionNotifications = permissions.some((permission) =>
     permission.startsWith("requisitions."),
   );
+
+  useEffect(() => {
+    if (!profilePhoto) {
+      setPhotoPreview("");
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(profilePhoto);
+    setPhotoPreview(previewUrl);
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [profilePhoto]);
+
+  useEffect(() => {
+    if (!showEditProfile) return;
+    setProfileName(userName ?? "");
+    setProfilePhone("");
+    setProfileAvatarUrl(userAvatarUrl ?? "");
+    setProfilePhoto(null);
+    setRemoveProfilePhoto(false);
+    setProfileLoaded(false);
+    setProfileError("");
+    let cancelled = false;
+    void fetch("/api/workspace/my-profile", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = (await response.json()) as {
+          profile?: { display_name: string; phone: string; avatar_url: string | null };
+          error?: string;
+        };
+        if (!response.ok || !payload.profile)
+          throw new Error(payload.error ?? "Unable to load your profile.");
+        if (!cancelled) {
+          setProfileName(payload.profile.display_name);
+          setProfilePhone(payload.profile.phone);
+          setProfileAvatarUrl(payload.profile.avatar_url ?? "");
+          setProfileLoaded(true);
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("Profile editor load failed", error);
+        if (!cancelled)
+          setProfileError(
+            error instanceof Error ? error.message : "Unable to load your profile.",
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showEditProfile, userName, userAvatarUrl]);
+
+  useEffect(() => {
+    if (!showEditProfile) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !profileSaving) setShowEditProfile(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [profileSaving, showEditProfile]);
+
+  async function saveProfile() {
+    setProfileSaving(true);
+    setProfileError("");
+    try {
+      const response = await fetch("/api/workspace/my-profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: profileName,
+          phone: profilePhone,
+        }),
+      });
+      const payload = (await response.json()) as {
+        profile?: { display_name: string; phone: string; avatar_url: string | null };
+        error?: string;
+      };
+      if (!response.ok || !payload.profile)
+        throw new Error(payload.error ?? "Unable to update your profile.");
+
+      if (profilePhoto) {
+        const formData = new FormData();
+        formData.append("photo", profilePhoto);
+        const photoResponse = await fetch("/api/workspace/my-profile", {
+          method: "POST",
+          body: formData,
+        });
+        const photoPayload = (await photoResponse.json()) as {
+          profile?: { display_name: string; phone: string; avatar_url: string | null };
+          error?: string;
+        };
+        if (!photoResponse.ok || !photoPayload.profile)
+          throw new Error(photoPayload.error ?? "Unable to upload your profile photo.");
+        setProfileAvatarUrl(photoPayload.profile.avatar_url ?? "");
+      } else if (removeProfilePhoto) {
+        const photoResponse = await fetch("/api/workspace/my-profile", {
+          method: "DELETE",
+        });
+        const photoPayload = (await photoResponse.json()) as {
+          profile?: { display_name: string; phone: string; avatar_url: string | null };
+          error?: string;
+        };
+        if (!photoResponse.ok || !photoPayload.profile)
+          throw new Error(photoPayload.error ?? "Unable to remove your profile photo.");
+        setProfileAvatarUrl("");
+      }
+
+      setShowEditProfile(false);
+      window.location.reload();
+    } catch (error) {
+      console.error("Profile save failed", error);
+      setProfileError(
+        error instanceof Error ? error.message : "Unable to update your profile.",
+      );
+    } finally {
+      setProfileSaving(false);
+    }
+  }
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -270,6 +395,7 @@ export default function TopBar({
         const workspaceNotifications = workspacePayload.notifications ?? [];
         const workspaceView = (category: string, requiredPermission: string): View => {
           if (requiredPermission === "staff_chat.view") return "staff-chat";
+          if (requiredPermission.startsWith("expense_requests.")) return "expense-requests";
 
           switch (category) {
             case "candidate-inquiries": return "candidate-inquiries";
@@ -782,12 +908,14 @@ export default function TopBar({
 
           <div className="relative">
             <button type="button" aria-label="Open user profile" aria-expanded={showProfile} onClick={() => setShowProfile((open) => !open)} className="flex h-9 w-9 items-center justify-center rounded-full border text-xs font-700" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--primary)" }}>
-              {userAvatarUrl ? <img src={userAvatarUrl} alt="" className="h-full w-full rounded-full object-cover" /> : userName ? formatCompanyInitials(userName) : <UserRound size={17} aria-hidden="true" />}
+              {profileAvatarUrl ? <img src={profileAvatarUrl} alt="" className="h-full w-full rounded-full object-cover" /> : userName ? formatCompanyInitials(userName) : <UserRound size={17} aria-hidden="true" />}
             </button>
             {showProfile && (
               <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded border p-4 shadow-xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
                 <div className="mb-3 flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-700" style={{ background: "var(--secondary)", color: "var(--primary)" }}>{userName ? formatCompanyInitials(userName) : "U"}</div>
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-700" style={{ background: "var(--secondary)", color: "var(--primary)" }}>
+                    {profileAvatarUrl ? <img src={profileAvatarUrl} alt="" className="h-full w-full object-cover" /> : userName ? formatCompanyInitials(userName) : "U"}
+                  </div>
                   <div className="min-w-0">
                     <div className="truncate text-sm font-700" style={{ color: "var(--foreground)" }}>{userName ?? "User"}</div>
                     <div className="truncate text-xs" style={{ color: "var(--muted-foreground)" }}>{userEmail ?? ""}</div>
@@ -797,6 +925,17 @@ export default function TopBar({
                   <div className="text-[10px] uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>User role</div>
                   <div className="mt-1 font-600" style={{ color: "var(--foreground)" }}>{role}</div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProfile(false);
+                    setShowEditProfile(true);
+                  }}
+                  className="mt-4 w-full rounded border px-3 py-2 text-sm font-600"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                >
+                  Edit profile
+                </button>
               </div>
             )}
           </div>
@@ -806,6 +945,164 @@ export default function TopBar({
           </span>
         </div>
       </div>
+
+      {showEditProfile && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !profileSaving)
+              setShowEditProfile(false);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-profile-title"
+            className="w-full max-w-lg rounded-xl border p-5 shadow-2xl sm:p-6"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <header className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h2 id="edit-profile-title" className="text-lg font-700" style={{ color: "var(--foreground)" }}>
+                  Edit your profile
+                </h2>
+                <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
+                  Update the name, phone, and photo shown to your team.
+                </p>
+                {!profileLoaded && !profileError && (
+                  <p role="status" className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                    Loading your profile…
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                aria-label="Close profile editor"
+                disabled={profileSaving}
+                onClick={() => setShowEditProfile(false)}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded hover:bg-[var(--secondary)] disabled:opacity-50"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                <X size={17} aria-hidden="true" />
+              </button>
+            </header>
+
+            <div className="mb-5 flex items-center gap-4">
+              <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full border text-lg font-700" style={{ borderColor: "var(--border)", background: "var(--secondary)", color: "var(--primary)" }}>
+                {!removeProfilePhoto && (photoPreview || profileAvatarUrl)
+                  ? <img src={photoPreview || profileAvatarUrl} alt="Profile preview" className="h-full w-full object-cover" />
+                  : profileName ? formatCompanyInitials(profileName) : <UserRound size={26} aria-hidden="true" />}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <label
+                  className="inline-flex cursor-pointer items-center gap-2 rounded border px-3 py-2 text-xs font-600"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                >
+                  <Camera size={15} aria-hidden="true" />
+                  {profileAvatarUrl || profilePhoto ? "Change photo" : "Add photo"}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="sr-only"
+                    disabled={!profileLoaded || profileSaving}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null;
+                      if (file && file.size > 5 * 1024 * 1024) {
+                        setProfileError("Choose an image smaller than 5 MB.");
+                        event.target.value = "";
+                        return;
+                      }
+                      setProfileError("");
+                      setProfilePhoto(file);
+                      setRemoveProfilePhoto(false);
+                    }}
+                  />
+                </label>
+                {(profileAvatarUrl || profilePhoto) && (
+                  <button
+                    type="button"
+                    disabled={!profileLoaded || profileSaving}
+                    onClick={() => {
+                      setProfilePhoto(null);
+                      setRemoveProfilePhoto(true);
+                      setProfileError("");
+                    }}
+                    className="rounded border px-3 py-2 text-xs font-600 disabled:opacity-50"
+                    style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}
+                  >
+                    Remove photo
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <label className="block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
+                Full name
+                <input
+                  autoComplete="name"
+                  maxLength={120}
+                  disabled={!profileLoaded || profileSaving}
+                  value={profileName}
+                  onChange={(event) => setProfileName(event.target.value)}
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm outline-none"
+                  style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
+                />
+              </label>
+              <label className="block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
+                Phone number
+                <input
+                  autoComplete="tel"
+                  maxLength={40}
+                  disabled={!profileLoaded || profileSaving}
+                  value={profilePhone}
+                  onChange={(event) => setProfilePhone(event.target.value)}
+                  className="mt-1 w-full rounded border px-3 py-2.5 text-sm outline-none"
+                  style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
+                />
+              </label>
+              <label className="block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
+                Email address
+                <input
+                  readOnly
+                  value={userEmail ?? ""}
+                  className="mt-1 w-full cursor-not-allowed rounded border px-3 py-2.5 text-sm opacity-75"
+                  style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--muted-foreground)" }}
+                />
+              </label>
+            </div>
+
+            {profileError && (
+              <p role="alert" className="mt-4 text-sm text-red-500">
+                {profileError}
+              </p>
+            )}
+
+            <footer className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={profileSaving}
+                onClick={() => setShowEditProfile(false)}
+                className="rounded border px-4 py-2 text-sm disabled:opacity-50"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!profileLoaded || profileSaving || profileName.trim().length < 2}
+                onClick={() => void saveProfile()}
+                className="inline-flex items-center gap-2 rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
+                style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+              >
+                {profileSaving ? <Loader2 className="animate-spin" size={15} aria-hidden="true" /> : <Save size={15} aria-hidden="true" />}
+                {profileSaving ? "Saving…" : "Save changes"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
 
       {showCommandPalette && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/25 backdrop-blur-[1px]" onClick={() => setShowCommandPalette(false)}>

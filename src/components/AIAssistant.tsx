@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, CircleCheck, Download, LoaderCircle, MessageSquarePlus, Search, Send, Sparkles } from "lucide-react";
+import { Check, CircleCheck, Download, FileText, LoaderCircle, MessageSquarePlus, Search, Send, Sparkles, Stethoscope } from "lucide-react";
 import AttachmentDrawer from "./AttachmentDrawer";
 import { matchesSearch } from "@/lib/search";
 
@@ -193,10 +193,23 @@ export default function AIAssistant() {
                             {(["cv", "medical", "academic"] as const).map((type) => (
                               <button key={type} type="button" disabled={!configured || generatingCandidateId !== null} onClick={() => void handleGenerate(candidate, type)}
                                 aria-label={`Generate ${type === "cv" ? "CV" : type === "medical" ? "medical form" : "academic summary"} for ${candidate.first_name} ${candidate.last_name}`}
-                                className="inline-flex items-center gap-1 border px-2 py-1.5 text-[11px] font-600 disabled:cursor-not-allowed disabled:opacity-50"
-                                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
-                                {generatingCandidateId === candidate.id && generatingDocumentType === type ? <LoaderCircle size={12} className="animate-spin" aria-hidden="true" /> : null}
-                                {type === "cv" ? "CV" : type === "medical" ? "Medical" : "Academic"}
+                                aria-busy={generatingCandidateId === candidate.id && generatingDocumentType === type}
+                                className={type === "academic"
+                                  ? "inline-flex items-center gap-1 border px-2 py-1.5 text-[11px] font-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                  : "inline-flex min-h-9 items-center gap-2 rounded-lg border px-3 py-2 text-xs font-600 shadow-sm transition duration-150 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-50"}
+                                style={type === "cv"
+                                  ? { borderColor: "#6366f14d", background: "#6366f10d", color: "#6366f1" }
+                                  : type === "medical"
+                                    ? { borderColor: "#10b9814d", background: "#10b9810d", color: "#059669" }
+                                    : { borderColor: "var(--border)", color: "var(--foreground)" }}>
+                                {generatingCandidateId === candidate.id && generatingDocumentType === type
+                                  ? <LoaderCircle size={type === "academic" ? 12 : 15} className="animate-spin" aria-hidden="true" />
+                                  : type === "cv"
+                                    ? <FileText size={15} strokeWidth={2} aria-hidden="true" />
+                                    : type === "medical"
+                                      ? <Stethoscope size={15} strokeWidth={2} aria-hidden="true" />
+                                      : null}
+                                {type === "cv" ? "Generate CV" : type === "medical" ? "Generate Medical Form" : "Academic"}
                               </button>
                             ))}
                             <button type="button" onClick={() => setViewCandidate(candidate)} className="border px-2.5 py-1.5 text-[11px] font-600" style={{ borderColor: "var(--primary)", color: "var(--primary)" }}>View</button>

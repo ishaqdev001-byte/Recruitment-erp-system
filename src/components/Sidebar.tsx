@@ -115,6 +115,7 @@ const nav: NavItem[] = [
       { id: "payments", label: "Payments & Deposits", icon: CircleDollarSign },
       { id: "paychecks", label: "Paychecks", icon: FileText },
       { id: "requisitions", label: "Requisitions", icon: ClipboardList },
+      { id: "expense-requests", label: "Expense Requests", icon: ClipboardCheck },
     ],
   },
   { type: "item", id: "passport", label: "Passport Custody", icon: IdCard },
@@ -146,6 +147,7 @@ const financeViews = new Set<View>([
   "payments",
   "paychecks",
   "requisitions",
+  "expense-requests",
 ])
 const employerViews = new Set<View>(["contractors", "projects"])
 const agentPartnerViews = new Set<View>(["agents", "suppliers"])

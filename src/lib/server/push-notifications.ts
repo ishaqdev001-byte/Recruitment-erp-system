@@ -145,6 +145,9 @@ function getNotificationPath(notification: PushNotification) {
     if (notification.required_permission === "staff_chat.view") {
       return "/?notification=staff-chat"
     }
+    if (notification.required_permission?.startsWith("expense_requests.")) {
+      return "/?notification=expense-requests"
+    }
 
     const destinations: Record<string, string> = {
       candidates: "candidates",
@@ -152,6 +155,7 @@ function getNotificationPath(notification: PushNotification) {
       tasks: "tasks",
       approvals: "approvals",
       finance: "finance",
+      "expense-requests": "expense-requests",
       "agent-finance": "agent-invoices",
       "human-resources": "human-resources",
       communications: "communications",

@@ -929,9 +929,20 @@ export default function TopBar({
                   type="button"
                   onClick={() => {
                     setShowProfile(false);
+                    onNavigate("profile");
+                  }}
+                  className="mt-2 w-full rounded border px-3 py-2 text-sm font-600"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                >
+                  My full profile
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProfile(false);
                     setShowEditProfile(true);
                   }}
-                  className="mt-4 w-full rounded border px-3 py-2 text-sm font-600"
+                  className="mt-2 w-full rounded border px-3 py-2 text-sm font-600"
                   style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
                 >
                   Edit profile

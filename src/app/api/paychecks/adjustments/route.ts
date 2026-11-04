@@ -121,7 +121,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Select staff members and enter a valid month, amount, payment method, and description." }, { status: 400, headers });
     }
 
-    let selectedStaffQuery = access.admin.from("company_staff_members").select("id, name")
+    let selectedStaffQuery = access.admin.from("company_staff_members").select("id, name, pay_type")
       .eq("company_id", access.companyId).in("id", staffMemberIds);
     if (!access.isMainBranch) selectedStaffQuery = selectedStaffQuery.eq("branch_id", access.branchId!);
     const [{ data: selectedStaff, error: staffError }, { data: existingChecks, error: checksError }] = await Promise.all([
@@ -130,6 +130,9 @@ export async function POST(request: Request) {
     ]);
     if (staffError || checksError) throw staffError ?? checksError;
     if (!selectedStaff || selectedStaff.length !== staffMemberIds.length) return NextResponse.json({ error: "One or more selected staff members are not in this company." }, { status: 400, headers });
+    if (selectedStaff.some((member) => member.pay_type !== "payroll")) {
+      return NextResponse.json({ error: "Benefits and deductions can only be recorded for staff members on payroll." }, { status: 400, headers });
+    }
     if (existingChecks?.length) return NextResponse.json({ error: "A monthly payslip has already been issued for one or more selected staff. Record benefits and deductions before the monthly payment." }, { status: 409, headers });
 
     const { data: reference, error: referenceError } = await access.admin.rpc("allocate_company_payroll_reference", { requested_company_id: access.companyId });

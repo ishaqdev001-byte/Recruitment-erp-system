@@ -259,6 +259,10 @@ const AttendanceSettings = dynamic(
   () => import("./components/AttendanceSettings"),
   { loading: PageLoading },
 )
+const ProfileSettings = dynamic(
+  () => import("./components/ProfileSettings"),
+  { loading: PageLoading },
+)
 
 const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
   dashboard: () => import("./components/LiveDashboard"),
@@ -292,6 +296,7 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
   passport: () => import("./components/PassportCustodyWorkspace"),
   documents: () => import("./components/CompanyDrive"),
   users: () => import("./components/UsersRoles"),
+  profile: () => import("./components/ProfileSettings"),
   settings: () =>
     Promise.all([
       import("./components/settings/DepartmentsSettings"),
@@ -304,7 +309,7 @@ function preloadView(view: View) {
   void viewPreloaders[view]?.()
 }
 
-export type View = "dashboard" | "candidates" | "candidate-inquiries" | "agents" | "suppliers" | "jobs" | "interviews" | "offers" | "analytics" | "finance" | "accounts" | "payments" | "paychecks" | "passport" | "documents" | "ai" | "reports" | "users" | "settings" | "contractors" | "projects" | "invoices" | "agent-invoices" | "tasks" | "communications" | "staff-chat" | "attendance" | "leave" | "human-resources" | "medical-appointments" | "medical-management" | "hospital-management" | "branches" | "approvals" | "requisitions" | "expense-requests" | "drive"
+export type View = "dashboard" | "candidates" | "candidate-inquiries" | "agents" | "suppliers" | "jobs" | "interviews" | "offers" | "analytics" | "finance" | "accounts" | "payments" | "paychecks" | "passport" | "documents" | "ai" | "reports" | "users" | "settings" | "profile" | "contractors" | "projects" | "invoices" | "agent-invoices" | "tasks" | "communications" | "staff-chat" | "attendance" | "leave" | "human-resources" | "medical-appointments" | "medical-management" | "hospital-management" | "branches" | "approvals" | "requisitions" | "expense-requests" | "drive"
 
 export type WorkspaceRole = "Chairman" | "General Manager" | "CEO" | "Recruitment Manager" | "Recruitment Agent" | "Finance Manager" | "Finance Officer" | "Document Officer" | "Medical Officer" | "Doctor" | "Supervisor" | "Viewer" | "Administration Officer" | "Manager" | "Finance User"
 
@@ -2807,6 +2812,8 @@ export default function App() {
         )
       case "settings":
         return <SettingsPage company={activeCompany} user={activeUser} />
+      case "profile":
+        return <ProfileSettings />
       default:
         return <DatabaseModulePending view={view} />
     }

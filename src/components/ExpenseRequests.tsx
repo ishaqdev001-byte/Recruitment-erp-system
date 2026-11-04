@@ -442,7 +442,9 @@ export default function ExpenseRequests() {
           </div>
         ) : requests.length === 0 ? (
           <div className="rounded-lg border p-8 text-center text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
-            No expense requests yet.
+            {permissions.canCashout
+              ? "No expense requests are waiting for cash-out. Requests become payable after General Manager review, Finance verification, and Chairman authorization."
+              : "No expense requests yet."}
           </div>
         ) : (
           requests.map((request) => {

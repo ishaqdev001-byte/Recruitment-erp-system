@@ -121,8 +121,10 @@ export default function Paychecks() {
   const filteredPaychecks = useMemo(() => {
     return paychecks.filter((paycheck) => matchesSearch(search, paycheck.employee.name, paycheck.employee.staff_id, paycheck.employee.position, paycheck.pay_period, paycheck.payment_reference));
   }, [paychecks, search]);
-  const payrollStaff = staff.filter((member) => member.pay_type === "payroll" && Number(member.base_salary) > 0);
+  const payrollStaff = staff.filter((member) => member.pay_type === "payroll");
+  const configuredPayrollStaff = payrollStaff.filter((member) => Number(member.base_salary) > 0);
   const staffOptions = payrollStaff.map((member) => ({ value: member.id, label: member.name, description: `${member.staff_id} · ${member.position}`, searchText: `${member.staff_id} ${member.position}` }));
+  const paycheckStaffOptions = configuredPayrollStaff.map((member) => ({ value: member.id, label: member.name, description: `${member.staff_id} · ${member.position}`, searchText: `${member.staff_id} ${member.position}` }));
   const selectedStaff = staff.find((member) => member.id === staffMemberId) ?? null;
 
   const monthToDate = paychecks.filter((paycheck) => paycheck.pay_period === currentMonth());
@@ -214,7 +216,7 @@ export default function Paychecks() {
         <div className="flex flex-wrap gap-2">
           <button type="button" disabled={!canRecord || loading || !payrollStaff.length} onClick={() => openAdjustment("benefit")} className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Plus size={15} aria-hidden="true" />Record other benefits</button>
           <button type="button" disabled={!canRecord || loading || !payrollStaff.length} onClick={() => openAdjustment("deduction")} className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Plus size={15} aria-hidden="true" />Record deductions</button>
-          <button type="button" disabled={!canRecord || loading || !payrollStaff.length} onClick={() => { setError(""); setNotice(""); resetPayment(); setShowPayment(true); }} className="inline-flex items-center gap-2 rounded px-4 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />Record monthly payment</button>
+          <button type="button" disabled={!canRecord || loading || !configuredPayrollStaff.length} onClick={() => { setError(""); setNotice(""); resetPayment(); setShowPayment(true); }} className="inline-flex items-center gap-2 rounded px-4 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />Record monthly payment</button>
         </div>
       </header>
 
@@ -229,6 +231,7 @@ export default function Paychecks() {
 
       {error && <div role="alert" className="mx-6 mt-4 rounded border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
       {notice && <div role="status" className="mx-6 mt-4 rounded border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">{notice}</div>}
+      {!loading && canRecord && payrollStaff.length > 0 && configuredPayrollStaff.length === 0 && <div role="status" className="mx-6 mt-4 rounded border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm" style={{ color: "var(--foreground)" }}>No payroll employee has a configured base salary. A Chairman, CEO, or General Manager must set pay arrangements in Users &amp; Roles before a monthly paycheck can be recorded. You can still record benefits and deductions for payroll staff.</div>}
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="finance-table-scroll rounded border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-225 text-sm">
@@ -274,7 +277,7 @@ export default function Paychecks() {
         <form onSubmit={recordPayment} className="max-h-[92dvh] w-full max-w-3xl overflow-y-auto rounded border p-5 sm:p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
           <div className="mb-5 flex items-start justify-between gap-4"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Record monthly payment</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Weekly transport allowance is converted to a monthly benefit and paid from its selected account.</p></div><button type="button" disabled={saving} onClick={() => setShowPayment(false)} aria-label="Close payment form" className="px-2 text-lg" style={{ color: "var(--muted-foreground)" }}>×</button></div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Employee<SearchableSelect required ariaLabel="Search payroll employee" value={staffMemberId} onChange={(id) => { const member = payrollStaff.find((staffMember) => staffMember.id === id); setStaffMemberId(id); setBaseSalary(member ? String(member.base_salary) : ""); setAccountId(member?.weekly_transport_allowance ? member.transport_account_id ?? "" : ""); }} options={staffOptions} placeholder="Type a name or staff ID" className="mt-1 normal-case tracking-normal" /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Employee<SearchableSelect required ariaLabel="Search payroll employee" value={staffMemberId} onChange={(id) => { const member = configuredPayrollStaff.find((staffMember) => staffMember.id === id); setStaffMemberId(id); setBaseSalary(member ? String(member.base_salary) : ""); setAccountId(member?.weekly_transport_allowance ? member.transport_account_id ?? "" : ""); }} options={paycheckStaffOptions} placeholder="Type a name or staff ID" className="mt-1 normal-case tracking-normal" /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Pay month<input required type="month" value={payPeriod.slice(0, 7)} onChange={(event) => setPayPeriod(`${event.target.value}-01`)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Base salary (UGX/month)<input required readOnly type="number" min="0.01" step="0.01" value={baseSalary} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none read-only:opacity-80" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment date<input required type="date" max={today()} value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
@@ -288,7 +291,7 @@ export default function Paychecks() {
             <div className="mt-2 flex flex-wrap justify-between gap-2 border-t pt-2 font-700" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><span>Estimated net pay</span><span>{formatMoney(netEstimate)}</span></div>
           </div>
           {error && <div role="alert" className="mt-4 rounded border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
-          <div className="mt-6 flex flex-wrap justify-end gap-3"><button type="button" disabled={saving} onClick={() => setShowPayment(false)} className="rounded border px-4 py-2.5 text-sm disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button><button type="submit" disabled={saving || !staff.length || !accountId} className="rounded px-5 py-2.5 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Recording payment…" : "Save payment and generate payslip"}</button></div>
+          <div className="mt-6 flex flex-wrap justify-end gap-3"><button type="button" disabled={saving} onClick={() => setShowPayment(false)} className="rounded border px-4 py-2.5 text-sm disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button><button type="submit" disabled={saving || !staffMemberId || !accountId || !configuredPayrollStaff.length} className="rounded px-5 py-2.5 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Recording payment…" : "Save payment and generate payslip"}</button></div>
         </form>
       </div>}
 

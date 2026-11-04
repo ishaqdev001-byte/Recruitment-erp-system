@@ -262,6 +262,15 @@ export async function POST(request: Request) {
         { error: "Choose a valid expense-request action." },
         { status: 400, headers },
       )
+    if (
+      body.action === "cashout" &&
+      (access.roleName !== "Finance Manager" ||
+        !access.permissions["expense_requests.cashout"])
+    )
+      return NextResponse.json(
+        { error: "Only a Finance Manager with cash-out permission can pay an authorized expense request." },
+        { status: 403, headers },
+      )
 
     const requestId = typeof body.requestId === "string" ? body.requestId : ""
     const comment = typeof body.comment === "string" ? body.comment.trim() : ""

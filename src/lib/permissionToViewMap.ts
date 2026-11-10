@@ -117,6 +117,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "communications.whatsapp.read": new Set(["communications"]),
   "communications.whatsapp.send": new Set(["communications"]),
   "communications.whatsapp.manage": new Set(["communications"]),
+  "communications.agent_notes.view": new Set(["communications"]),
 
   // Roles management
   "roles.manage": new Set(["users", "settings"]),

@@ -109,6 +109,7 @@ export async function GET() {
       { data: canManageCandidateSources, error: sourcePermissionError },
       { data: canUpdateCandidateStages, error: stagePermissionError },
       { data: canSubmitCandidatesToProjects, error: projectSubmissionPermissionError },
+      { data: canSendSms, error: smsPermissionError },
     ] = await Promise.all([
       supabase.rpc("current_user_has_company_permission", {
         requested_company_id: membership.company_id,
@@ -141,8 +142,12 @@ export async function GET() {
         requested_company_id: membership.company_id,
         requested_permission: "candidates.project_submit",
       }),
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "communications.sms.send",
+      }),
     ]);
-    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || sourcePermissionError || stagePermissionError || projectSubmissionPermissionError) {
+    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || sourcePermissionError || stagePermissionError || projectSubmissionPermissionError || smsPermissionError) {
       return NextResponse.json({ error: "Unable to verify candidate access." }, { status: 503, headers });
     }
     if (agentFinancePermissionError) {
@@ -197,6 +202,9 @@ export async function GET() {
         canRegisterCandidates: (Boolean(canRegisterCandidates) || Boolean(canCreateCandidates)) && canRegister,
         canManageCandidateSources: Boolean(canManageCandidateSources),
         canManagePassportStatus,
+        canSendBulkSms:
+          Boolean(canSendSms) &&
+          roleName.trim().toLocaleLowerCase() !== "recruitment agent",
         isAgent,
       },
     }, { headers });

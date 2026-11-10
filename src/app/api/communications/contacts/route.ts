@@ -10,8 +10,14 @@ export async function GET(request: Request) {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return NextResponse.json({ error: "Authentication required." }, { status: 401, headers });
     const { data: membership, error: membershipError } = await supabase.from("company_memberships")
-      .select("company_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
+      .select("company_id, role_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
     if (membershipError || !membership) return NextResponse.json({ error: "Active company membership not found." }, { status: 403, headers });
+    const { data: role, error: roleError } = await supabase.from("company_roles").select("name")
+      .eq("company_id", membership.company_id).eq("id", membership.role_id).maybeSingle();
+    if (roleError || !role) return NextResponse.json({ error: "Your company role could not be resolved." }, { status: 503, headers });
+    if (role.name.trim().toLowerCase() === "recruitment agent") {
+      return NextResponse.json({ error: "Recruitment Agents can view only their agent notes in Communications." }, { status: 403, headers });
+    }
     const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
       requested_company_id: membership.company_id,
       requested_permission: "communications.sms.send",

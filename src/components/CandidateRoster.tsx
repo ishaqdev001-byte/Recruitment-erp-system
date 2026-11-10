@@ -3,9 +3,11 @@ import { useEffect, useRef, useState, type FormEvent } from "react"
 import {
   ArrowRight,
   Eye,
+  MessageSquareText,
   Paperclip,
   Pencil,
   RefreshCw,
+  Send,
   UserPlus,
   X,
 } from "lucide-react"
@@ -604,6 +606,8 @@ export default function CandidateRoster({
 
     canManagePassportStatus?: boolean
 
+    canSendBulkSms?: boolean
+
     isAgent?: boolean
 
     canViewActivityByRole?: boolean
@@ -684,6 +688,14 @@ export default function CandidateRoster({
   const [error, setError] = useState("")
 
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [showBulkSms, setShowBulkSms] = useState(false)
+  const [bulkSmsMessage, setBulkSmsMessage] = useState("")
+  const [bulkSmsRequestId, setBulkSmsRequestId] = useState("")
+  const [bulkSmsSending, setBulkSmsSending] = useState(false)
+  const [bulkSmsAlreadySent, setBulkSmsAlreadySent] = useState(false)
+  const [bulkSmsCanRetryNotes, setBulkSmsCanRetryNotes] = useState(false)
+  const [bulkSmsError, setBulkSmsError] = useState("")
+  const [bulkSmsNotice, setBulkSmsNotice] = useState("")
 
   const [drawerCandidate, setDrawerCandidate] =
     useState<CandidateRecord | null>(null)
@@ -1042,6 +1054,66 @@ export default function CandidateRoster({
             ]),
           ],
     )
+  }
+
+  const canSelectCandidates =
+    canManageCandidateWorkflow || Boolean(permissions.canSendBulkSms)
+
+  const sendBulkSms = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!permissions.canSendBulkSms || !selectedIds.length || bulkSmsSending) return
+
+    setBulkSmsSending(true)
+    setBulkSmsError("")
+    try {
+      const response = await fetch("/api/candidates/bulk-sms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: bulkSmsRequestId,
+          candidateIds: selectedIds,
+          message: bulkSmsMessage,
+        }),
+      })
+      const payload = (await response.json()) as {
+        error?: string
+        recipients?: number
+        agentsNotified?: number
+        smsSent?: boolean
+        retryable?: boolean
+        status?: string
+      }
+      if (!response.ok) {
+        if (payload.smsSent) {
+          setBulkSmsAlreadySent(true)
+          setBulkSmsCanRetryNotes(payload.retryable === true)
+          setBulkSmsError(payload.error ?? "SMS sent, but agent notes could not be delivered.")
+        } else {
+          if (payload.status !== "unknown" && payload.status !== "sending")
+            setBulkSmsRequestId(crypto.randomUUID())
+          throw new Error(payload.error ?? "Unable to send candidate SMS.")
+        }
+        return
+      }
+
+      setShowBulkSms(false)
+      setSelectedIds([])
+      setBulkSmsMessage("")
+      setBulkSmsAlreadySent(false)
+      setBulkSmsCanRetryNotes(false)
+      setBulkSmsNotice(
+        `SMS sent to ${payload.recipients ?? 0} number${payload.recipients === 1 ? "" : "s"}. ${payload.agentsNotified ?? 0} agent${payload.agentsNotified === 1 ? " received" : "s received"} a note.`,
+      )
+      window.setTimeout(() => setBulkSmsNotice(""), 6000)
+    } catch (sendError) {
+      setBulkSmsError(
+        sendError instanceof Error
+          ? sendError.message
+          : "Unable to send candidate SMS.",
+      )
+    } finally {
+      setBulkSmsSending(false)
+    }
   }
 
   const canStartWorkflowUpdate = (candidate: CandidateRecord) => {
@@ -1642,6 +1714,30 @@ export default function CandidateRoster({
               color: "var(--foreground)",
             }}
           />
+          {activePage === "pipeline" &&
+            permissions.canSendBulkSms &&
+            selectedIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!bulkSmsAlreadySent) {
+                    setBulkSmsMessage("")
+                    setBulkSmsError("")
+                    setBulkSmsCanRetryNotes(false)
+                    setBulkSmsRequestId(crypto.randomUUID())
+                  }
+                  setShowBulkSms(true)
+                }}
+                className="inline-flex shrink-0 items-center gap-2 rounded px-3 py-2 text-sm font-600"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                <MessageSquareText size={15} aria-hidden="true" />
+                Send SMS
+              </button>
+            )}
           {activePage === "pipeline" ? (
             permissions.canRegisterCandidates && (
               <button
@@ -1683,6 +1779,19 @@ export default function CandidateRoster({
           )}
         </div>
       </header>
+      {bulkSmsNotice && (
+        <div
+          role="status"
+          className="fixed bottom-4 right-4 z-[80] max-w-sm rounded-lg border px-4 py-3 text-sm shadow-xl"
+          style={{
+            background: "var(--card)",
+            borderColor: "var(--border)",
+            color: "var(--foreground)",
+          }}
+        >
+          {bulkSmsNotice}
+        </div>
+      )}
       {activePage === "pipeline" && (
         <div
           className="flex flex-wrap items-center gap-2 border-b px-6 py-3"
@@ -1795,12 +1904,13 @@ export default function CandidateRoster({
                   style={{ color: "var(--muted-foreground)" }}
                 >
                   <div className="flex items-center gap-2">
-                    {canManageCandidateWorkflow && (
+                    {canSelectCandidates && (
                       <input
                         type="checkbox"
                         aria-label="Select all visible candidates"
                         checked={allFilteredSelected}
                         onChange={toggleFiltered}
+                        disabled={bulkSmsAlreadySent}
                         className="h-4 w-4 accent-amber-700"
                       />
                     )}
@@ -1901,12 +2011,13 @@ export default function CandidateRoster({
                 >
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1">
-                      {canManageCandidateWorkflow && (
+                      {canSelectCandidates && (
                         <input
                           type="checkbox"
                           aria-label={`Select ${candidate.first_name} ${candidate.last_name}`}
                           checked={selectedIds.includes(candidate.id)}
                           onChange={() => toggleCandidate(candidate.id)}
+                          disabled={bulkSmsAlreadySent}
                           className="h-4 w-4 accent-amber-700"
                         />
                       )}
@@ -1916,7 +2027,11 @@ export default function CandidateRoster({
                           setViewingCandidate(candidateFromRecord(candidate))
                         }
                         aria-label={`View details for ${candidate.first_name} ${candidate.last_name}`}
-                        title="View candidate details"
+                        title={
+                          canViewFinance
+                            ? "View candidate and finance details"
+                            : "View candidate details"
+                        }
                         className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
                         style={{ color: "var(--foreground)" }}
                       >
@@ -2737,9 +2852,112 @@ export default function CandidateRoster({
           onClose={() => setDrawerCandidate(null)}
         />
       )}
+      {showBulkSms && (
+        <div
+          className="fixed inset-0 z-[75] flex items-center justify-center bg-black/55 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              !bulkSmsSending &&
+              !(bulkSmsAlreadySent && bulkSmsCanRetryNotes)
+            )
+              setShowBulkSms(false)
+          }}
+        >
+          <form
+            onSubmit={(event) => void sendBulkSms(event)}
+            className="w-full max-w-lg rounded-xl border p-5 shadow-2xl sm:p-6"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>
+              Send SMS to selected candidates
+            </h2>
+            <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
+              This sends immediately to the selected candidates’ registered phone numbers. Their assigned Recruitment Agents will also receive an in-app notification and a note in Communications.
+            </p>
+            <div
+              className="mt-4 rounded border px-3 py-2 text-xs"
+              style={{
+                background: "var(--secondary)",
+                borderColor: "var(--border)",
+                color: "var(--foreground)",
+              }}
+            >
+              {selectedIds.length} candidate{selectedIds.length === 1 ? "" : "s"} selected. SMSUG charges the account balance. Maximum 3,000 candidates per send.
+            </div>
+            <label className="mt-4 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>
+              Message
+              <textarea
+                autoFocus
+                required
+                maxLength={480}
+                rows={6}
+                disabled={bulkSmsAlreadySent || bulkSmsSending}
+                value={bulkSmsMessage}
+                onChange={(event) => setBulkSmsMessage(event.target.value)}
+                placeholder="Type the message to send…"
+                className="mt-1 w-full resize-y rounded border px-3 py-2.5 text-sm outline-none"
+                style={{
+                  background: "var(--secondary)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+              <span className="mt-1 block text-right font-normal">
+                {bulkSmsMessage.length}/480
+              </span>
+            </label>
+            {bulkSmsError && (
+              <p role="alert" className="mt-3 text-sm text-red-500">
+                {bulkSmsError}
+              </p>
+            )}
+            <footer className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={
+                  bulkSmsSending ||
+                  (bulkSmsAlreadySent && bulkSmsCanRetryNotes)
+                }
+                onClick={() => setShowBulkSms(false)}
+                className="rounded border px-4 py-2 text-sm disabled:opacity-50"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={
+                  bulkSmsSending ||
+                  (bulkSmsAlreadySent && !bulkSmsCanRetryNotes) ||
+                  selectedIds.length > 3000 ||
+                  !bulkSmsMessage.trim() ||
+                  bulkSmsMessage.length > 480
+                }
+                className="inline-flex items-center gap-2 rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                <Send size={14} aria-hidden="true" />
+                {bulkSmsSending
+                  ? "Sending…"
+                  : bulkSmsAlreadySent
+                    ? bulkSmsCanRetryNotes
+                      ? "Retry agent note delivery"
+                      : "SMS sent — check Sent Messages"
+                    : "Send SMS"}
+              </button>
+            </footer>
+          </form>
+        </div>
+      )}
       {viewingCandidate && (
         <CandidateReadOnlyDetails
           candidate={viewingCandidate}
+          canViewFinance={canViewFinance}
           onClose={() => setViewingCandidate(null)}
         />
       )}

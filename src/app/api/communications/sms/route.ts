@@ -37,6 +37,9 @@ async function getSmsAccess(): Promise<SmsAccess | { error: string; status: 401 
   const { data: role, error: roleError } = await supabase.from("company_roles").select("name")
     .eq("id", membership.role_id).eq("company_id", membership.company_id).maybeSingle();
   if (roleError || !role) return { error: "Your company role could not be resolved.", status: 403 };
+  if (role.name.trim().toLowerCase() === "recruitment agent") {
+    return { error: "Recruitment Agents can view only their agent notes in Communications.", status: 403 };
+  }
   return { supabase, companyId: membership.company_id, userId: user.id, roleName: role.name };
 }
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 
 import { Eye, X } from "lucide-react"
 
@@ -202,6 +202,37 @@ const sections: {
   },
 ]
 
+type CandidateFinance = {
+  summary: {
+    totalInvoiced: number
+    totalDeposits: number
+    totalPaid: number
+    outstandingBalance: number
+  }
+  invoices: {
+    id: string
+    invoice_number: string
+    description: string
+    amount: number
+    status: string
+    issued_at: string
+  }[]
+  receipts: {
+    id: string
+    receipt_number: string
+    category: string
+    amount: number
+    payment_method: string
+    received_at: string
+  }[]
+  payments: {
+    id: string
+    invoice_id: string
+    amount: number
+    paid_at: string
+  }[]
+}
+
 function displayValue(value: Candidate[keyof Candidate]) {
   if (Array.isArray(value)) return value.length ? value.join(", ") : "—"
 
@@ -214,13 +245,17 @@ function displayValue(value: Candidate[keyof Candidate]) {
 
 export default function CandidateReadOnlyDetails({
   candidate,
-
+  canViewFinance,
   onClose,
 }: {
   candidate: Candidate
-
+  canViewFinance: boolean
   onClose: () => void
 }) {
+  const [finance, setFinance] = useState<CandidateFinance | null>(null)
+  const [financeLoading, setFinanceLoading] = useState(false)
+  const [financeError, setFinanceError] = useState("")
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose()
@@ -230,6 +265,44 @@ export default function CandidateReadOnlyDetails({
 
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [onClose])
+
+  useEffect(() => {
+    if (!canViewFinance) return
+
+    const controller = new AbortController()
+    setFinanceLoading(true)
+    setFinanceError("")
+
+    void fetch(`/api/candidates/${encodeURIComponent(candidate.id)}/finance`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = (await response.json()) as CandidateFinance & {
+          error?: string
+        }
+        if (!response.ok)
+          throw new Error(payload.error ?? "Unable to load candidate finance records.")
+        setFinance(payload)
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return
+        setFinanceError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load candidate finance records.",
+        )
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setFinanceLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [candidate.id, canViewFinance])
+
+  const formatAmount = (value: number) => `UGX ${Number(value).toLocaleString()}`
+  const formatDate = (value: string) =>
+    value ? new Date(value).toLocaleDateString() : "—"
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-3 sm:p-6">
@@ -314,6 +387,100 @@ export default function CandidateReadOnlyDetails({
               </dl>
             </section>
           ))}
+          {canViewFinance && (
+            <section aria-labelledby="candidate-read-only-finance-heading">
+              <h3
+                id="candidate-read-only-finance-heading"
+                className="mb-3 border-b pb-2 text-xs font-700 uppercase tracking-wider"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--muted-foreground)",
+                }}
+              >
+                Candidate finance
+              </h3>
+              {financeLoading ? (
+                <p role="status" className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+                  Loading finance records…
+                </p>
+              ) : financeError ? (
+                <p role="alert" className="text-sm text-red-500">{financeError}</p>
+              ) : finance ? (
+                <div className="space-y-5">
+                  <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {[
+                      ["Total invoiced", finance.summary.totalInvoiced],
+                      ["Total deposited", finance.summary.totalDeposits],
+                      ["Total paid", finance.summary.totalPaid],
+                      ["Outstanding balance", finance.summary.outstandingBalance],
+                    ].map(([label, amount]) => (
+                      <div
+                        key={label}
+                        className="rounded border p-3"
+                        style={{ background: "var(--secondary)", borderColor: "var(--border)" }}
+                      >
+                        <dt className="text-[11px] font-600" style={{ color: "var(--muted-foreground)" }}>
+                          {label}
+                        </dt>
+                        <dd className="mt-1 text-sm font-700" style={{ color: "var(--foreground)" }}>
+                          {formatAmount(Number(amount))}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="mb-2 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>
+                        Invoices
+                      </h4>
+                      {finance.invoices.length ? (
+                        <div className="overflow-x-auto rounded border" style={{ borderColor: "var(--border)" }}>
+                          <table className="w-full min-w-[560px] text-left text-xs">
+                            <thead><tr className="border-b" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
+                              <th className="px-3 py-2">Invoice</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Date</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Status</th>
+                            </tr></thead>
+                            <tbody>{finance.invoices.map((invoice) => (
+                              <tr key={invoice.id} className="border-b last:border-b-0" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                                <td className="px-3 py-2">{invoice.invoice_number || "—"}</td><td className="px-3 py-2">{invoice.description || "—"}</td><td className="px-3 py-2">{formatDate(invoice.issued_at)}</td><td className="px-3 py-2 whitespace-nowrap">{formatAmount(invoice.amount)}</td><td className="px-3 py-2">{invoice.status}</td>
+                              </tr>
+                            ))}</tbody>
+                          </table>
+                        </div>
+                      ) : <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>No candidate invoices found.</p>}
+                    </div>
+
+                    <div>
+                      <h4 className="mb-2 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>
+                        Deposits and invoice payments
+                      </h4>
+                      {finance.receipts.length + finance.payments.length ? (
+                        <div className="overflow-x-auto rounded border" style={{ borderColor: "var(--border)" }}>
+                          <table className="w-full min-w-[500px] text-left text-xs">
+                            <thead><tr className="border-b" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
+                              <th className="px-3 py-2">Date</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Reference</th><th className="px-3 py-2">Method</th><th className="px-3 py-2">Amount</th>
+                            </tr></thead>
+                            <tbody>
+                              {finance.receipts.map((receipt) => (
+                                <tr key={`receipt-${receipt.id}`} className="border-b last:border-b-0" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                                  <td className="px-3 py-2">{formatDate(receipt.received_at)}</td><td className="px-3 py-2">{receipt.category || "Deposit"}</td><td className="px-3 py-2">{receipt.receipt_number || "—"}</td><td className="px-3 py-2">{receipt.payment_method || "—"}</td><td className="px-3 py-2 whitespace-nowrap">{formatAmount(receipt.amount)}</td>
+                                </tr>
+                              ))}
+                              {finance.payments.map((payment) => (
+                                <tr key={`payment-${payment.id}`} className="border-b last:border-b-0" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                                  <td className="px-3 py-2">{formatDate(payment.paid_at)}</td><td className="px-3 py-2">Invoice payment</td><td className="px-3 py-2">{payment.invoice_id}</td><td className="px-3 py-2">—</td><td className="px-3 py-2 whitespace-nowrap">{formatAmount(payment.amount)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>No deposits or invoice payments found.</p>}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          )}
         </div>
         <footer
           className="flex justify-end border-t px-4 py-3 sm:px-6"

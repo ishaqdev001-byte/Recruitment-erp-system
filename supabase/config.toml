@@ -373,6 +373,33 @@ authorization_url_path = "/oauth/consent"
 # Allow dynamic client registration
 allow_dynamic_registration = false
 
+[cron]
+enabled = true
+
+[[cron.schedules]]
+name = "check-approval-reminders"
+description = "Check for approval requests pending > 2 hours and send reminders"
+schedule = "*/30 * * * *"  # Every 30 minutes
+http_method = "post"
+request_body = '{}'
+function_name = "approvals-check-reminders"
+
+[[cron.schedules]]
+name = "process-sms-queue"
+description = "Process pending SMS messages from queue and send via SMSUG"
+schedule = "*/5 * * * *"  # Every 5 minutes
+http_method = "post"
+request_body = '{}'
+function_name = "communications-sms-send-queue"
+
+[[cron.schedules]]
+name = "process-email-queue"
+description = "Process pending emails from queue and send via Resend"
+schedule = "*/5 * * * *"  # Every 5 minutes
+http_method = "post"
+request_body = '{}'
+function_name = "communications-email-send-queue"
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

@@ -19,6 +19,7 @@ export function isRecruitmentAgentRole(roleName: string): boolean {
 export function isRecruitmentAgentRestrictedPermission(
   permissionCode: string,
 ): boolean {
+  if (permissionCode === "communications.agent_notes.view") return false
   return (
     permissionCode === "human_resources.view" ||
     [

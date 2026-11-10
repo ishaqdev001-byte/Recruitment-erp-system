@@ -234,6 +234,10 @@ const Tasks = dynamic(() => import("./components/TaskWorkspace"), {
 const Communications = dynamic(() => import("./components/Communications"), {
   loading: PageLoading,
 })
+const AgentCommunicationsNotes = dynamic(
+  () => import("./components/AgentCommunicationsNotes"),
+  { loading: PageLoading },
+)
 const StaffChat = dynamic(() => import("./components/StaffChat"), {
   loading: PageLoading,
 })
@@ -529,6 +533,11 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
           roleAccessSettings(roleRecord.access_settings, roleRecord.name)
             .agent_visa_finance),
     )
+    .concat(
+      isRecruitmentAgentRole(roleRecord.name)
+        ? ["communications.agent_notes.view"]
+        : [],
+    )
 
   const knownRoles: WorkspaceRole[] = [
     "Chairman",
@@ -779,7 +788,20 @@ async function checkMustChangePassword(userId: string): Promise<boolean> {
 }
 
 export default function App() {
-  const [view, setView] = useState<View>("dashboard")
+  // Restore last active view from localStorage, default to dashboard
+  const getInitialView = (): View => {
+    try {
+      const saved = localStorage.getItem("kilax.lastActiveView")
+      if (saved && (saved as View)) {
+        return saved as View
+      }
+    } catch {
+      // localStorage not available
+    }
+    return "dashboard"
+  }
+
+  const [view, setView] = useState<View>(getInitialView())
   const [staffChatReturnView, setStaffChatReturnView] = useState<View>("dashboard")
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [role, setRole] = useState<WorkspaceRole>("Chairman")
@@ -1338,6 +1360,16 @@ export default function App() {
             setRole(workspace.user.role)
             const mustChange = await checkMustChangePassword(workspace.user.id)
             if (!cancelled) setMustChangePassword(mustChange)
+            
+            // Restore last active view when session is restored from storage
+            try {
+              const lastView = localStorage.getItem("kilax.lastActiveView") as View | null
+              if (lastView && canAccessView(lastView, workspace.session.permissions)) {
+                if (!cancelled) setView(lastView)
+              }
+            } catch {
+              // localStorage not available
+            }
           }
         }
       } catch (error) {
@@ -1544,6 +1576,18 @@ export default function App() {
       setView(getDefaultViewByPermissions(session.permissions, session.role))
     }
   }, [session, view])
+
+  // Save current view to localStorage when user is authenticated and view changes
+  useEffect(() => {
+    if (session) {
+      try {
+        localStorage.setItem("kilax.lastActiveView", view)
+      } catch {
+        // localStorage not available, silently fail
+      }
+    }
+  }, [session, view])
+
   useEffect(() => {
     if (!session) return
 
@@ -2248,6 +2292,19 @@ export default function App() {
       setSession(workspace.session)
       const mustChange = await checkMustChangePassword(workspace.user.id)
       setMustChangePassword(mustChange)
+      
+      // Restore last active view after login
+      try {
+        const lastView = localStorage.getItem("kilax.lastActiveView") as View | null
+        if (lastView && canAccessView(lastView, workspace.session.permissions)) {
+          setView(lastView)
+        } else {
+          setView(getDefaultViewByPermissions(workspace.session.permissions, workspace.user.role))
+        }
+      } catch {
+        setView("dashboard")
+      }
+      
       if (registrationResult?.registrationCompleted) {
         setRegistrationCompletion({
           welcomeEmailSent: registrationResult.welcomeEmailSent,
@@ -2366,6 +2423,19 @@ export default function App() {
       setSession(workspace.session)
       setResetPassword("")
       setResetPasswordConfirm("")
+      
+      // Restore last active view after password reset
+      try {
+        const lastView = localStorage.getItem("kilax.lastActiveView") as View | null
+        if (lastView && canAccessView(lastView, workspace.session.permissions)) {
+          setView(lastView)
+        } else {
+          setView(getDefaultViewByPermissions(workspace.session.permissions, workspace.user.role))
+        }
+      } catch {
+        setView("dashboard")
+      }
+      
       const completedUrl = new URL(window.location.href)
       completedUrl.searchParams.delete("view")
       completedUrl.searchParams.delete("code")
@@ -2463,6 +2533,19 @@ export default function App() {
       setSession(workspace.session)
       setInvitePassword("")
       setInvitePasswordConfirm("")
+      
+      // Restore last active view after invitation acceptance
+      try {
+        const lastView = localStorage.getItem("kilax.lastActiveView") as View | null
+        if (lastView && canAccessView(lastView, workspace.session.permissions)) {
+          setView(lastView)
+        } else {
+          setView(getDefaultViewByPermissions(workspace.session.permissions, workspace.user.role))
+        }
+      } catch {
+        setView("dashboard")
+      }
+      
       const completedUrl = new URL(window.location.href)
       completedUrl.searchParams.delete("invite")
       completedUrl.searchParams.delete("invitation_id")
@@ -2520,6 +2603,20 @@ export default function App() {
       setMustChangePassword(false)
       setForcedNewPassword("")
       setForcedNewPasswordConfirm("")
+      
+      // Restore last active view after forced password change
+      if (session) {
+        try {
+          const lastView = localStorage.getItem("kilax.lastActiveView") as View | null
+          if (lastView && canAccessView(lastView, session.permissions)) {
+            setView(lastView)
+          } else {
+            setView(getDefaultViewByPermissions(session.permissions, session.role))
+          }
+        } catch {
+          setView("dashboard")
+        }
+      }
     } catch (error) {
       setForcedPasswordError(
         error instanceof
@@ -2783,7 +2880,9 @@ export default function App() {
       case "tasks":
         return <Tasks />
       case "communications":
-        return (
+        return isRecruitmentAgentRole(session?.role ?? "") ? (
+          <AgentCommunicationsNotes />
+        ) : (
           <Communications
             userName={session?.userName ?? "Team"}
             companyName={session?.companyName ?? ""}

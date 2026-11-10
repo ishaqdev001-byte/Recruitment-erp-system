@@ -12,13 +12,26 @@ export async function GET() {
     if (authError || !user) return NextResponse.json({ error: "Authentication required." }, { status: 401, headers });
 
     const { data: membership, error: membershipError } = await supabase.from("company_memberships")
-      .select("company_id")
+      .select("company_id, role_id")
       .eq("user_id", user.id)
       .eq("status", "active")
       .limit(1)
       .maybeSingle();
     if (membershipError || !membership) {
       return NextResponse.json({ error: "Active company membership not found." }, { status: 403, headers });
+    }
+
+    const { data: role, error: roleError } = await supabase.from("company_roles")
+      .select("name")
+      .eq("company_id", membership.company_id)
+      .eq("id", membership.role_id)
+      .maybeSingle();
+    if (roleError) {
+      console.error("System communication role lookup failed", roleError);
+      return NextResponse.json({ error: "Unable to verify communications access." }, { status: 503, headers });
+    }
+    if (role?.name.trim().toLocaleLowerCase() === "recruitment agent") {
+      return NextResponse.json({ error: "Recruitment Agents can view only messages sent to their agent notes inbox." }, { status: 403, headers });
     }
 
     const { data: canView, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {

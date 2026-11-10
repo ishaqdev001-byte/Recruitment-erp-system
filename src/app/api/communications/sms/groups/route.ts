@@ -12,8 +12,14 @@ async function getSmsAccess() {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
   const { data: membership, error: membershipError } = await supabase.from("company_memberships")
-    .select("company_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
+    .select("company_id, role_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
+  const { data: role, error: roleError } = await supabase.from("company_roles").select("name")
+    .eq("company_id", membership.company_id).eq("id", membership.role_id).maybeSingle();
+  if (roleError || !role) return { error: "Your company role could not be resolved.", status: 403 as const };
+  if (role.name.trim().toLowerCase() === "recruitment agent") {
+    return { error: "Recruitment Agents can view only their agent notes in Communications.", status: 403 as const };
+  }
   const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
     requested_company_id: membership.company_id,
     requested_permission: "communications.sms.send",

@@ -99,7 +99,16 @@ function slugBase(companyName: string) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Unexpected company setup error.";
+  if (error instanceof Error) return error.message;
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return "Unexpected company setup error.";
 }
 
 function escapeHtml(value: string) {

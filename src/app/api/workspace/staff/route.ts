@@ -255,6 +255,48 @@ export async function PATCH(request: Request) {
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Invalid staff update." }, { status: 400, headers });
 
+    if (body.action === "update-individual-id") {
+      if (!access.canChangeSequence) {
+        return NextResponse.json({ error: "Only the Chairman can change staff IDs." }, { status: 403, headers });
+      }
+
+      const id = typeof body.id === "string" ? body.id : "";
+      const prefix = typeof body.prefix === "string" ? body.prefix.trim().toUpperCase() : "";
+      const sequence = Number(body.sequence);
+      if (!/^[0-9a-f-]{36}$/i.test(id)
+        || !/^[A-Z][A-Z0-9]{0,9}$/.test(prefix)
+        || !Number.isInteger(sequence)
+        || sequence < 1
+        || sequence > 999998) {
+        return NextResponse.json({ error: "Enter a valid staff ID number using the configured prefix." }, { status: 400, headers });
+      }
+
+      const { data: staffId, error: staffIdError } = await access.admin.rpc(
+        "update_company_staff_id_for_member",
+        {
+          requested_company_id: access.companyId,
+          requested_staff_member_id: id,
+          requested_sequence: sequence,
+          requested_prefix: prefix,
+          requested_branch_id: access.isMainBranch ? null : access.branchId,
+          requested_updated_by: access.userId,
+        },
+      );
+      if (staffIdError?.code === "23505") {
+        return NextResponse.json({ error: "That staff ID is already assigned. Choose another number." }, { status: 409, headers });
+      }
+      if (staffIdError?.code === "40001") {
+        return NextResponse.json({ error: "The staff ID prefix changed. Refresh the staff list and try again." }, { status: 409, headers });
+      }
+      if (staffIdError?.code === "P0002") {
+        return NextResponse.json({ error: "Staff member or ID settings not found." }, { status: 404, headers });
+      }
+      if (staffIdError) throw staffIdError;
+      if (!staffId) throw new Error("Staff ID update returned no result.");
+
+      return NextResponse.json({ staffId }, { headers });
+    }
+
     if (body.action === "configure-ids") {
       if (!access.canChangeSequence) return NextResponse.json({ error: "Only the Chairman can change staff ID settings." }, { status: 403, headers });
       const prefix = typeof body.prefix === "string" ? body.prefix.trim().toUpperCase() : "";

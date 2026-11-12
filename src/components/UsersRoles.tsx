@@ -443,6 +443,9 @@ export default function UsersRoles({
     useState<StaffIdSettings | null>(null)
   const [staffIdPrefix, setStaffIdPrefix] = useState("")
   const [staffNextSequence, setStaffNextSequence] = useState(1)
+  const [editingStaffNumber, setEditingStaffNumber] =
+    useState<StaffRecord | null>(null)
+  const [staffIdNumber, setStaffIdNumber] = useState("")
   const [userName, setUserName] = useState("")
   const [userEmail, setUserEmail] = useState("")
   const [userRoleId, setUserRoleId] = useState("")
@@ -1083,6 +1086,67 @@ export default function UsersRoles({
           Error
           ? saveError.message
           : "Unable to update staff ID settings.",
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const openEditStaffId = (member: StaffRecord) => {
+    const prefix = staffIdSettings?.prefix
+    const number = prefix && member.staffId.startsWith(`${prefix}-`)
+      ? member.staffId.slice(prefix.length + 1)
+      : ""
+    setEditingStaffNumber(member)
+    setStaffIdNumber(number)
+    setError("")
+    setNotice("")
+  }
+
+  const submitIndividualStaffId = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault()
+    if (!editingStaffNumber || !staffIdSettings) return
+    setSaving(true)
+    setError("")
+    setNotice("")
+    try {
+      const response = await fetch("/api/workspace/staff", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update-individual-id",
+          id: editingStaffNumber.id,
+          prefix: staffIdSettings.prefix,
+          sequence: Number(staffIdNumber),
+        }),
+      })
+      const result = (await response.json()) as {
+        staffId?: string
+        error?: string
+      }
+      if (!response.ok)
+        throw new Error(result.error ?? "Unable to update staff ID.")
+      if (!result.staffId)
+        throw new Error("The updated staff ID was not returned.")
+      const updatedStaffId = result.staffId
+
+      setStaffMembers((current) =>
+        current.map((member) =>
+          member.id === editingStaffNumber.id
+            ? { ...member, staffId: updatedStaffId }
+            : member,
+        ),
+      )
+      setEditingStaffNumber(null)
+      setReloadKey((key) => key + 1)
+      setNotice(`Staff ID updated to ${updatedStaffId}.`)
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to update staff ID.",
       )
     } finally {
       setSaving(false)
@@ -1868,6 +1932,13 @@ export default function UsersRoles({
                       starting from the sequence you enter. New staff added
                       later will continue the sequence automatically.
                     </p>
+                    <p
+                      className="mt-1 text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Use Edit ID beside a staff member to change only that
+                      person&apos;s number.
+                    </p>
                   </div>
                   <div className="flex flex-wrap items-end gap-3">
                     <label
@@ -1984,7 +2055,23 @@ export default function UsersRoles({
                           className="px-4 py-3 font-600"
                           style={{ color: "var(--foreground)" }}
                         >
-                          {member.staffId}
+                          <div className="flex items-center gap-2">
+                            <span>{member.staffId}</span>
+                            {staffIdSettings?.canChangeSequence && (
+                              <button
+                                type="button"
+                                onClick={() => openEditStaffId(member)}
+                                className="rounded border px-2 py-1 text-xs font-500"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "var(--muted-foreground)",
+                                }}
+                                aria-label={`Edit staff ID for ${member.name}`}
+                              >
+                                Edit ID
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td
                           className="px-4 py-3"
@@ -2730,6 +2817,103 @@ export default function UsersRoles({
                 }}
               >
                 Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {editingStaffNumber && staffIdSettings && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !saving)
+              setEditingStaffNumber(null)
+          }}
+        >
+          <form
+            onSubmit={submitIndividualStaffId}
+            className="w-full max-w-md rounded border p-6"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <h2
+              className="mb-2 text-lg font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Edit staff ID
+            </h2>
+            <p
+              className="mb-5 text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Change the ID number for {editingStaffNumber.name}. The configured
+              prefix remains {staffIdSettings.prefix}, and other staff IDs will
+              not change.
+            </p>
+            <label
+              className="block text-xs font-700 uppercase tracking-wider"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Staff ID number
+              <div className="mt-1 flex items-center gap-2">
+                <span
+                  className="rounded border px-3 py-2 text-sm"
+                  style={{
+                    background: "var(--secondary)",
+                    borderColor: "var(--border)",
+                    color: "var(--foreground)",
+                  }}
+                >
+                  {staffIdSettings.prefix}-
+                </span>
+                <input
+                  autoFocus
+                  required
+                  type="number"
+                  min={1}
+                  max={999998}
+                  step={1}
+                  value={staffIdNumber}
+                  onChange={(event) => setStaffIdNumber(event.target.value)}
+                  className="w-full rounded border px-3 py-2 text-sm outline-none"
+                  style={fieldStyle}
+                />
+              </div>
+            </label>
+            <p
+              className="mt-2 text-xs"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              New ID preview:{" "}
+              <strong style={{ color: "var(--foreground)" }}>
+                {staffIdSettings.prefix}-
+                {String(Number(staffIdNumber) || 0).padStart(4, "0")}
+              </strong>
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setEditingStaffNumber(null)}
+                className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving || !staffIdNumber}
+                className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                  borderColor: "var(--primary)",
+                }}
+              >
+                {saving ? "Saving…" : "Save staff ID"}
               </button>
             </div>
           </form>

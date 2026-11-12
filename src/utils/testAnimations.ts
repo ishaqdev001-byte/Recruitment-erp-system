@@ -196,7 +196,8 @@ export function checkWebVitals() {
     // LCP (Largest Contentful Paint)
     const lcpObserver = new PerformanceObserver((list) => {
       const entries = list.getEntries();
-      const lastEntry = entries[entries.length - 1];
+      const lastEntry = entries[entries.length - 1] as LargestContentfulPaint | undefined;
+      if (!lastEntry) return;
       console.log(
         `✅ LCP: ${(lastEntry.renderTime || lastEntry.loadTime).toFixed(2)}ms`,
       );
@@ -301,7 +302,7 @@ export function logAnimationConfig() {
 if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
   (window as any).testAnimations = {
     testAll: runAllTests,
-    testAnimations,
+    testAnimations: testAllAnimations,
     testDebounce,
     testCache: testResponseCache,
     testLazyLoading,

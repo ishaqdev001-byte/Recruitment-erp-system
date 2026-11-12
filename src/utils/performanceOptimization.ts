@@ -153,8 +153,8 @@ export function measureWebVitals() {
       // Largest Contentful Paint
       const lcpObserver = new PerformanceObserver((list) => {
         const entries = list.getEntries();
-        const lastEntry = entries[entries.length - 1];
-        if (process.env.NODE_ENV === 'development') {
+        const lastEntry = entries[entries.length - 1] as LargestContentfulPaint | undefined;
+        if (process.env.NODE_ENV === 'development' && lastEntry) {
           console.log('LCP:', lastEntry.renderTime || lastEntry.loadTime);
         }
       });

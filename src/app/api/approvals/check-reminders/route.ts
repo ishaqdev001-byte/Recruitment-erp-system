@@ -15,7 +15,7 @@ const headers = { "Cache-Control": "private, no-store" };
  *
  * Cron config in supabase/config.toml:
  * [functions."approvals-check-reminders"]
- * schedule = "*/30 * * * *"  # Every 30 minutes
+ * schedule = "0,30 * * * *"  # Every 30 minutes
  */
 
 function createAdminClient() {
@@ -50,7 +50,7 @@ async function checkAndSendReminders() {
 
     const { data: pendingExpenses, error: expenseError } = await admin
       .from("expense_requests")
-      .select("id, company_id, request_number, expense_name, created_by, stage_entered_at, next_approver_id")
+      .select("id, company_id, request_number, expense_name, created_by, stage_entered_at, next_approver_id, status")
       .eq("staged_visibility", true)
       .in("status", ["pending_general_manager_review", "pending_finance_verification", "pending_chairman_authorization", "authorized_pending_cashout"])
       .lt("stage_entered_at", twoHoursAgo);

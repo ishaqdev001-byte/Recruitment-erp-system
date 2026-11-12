@@ -69,7 +69,7 @@ export class ChunkedUploader {
         chunks,
         uploadUrl,
         uploadId,
-        (progress) => {
+        () => {
           uploadedChunks++;
           const percent = (uploadedChunks / totalChunks) * 100;
           options.onProgress?.(percent);
@@ -263,7 +263,12 @@ export class OptimizedDownloader {
       }
     }
 
-    const blob = new Blob(chunks);
+    const blobParts = chunks.map((chunk) => {
+      const buffer = new ArrayBuffer(chunk.byteLength);
+      new Uint8Array(buffer).set(chunk);
+      return buffer;
+    });
+    const blob = new Blob(blobParts);
     this.saveFile(blob, fileName);
   }
 

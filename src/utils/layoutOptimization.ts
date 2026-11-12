@@ -166,7 +166,7 @@ export function createResponsiveImage(options: ResponsiveImageOptions) {
 
   if (options.width) img.width = options.width;
   if (options.height) img.height = options.height;
-  if (options.srcSet) img.srcSet = options.srcSet;
+  if (options.srcSet) img.srcset = options.srcSet;
   if (options.sizes) img.sizes = options.sizes;
 
   // Add loading="lazy" for native lazy loading

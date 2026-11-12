@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 
+declare global {
+  interface Window {
+    gtag?: (
+      command: 'event',
+      eventName: string,
+      eventParams: { page_title: string; value: number },
+    ) => void;
+  }
+}
+
 type AnimationType = 'fadeIn' | 'slideInUp' | 'slideInLeft' | 'slideInRight';
 
 export function usePageTransition(dependencies: any[] = []) {

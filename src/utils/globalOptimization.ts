@@ -49,14 +49,12 @@ function optimizeNetworkRequests() {
   const requestCache = new Map<string, { data: any; timestamp: number }>();
   const cacheTTL = 5 * 60 * 1000; // 5 minutes
 
-  window.fetch = function (...args: any[]) {
-    const url = args[0];
-    const options = args[1] || {};
+  window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
+    const url = input instanceof Request ? input.url : input.toString();
+    const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
 
     // Don't cache non-GET requests or mutations
-    if (options.method && options.method !== 'GET') {
-      return originalFetch.apply(this, args);
-    }
+    if (method !== 'GET') return originalFetch(input, init);
 
     // Check cache for GET requests
     const now = Date.now();
@@ -75,10 +73,10 @@ function optimizeNetworkRequests() {
 
     // Make actual request
     return originalFetch
-      .apply(this, args)
+      .call(window, input, init)
       .then((response) => {
         // Cache successful GET responses
-        if (response.ok && options.method !== 'POST' && options.method !== 'PUT') {
+        if (response.ok) {
           response
             .clone()
             .json()

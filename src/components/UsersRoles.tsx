@@ -8,6 +8,7 @@ import { useEffect, useState, type FormEvent } from "react"
 import { SearchableSelect } from "./SearchableSelect"
 import {
   DEFAULT_ROLE_ACCESS_SETTINGS,
+  isPrimaryAdministratorRole,
   isRecruitmentAgentRestrictedPermission,
   isRecruitmentAgentRole,
   roleAccessSettings,
@@ -504,7 +505,18 @@ export default function UsersRoles({
             canManageRoles: Boolean(result.canManageRoles),
           })
           setSelectedRoleId((current) => current || result.roles[0]?.id || "")
-          setUserRoleId((current) => current || result.roles[0]?.id || "")
+          setUserRoleId((current) => {
+            const currentRole = result.roles.find(
+              (role) => role.id === current,
+            )
+            if (currentRole && !isPrimaryAdministratorRole(currentRole.name))
+              return current
+            return (
+              result.roles.find(
+                (role) => !isPrimaryAdministratorRole(role.name),
+              )?.id || ""
+            )
+          })
         }
         if (!cancelled) {
           const availableBranches =
@@ -1325,10 +1337,7 @@ export default function UsersRoles({
                             {data.roles
                               .filter(
                                 (role) =>
-                                  role.name !==
-                                    "Company Owner / Primary Administrator" &&
-                                  role.name !==
-                                    "Primary Administrator",
+                                  !isPrimaryAdministratorRole(role.name),
                               )
                               .map((role) => (
                                 <option key={role.id} value={role.id}>
@@ -1581,13 +1590,7 @@ export default function UsersRoles({
                   Company roles
                 </h2>
                 {data.roles.map((role) => {
-                  const isPrimaryAdmin =
-                    role.name ===
-                      "Chairman" ||
-                    role.name ===
-                      "Company Owner / Primary Administrator" ||
-                    role.name ===
-                      "Primary Administrator"
+                  const isPrimaryAdmin = isPrimaryAdministratorRole(role.name)
                   const memberCount = data.users.filter(
                     (u) =>
                       u.roleId ===
@@ -2218,11 +2221,15 @@ export default function UsersRoles({
                   className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                   style={fieldStyle}
                 >
-                  {data.roles.map((role) => (
-                    <option key={role.id} value={role.id}>
-                      {role.name}
-                    </option>
-                  ))}
+                  {data.roles
+                    .filter(
+                      (role) => !isPrimaryAdministratorRole(role.name),
+                    )
+                    .map((role) => (
+                      <option key={role.id} value={role.id}>
+                        {role.name}
+                      </option>
+                    ))}
                 </select>
               </label>
               <label
@@ -2560,9 +2567,7 @@ export default function UsersRoles({
                   style={{ color: "var(--muted-foreground)" }}
                 >
                   Role name{" "}
-                  {(editingRole.name ===
-                    "Company Owner / Primary Administrator" ||
-                    editingRole.name === "Primary Administrator") && (
+                  {isPrimaryAdministratorRole(editingRole.name) && (
                     <span
                       className="ml-1 text-xs normal-case tracking-normal"
                       style={{ color: "var(--muted-foreground)" }}
@@ -2577,9 +2582,7 @@ export default function UsersRoles({
                   value={roleEditName}
                   onChange={(e) => setRoleEditName(e.target.value)}
                   disabled={
-                    editingRole.name ===
-                      "Company Owner / Primary Administrator" ||
-                    editingRole.name === "Primary Administrator"
+                    isPrimaryAdministratorRole(editingRole.name)
                   }
                   className="mt-1 w-full rounded border px-3 py-2.5 text-sm outline-none disabled:opacity-50"
                   style={fieldStyle}

@@ -12,6 +12,14 @@ export const DEFAULT_ROLE_ACCESS_SETTINGS: RoleAccessSettings = {
   agent_visa_finance: false,
 }
 
+export function isPrimaryAdministratorRole(roleName: string): boolean {
+  return [
+    "chairman",
+    "company owner / primary administrator",
+    "primary administrator",
+  ].includes(roleName.trim().toLowerCase())
+}
+
 export function isRecruitmentAgentRole(roleName: string): boolean {
   return roleName.trim().toLowerCase() === "recruitment agent"
 }

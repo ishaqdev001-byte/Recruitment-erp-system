@@ -4,6 +4,7 @@ import { NextResponse } from "next/server"
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import {
+  isPrimaryAdministratorRole,
   isRecruitmentAgentRestrictedPermission,
   isRecruitmentAgentRole,
   isRoleAccessSettings,
@@ -469,8 +470,7 @@ export async function POST(request: Request) {
 
       if (
         userId === company.primary_admin_user_id ||
-        targetRoleName === "Company Owner / Primary Administrator" ||
-        targetRoleName === "Primary Administrator"
+        isPrimaryAdministratorRole(targetRoleName ?? "")
       ) {
         return NextResponse.json(
           {
@@ -612,7 +612,7 @@ export async function POST(request: Request) {
 
         const { data: role, error: roleError } = await admin
           .from("company_roles")
-          .select("id")
+          .select("id, name")
           .eq("id", roleId)
           .eq("company_id", access.companyId)
           .maybeSingle()
@@ -620,6 +620,15 @@ export async function POST(request: Request) {
         if (roleError || !role)
           return NextResponse.json(
             { error: "Selected role does not belong to this company." },
+            { status: 400, headers: responseHeaders },
+          )
+
+        if (isPrimaryAdministratorRole(role.name))
+          return NextResponse.json(
+            {
+              error:
+                "The primary administrator role is reserved for the protected company user.",
+            },
             { status: 400, headers: responseHeaders },
           )
 
@@ -1040,9 +1049,7 @@ export async function POST(request: Request) {
 
       // The primary admin role name is immutable — protect it from rename
 
-      const isPrimaryAdminRole =
-        existingRole.name === "Company Owner / Primary Administrator" ||
-        existingRole.name === "Primary Administrator"
+      const isPrimaryAdminRole = isPrimaryAdministratorRole(existingRole.name)
 
       if (isPrimaryAdminRole && name !== existingRole.name) {
         return NextResponse.json(
@@ -1180,8 +1187,7 @@ export async function POST(request: Request) {
       // Primary admin role and its system-default partners cannot be deleted
 
       if (
-        existingRole.name === "Company Owner / Primary Administrator" ||
-        existingRole.name === "Primary Administrator"
+        isPrimaryAdministratorRole(existingRole.name)
       ) {
         return NextResponse.json(
           { error: "The primary administrator role cannot be deleted." },
@@ -1304,8 +1310,7 @@ export async function POST(request: Request) {
         )
 
       if (
-        role.name === "Company Owner / Primary Administrator" ||
-        role.name === "Primary Administrator"
+        isPrimaryAdministratorRole(role.name)
       ) {
         return NextResponse.json(
           {
@@ -1383,22 +1388,44 @@ export async function POST(request: Request) {
         .from("profiles")
         .upsert({ id: userId, display_name: name, phone, branch })
 
-      const { error: membershipError } = profileError
-        ? { error: profileError }
-        : await admin.from("company_memberships").insert({
-            company_id: access.companyId,
+      if (profileError) {
+        console.error("Workspace invitation profile creation failed", profileError)
+        const { error: cleanupError } = await admin.auth.admin.deleteUser(userId)
+        if (cleanupError) {
+          console.error(
+            "Failed to remove invited account after profile creation failed",
+            cleanupError,
+          )
+        }
 
-            user_id: userId,
+        return NextResponse.json(
+          {
+            error:
+              "Invitation was created but the user's profile could not be saved.",
+          },
+          { status: 500, headers: responseHeaders },
+        )
+      }
 
-            role_id: roleId,
-
-            branch_id: branchId,
-
-            status: "active",
-          })
+      const { error: membershipError } = await admin
+        .from("company_memberships")
+        .insert({
+          company_id: access.companyId,
+          user_id: userId,
+          role_id: roleId,
+          branch_id: branchId,
+          status: "active",
+        })
 
       if (membershipError) {
-        await admin.auth.admin.deleteUser(userId)
+        console.error("Workspace invitation membership assignment failed", membershipError)
+        const { error: cleanupError } = await admin.auth.admin.deleteUser(userId)
+        if (cleanupError) {
+          console.error(
+            "Failed to remove invited account after membership assignment failed",
+            cleanupError,
+          )
+        }
 
         return NextResponse.json(
           {
@@ -1531,8 +1558,7 @@ export async function POST(request: Request) {
         )
 
       if (
-        role.name === "Company Owner / Primary Administrator" ||
-        role.name === "Primary Administrator"
+        isPrimaryAdministratorRole(role.name)
       ) {
         return NextResponse.json(
           {

@@ -10,10 +10,15 @@
  * Determines the default landing view for a user based on their permissions.
  * Prioritizes views in order of common use: finance → candidates → users → dashboard.
  */
+
 // Then finance views
+
 // Keep recruitment access available without displacing finance as the landing view.
+
 // Then user/role management
+
 // Then tasks
+
 // Default to dashboard
 
 // Load the user's role permissions from the database
@@ -23,29 +28,60 @@
 /** After a successful login, check whether the user must change their password. */
 
 // Forced first-login password change (set by admin using default-password flow)
+
 // Restore active view from the URL path on load / hard refresh.
+
 // Supports /view, /company-slug/view, and legacy ?v= / ?view= params.
+
 // Handle both /view and /company-slug/view path formats
+
 // Also handle auth paths: /login → stay on login, /register → go to register, etc.
 
 // Set default view based on permissions on first session load
+
 // Only set if currently on dashboard
+
 // Only trigger on session change (new company/login)
 
 // Refresh access on database changes, with a short polling fallback if Realtime is unavailable.
 
 // Keep URL path and document title in sync with the active view.
+
 // Uses pushState so the browser back button navigates between views.
 
 // Human-readable view titles for the browser tab
 
 // Sync URL when not logged in (auth views get their own paths)
+
 // Don't overwrite special invite/recovery links that have query params
 
 // Handle browser back / forward buttons
+
 // Resolve the view from either state or URL path
+
 // Guard: Check if the current view is allowed for this user's permissions
+
 /* Forced password change overlay (first-login after admin creates user with default password) */ /* Settings header */ /* Tab bar */ /* Tab content */
+
+// Restore last active view from localStorage, default to dashboard
+
+// localStorage not available
+
+// Restore last active view when session is restored from storage
+
+// localStorage not available
+
+// Save current view to localStorage when user is authenticated and view changes
+
+// localStorage not available, silently fail
+
+// Restore last active view after login
+
+// Restore last active view after password reset
+
+// Restore last active view after invitation acceptance
+
+// Restore last active view after forced password change
 
 import {
   useCallback,
@@ -55,19 +91,26 @@ import {
   useState,
   type FormEvent,
 } from "react"
+
 import dynamic from "next/dynamic"
+
 import { Eye, EyeOff } from "lucide-react"
+
 import type { User } from "@supabase/supabase-js"
+
 import {
   createSupabaseBrowserClient,
   createSupabasePasswordVerificationClient,
 } from "./lib/supabase/browser"
+
 import { canAccessView, isMedicalOnlyUser } from "./lib/permissionToViewMap"
+
 import {
   isRecruitmentAgentRestrictedPermission,
   isRecruitmentAgentRole,
   roleAccessSettings,
 } from "./lib/role-access-settings"
+
 function KilaxLogo({ size = 64 }: { size?: number }) {
   return (
     <img
@@ -79,6 +122,7 @@ function KilaxLogo({ size = 64 }: { size?: number }) {
     />
   )
 }
+
 function KilaxWordmark() {
   return (
     <div className="flex items-center gap-3">
@@ -119,19 +163,26 @@ async function removeBrowserPushSubscription() {
     )
   )
     return
+
   const registration = await navigator.serviceWorker.getRegistration("/")
+
   const subscription = await registration?.pushManager.getSubscription()
+
   if (!subscription) return
 
   try {
     const response = await fetch("/api/notifications/push", {
       method: "DELETE",
+
       headers: { "Content-Type": "application/json" },
+
       body: JSON.stringify({ endpoint: subscription.endpoint }),
     })
+
     if (!response.ok)
       console.error(
         "Unable to remove the signed-in user's push subscription.",
+
         response.status,
       )
   } finally {
@@ -142,170 +193,263 @@ async function removeBrowserPushSubscription() {
 const Sidebar = dynamic(() => import("./components/Sidebar"), {
   loading: PageLoading,
 })
+
 const TopBar = dynamic(() => import("./components/TopBar"), {
   loading: PageLoading,
 })
+
 const Dashboard = dynamic(() => import("./components/LiveDashboard"), {
   loading: PageLoading,
 })
+
 const Candidates = dynamic(() => import("./components/CandidateRoster"), {
   loading: PageLoading,
 })
+
 const UsersRoles = dynamic(() => import("./components/UsersRoles"), {
   loading: PageLoading,
 })
+
 const Agents = dynamic(() => import("./components/Agents"), {
   loading: PageLoading,
 })
+
 const Finance = dynamic(() => import("./components/Finance"), {
   loading: PageLoading,
 })
+
 const Invoices = dynamic(() => import("./components/InvoiceWorkspace"), {
   loading: PageLoading,
 })
+
 const AgentFinance = dynamic(
   () => import("./components/AgentFinanceWorkspace"),
+
   { loading: PageLoading },
 )
+
 const Payments = dynamic(() => import("./components/Payments"), {
   loading: PageLoading,
 })
+
 const Paychecks = dynamic(() => import("./components/Paychecks"), {
   loading: PageLoading,
 })
+
 const AccountsWorkspace = dynamic(
   () => import("./components/AccountsWorkspace"),
+
   { loading: PageLoading },
 )
+
 const Partners = dynamic(() => import("./components/Partners"), {
   loading: PageLoading,
 })
+
 const Contractors = dynamic(() => import("./components/Employers"), {
   loading: PageLoading,
 })
+
 const Projects = dynamic(() => import("./components/Projects"), {
   loading: PageLoading,
 })
+
 const PassportCustody = dynamic(
   () => import("./components/PassportCustodyWorkspace"),
+
   { loading: PageLoading },
 )
+
 const Attendance = dynamic(() => import("./components/Attendance"), {
   loading: PageLoading,
 })
+
 const LeaveManagement = dynamic(() => import("./components/LeaveManagement"), {
   loading: PageLoading,
 })
+
 const HumanResources = dynamic(() => import("./components/HumanResources"), {
   loading: PageLoading,
 })
+
 const MedicalAppointments = dynamic(
   () => import("./components/MedicalAppointments"),
+
   { loading: PageLoading },
 )
+
 const MedicalManagement = dynamic(
   () => import("./components/MedicalManagement"),
+
   { loading: PageLoading },
 )
+
 const HospitalManagement = dynamic(
   () => import("./components/HospitalManagement"),
+
   { loading: PageLoading },
 )
+
 const Branches = dynamic(() => import("./components/Branches"), {
   loading: PageLoading,
 })
+
 const BranchApprovals = dynamic(() => import("./components/BranchApprovals"), {
   loading: PageLoading,
 })
+
 const Requisitions = dynamic(
   () => import("./components/RequisitionsWorkspace"),
+
   { loading: PageLoading },
 )
+
 const ExpenseRequests = dynamic(
   () => import("./components/ExpenseRequests"),
+
   { loading: PageLoading },
 )
+
 const CompanyDrive = dynamic(() => import("./components/CompanyDrive"), {
   loading: PageLoading,
 })
+
 const Tasks = dynamic(() => import("./components/TaskWorkspace"), {
   loading: PageLoading,
 })
+
 const Communications = dynamic(() => import("./components/Communications"), {
   loading: PageLoading,
 })
+
 const AgentCommunicationsNotes = dynamic(
   () => import("./components/AgentCommunicationsNotes"),
+
   { loading: PageLoading },
 )
+
 const StaffChat = dynamic(() => import("./components/StaffChat"), {
   loading: PageLoading,
 })
+
 const AIAssistant = dynamic(() => import("./components/AIAssistant"), {
   loading: PageLoading,
 })
+
 const Reports = dynamic(() => import("./components/Reports"), {
   loading: PageLoading,
 })
+
 const DepartmentsSettings = dynamic(
   () => import("./components/settings/DepartmentsSettings"),
+
   { loading: PageLoading },
 )
+
 const CurrenciesSettings = dynamic(
   () => import("./components/settings/CurrenciesSettings"),
+
   { loading: PageLoading },
 )
+
 const ServiceProvidersSettings = dynamic(
   () => import("./components/settings/ServiceProvidersSettings"),
+
   { loading: PageLoading },
 )
+
+const ExpenseCategoriesSettings = dynamic(
+  () => import("./components/settings/ExpenseCategoriesSettings"),
+
+  { loading: PageLoading },
+)
+
 const AttendanceSettings = dynamic(
   () => import("./components/AttendanceSettings"),
+
   { loading: PageLoading },
 )
+
 const ProfileSettings = dynamic(
   () => import("./components/ProfileSettings"),
+
   { loading: PageLoading },
 )
 
 const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
   dashboard: () => import("./components/LiveDashboard"),
+
   candidates: () => import("./components/CandidateRoster"),
+
   "candidate-inquiries": () => import("./components/CandidateRoster"),
+
   agents: () => import("./components/Agents"),
+
   suppliers: () => import("./components/Partners"),
+
   finance: () => import("./components/Finance"),
+
   accounts: () => import("./components/AccountsWorkspace"),
+
   invoices: () => import("./components/InvoiceWorkspace"),
+
   "agent-invoices": () => import("./components/AgentFinanceWorkspace"),
+
   payments: () => import("./components/Payments"),
+
   paychecks: () => import("./components/Paychecks"),
+
   contractors: () => import("./components/Employers"),
+
   projects: () => import("./components/Projects"),
+
   attendance: () => import("./components/Attendance"),
+
   leave: () => import("./components/LeaveManagement"),
+
   "human-resources": () => import("./components/HumanResources"),
+
   "medical-appointments": () => import("./components/MedicalAppointments"),
+
   "medical-management": () => import("./components/MedicalManagement"),
+
   "hospital-management": () => import("./components/HospitalManagement"),
+
   branches: () => import("./components/Branches"),
+
   approvals: () => import("./components/BranchApprovals"),
+
   requisitions: () => import("./components/RequisitionsWorkspace"),
+
   "expense-requests": () => import("./components/ExpenseRequests"),
+
   tasks: () => import("./components/TaskWorkspace"),
+
   reports: () => import("./components/Reports"),
+
   communications: () => import("./components/Communications"),
+
   "staff-chat": () => import("./components/StaffChat"),
+
   ai: () => import("./components/AIAssistant"),
+
   passport: () => import("./components/PassportCustodyWorkspace"),
+
   documents: () => import("./components/CompanyDrive"),
+
   users: () => import("./components/UsersRoles"),
+
   profile: () => import("./components/ProfileSettings"),
+
   settings: () =>
     Promise.all([
       import("./components/settings/DepartmentsSettings"),
+
       import("./components/settings/CurrenciesSettings"),
+
       import("./components/settings/ServiceProvidersSettings"),
+
+      import("./components/settings/ExpenseCategoriesSettings"),
     ]),
 }
 
@@ -318,154 +462,246 @@ export type View = "dashboard" | "candidates" | "candidate-inquiries" | "agents"
 export type WorkspaceRole = "Chairman" | "General Manager" | "CEO" | "Recruitment Manager" | "Recruitment Agent" | "Finance Manager" | "Finance Officer" | "Document Officer" | "Medical Officer" | "Doctor" | "Supervisor" | "Viewer" | "Administration Officer" | "Manager" | "Finance User"
 
 type Theme = "dark" | "light"
+
 type Density = "comfortable" | "compact"
+
 type CompanyAccountStatus = "Active" | "Pending Verification" | "Suspended" | "Deactivated" | "Trial" | "Subscription Required"
 
 type CompanyProfile = {
   id: string
+
   name: string
+
   slug: string
+
   registrationNumber: string
+
   country: string
+
   city: string
+
   officeAddress: string
+
   phone: string
+
   email: string
+
   website: string
+
   logo: string
+
   status: CompanyAccountStatus
+
   currency: string
+
   timezone: string
 }
 
 type CompanyUser = {
   id: string
+
   name: string
+
   title: string
+
   email: string
+
   phone: string
+
   password: string
+
   role: WorkspaceRole
+
   companyId: string
+
   status: "active" | "invited"
 }
 
 type Session = {
   companyId: string
+
   companySlug: string
+
   userId: string
+
   roleId: string
+
   userName: string
+
   userAvatarUrl: string
+
   companyName: string
+
   companyLogo: string
+
   role: WorkspaceRole
+
   onboarded: boolean
+
   branchId: string | null
+
   branchName: string
+
   isMainBranchUser: boolean
+
   permissions: string[]
 }
 
 type CompanyForm = {
   companyName: string
+
   registrationNumber: string
+
   country: string
+
   city: string
+
   officeAddress: string
+
   phone: string
+
   email: string
+
   website: string
+
   fullName: string
+
   position: string
+
   adminEmail: string
+
   adminPhone: string
+
   password: string
+
   confirmPassword: string
+
   logoFile?: File
+
   logoPreview?: string
 }
 
 const emptyCompanyForm: CompanyForm = {
   companyName: "",
+
   registrationNumber: "",
+
   country: "",
+
   city: "",
+
   officeAddress: "",
+
   phone: "",
+
   email: "",
+
   website: "",
+
   fullName: "",
+
   position: "",
+
   adminEmail: "",
+
   adminPhone: "",
+
   password: "",
+
   confirmPassword: "",
+
   logoFile: undefined,
+
   logoPreview: undefined,
 }
 
 const formatInitials = (value: string) =>
   value
+
     .split(" ")
+
     .filter(Boolean)
+
     .slice(0, 2)
+
     .map(
       (part) =>
         part[0]?.toUpperCase() ??
         "",
     )
+
     .join("") ||
   "R"
 
 const IDLE_LOCK_TIMEOUT_MS = 10 * 60 * 1000
+
 const toCompanySlug = (name: string) =>
   name
+
     .toLowerCase()
+
     .replace(/[^a-z0-9]+/g, "-")
+
     .replace(/^-+|-+$/g, "") ||
   "company"
+
 function getDefaultViewByPermissions(
   permissions: string[],
+
   roleName?: string,
 ): View {
   if (isMedicalOnlyUser(permissions)) {
     return "medical-management"
   }
+
   if (permissions.some((p) => p.startsWith("finance."))) {
     return "finance"
   }
+
   if (permissions.some((p) => p.startsWith("candidates."))) {
     return "candidates"
   }
+
   if (permissions.includes("users.view")) {
     return "users"
   }
+
   if (permissions.includes("tasks.view")) {
     return "tasks"
   }
+
   return "dashboard"
 }
 
 async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   const supabase = createSupabaseBrowserClient()
+
   let membershipQuery = supabase
+
     .from("company_memberships")
+
     .select(
       "company_id, company:companies!inner(id, name, slug, status, logo_url, registration_number, country, city, office_address, phone, email, website), role:company_roles!inner(id, name, access_settings)",
     )
+
     .eq("user_id", user.id)
+
     .eq("status", "active")
+
   if (targetCompanyId)
     membershipQuery = membershipQuery.eq("company_id", targetCompanyId)
+
   const { data: membership, error } = await membershipQuery
+
     .limit(1)
+
     .maybeSingle()
 
   if (error)
     throw new Error(
       "Unable to load your company membership. Check the Supabase migration and RLS policies.",
     )
+
   if (!membership)
     throw new Error(
       "Your Supabase account has no active company membership yet.",
@@ -473,58 +709,96 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
   const companyValue = membership.company as unknown as {
     id: string
+
     name: string
+
     slug: string
+
     status: string
+
     logo_url: string
+
     registration_number: string
+
     country: string
+
     city: string
+
     office_address: string
+
     phone: string
+
     email: string
+
     website: string
   } | {
     id: string
+
     name: string
+
     slug: string
+
     status: string
+
     logo_url: string
+
     registration_number: string
+
     country: string
+
     city: string
+
     office_address: string
+
     phone: string
+
     email: string
+
     website: string
   }[]
+
   const companyRecord = Array.isArray(companyValue)
     ? companyValue[0]
     : companyValue
+
   const roleValue = membership.role as unknown as {
     id: string
+
     name: string
+
     access_settings: unknown
   } | { id: string; name: string; access_settings: unknown }[]
+
   const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue
+
   if (!companyRecord || !roleRecord)
     throw new Error("Your company membership is incomplete.")
+
   const { data: rolePerms, error: permsError } = await supabase
+
     .from("role_permissions")
+
     .select("permission_code")
+
     .eq("role_id", roleRecord.id)
+
     .eq("company_id", companyRecord.id)
+
   if (permsError) throw new Error("Unable to load your permissions.")
+
   const permissions = (
     rolePerms ??
     []
   )
+
     .map((rp) => rp.permission_code)
+
     .filter(
       (permission) =>
         !isRecruitmentAgentRole(roleRecord.name) ||
         !isRecruitmentAgentRestrictedPermission(permission),
     )
+
     .filter(
       (permission) =>
         permission !==
@@ -533,6 +807,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
           roleAccessSettings(roleRecord.access_settings, roleRecord.name)
             .agent_visa_finance),
     )
+
     .concat(
       isRecruitmentAgentRole(roleRecord.name)
         ? ["communications.agent_notes.view"]
@@ -541,21 +816,36 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
   const knownRoles: WorkspaceRole[] = [
     "Chairman",
+
     "General Manager",
+
     "CEO",
+
     "Recruitment Manager",
+
     "Recruitment Agent",
+
     "Finance Manager",
+
     "Finance Officer",
+
     "Document Officer",
+
     "Medical Officer",
+
     "Doctor",
+
     "Supervisor",
+
     "Viewer",
+
     "Administration Officer",
+
     "Manager",
+
     "Finance User",
   ]
+
   const role =
     knownRoles.find(
       (candidateRole) =>
@@ -563,61 +853,93 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
         roleRecord.name,
     ) ??
     roleRecord.name as WorkspaceRole
+
   const { data: membershipBranch } = await supabase
+
     .from("company_memberships")
+
     .select("branch_id, branch:company_branches(id, name, is_main_branch)")
+
     .eq("user_id", user.id)
+
     .eq("company_id", companyRecord.id)
+
     .eq("status", "active")
+
     .limit(1)
+
     .maybeSingle()
+
   const branchValue = membershipBranch?.branch as unknown as {
     id: string
+
     name: string
+
     is_main_branch: boolean
   } | { id: string; name: string; is_main_branch: boolean }[] | null
+
   const branchRecord = Array.isArray(branchValue) ? branchValue[0] : branchValue
+
   const branchName =
     branchRecord?.name ??
     "Main Branch"
+
   const isMainBranchUser =
     !branchRecord ||
     Boolean(branchRecord.is_main_branch)
+
   const { data: userProfile, error: userProfileError } = await supabase
+
     .from("profiles")
+
     .select("display_name, phone, avatar_url")
+
     .eq("id", user.id)
+
     .maybeSingle()
+
   if (userProfileError)
     console.error("Current user profile lookup failed", userProfileError)
+
   const company: CompanyProfile = {
     id: companyRecord.id,
+
     name: companyRecord.name,
+
     slug: companyRecord.slug,
+
     registrationNumber:
       companyRecord.registration_number ??
       "",
+
     country:
       companyRecord.country ??
       "",
+
     city:
       companyRecord.city ??
       "",
+
     officeAddress:
       companyRecord.office_address ??
       "",
+
     phone:
       companyRecord.phone ??
       "",
+
     email:
       companyRecord.email ??
       "",
+
     website:
       companyRecord.website ??
       "",
+
     logo:
       companyRecord.logo_url ??
       "",
+
     status:
       companyRecord.status ===
       "trial"
@@ -626,50 +948,80 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
             "active"
           ? "Active"
           : "Pending Verification",
+
     currency: "UGX",
+
     timezone: "Africa/Kampala",
   }
+
   const userName = String(
-    userProfile?.display_name || user.user_metadata?.full_name || user.email || "User",
+    userProfile?.display_name ||
+      user.user_metadata?.full_name ||
+      user.email ||
+      "User",
   )
+
   const companyUser: CompanyUser = {
     id: user.id,
+
     name: userName,
+
     title: role,
+
     email:
       user.email ??
       "",
+
     phone: String(userProfile?.phone ?? user.user_metadata?.phone ?? ""),
+
     password: "",
+
     role,
+
     companyId: company.id,
+
     status: "active",
   }
 
   return {
     company,
+
     user: companyUser,
+
     session: {
       companyId: company.id,
+
       companySlug: company.slug,
+
       userId: user.id,
+
       roleId: roleRecord.id,
+
       userName,
+
       userAvatarUrl: String(
         userProfile?.avatar_url ??
           user.user_metadata?.avatar_url ??
           user.user_metadata?.picture ??
           "",
       ),
+
       companyName: company.name,
+
       companyLogo: company.logo,
+
       role,
+
       onboarded: true,
+
       branchId:
         membershipBranch?.branch_id ??
         null,
+
       branchName,
+
       isMainBranchUser,
+
       permissions,
     } satisfies Session,
   }
@@ -677,9 +1029,13 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
 type CompanyRegistrationResult = {
   companyId: string
+
   registrationCompleted: boolean
+
   welcomeEmailSent: boolean
+
   welcomeEmailRecipientCount: number
+
   welcomeEmailError?: string
 }
 
@@ -687,16 +1043,21 @@ const pendingCompanyLogoStorageKey = "kilax.pendingCompanyRegistrationLogo"
 
 async function provisionPendingCompanyRegistration(
   user: User,
+
   options: { resendWelcomeEmail?: boolean } = {},
 ): Promise<CompanyRegistrationResult | null> {
   if (!user.user_metadata?.company_registration) return null
 
   const supabase = createSupabaseBrowserClient()
+
   const {
     data: { session: currentSession },
+
     error: sessionError,
   } = await supabase.auth.getSession()
+
   if (sessionError) throw sessionError
+
   if (!currentSession)
     throw new Error(
       "Sign in after verifying your email to finish setting up your company.",
@@ -704,43 +1065,57 @@ async function provisionPendingCompanyRegistration(
 
   const response = await fetch("/api/company-registration/provision", {
     method: "POST",
+
     headers: {
       Authorization: `Bearer ${currentSession.access_token}`,
+
       "Content-Type": "application/json",
     },
+
     body: JSON.stringify({
       resendWelcomeEmail:
         options.resendWelcomeEmail ??
         false,
+
       logoDataUrl: readPendingCompanyLogo(),
     }),
+
     cache: "no-store",
   })
+
   const result =
     (await response.json()) as Partial<CompanyRegistrationResult> & {
       error?: string
     }
+
   if (!response.ok || !result.companyId) {
     throw new Error(
       result.error ??
         "Unable to finish setting up your company workspace.",
     )
   }
+
   try {
     window.localStorage.removeItem(pendingCompanyLogoStorageKey)
   } catch (error) {
     console.error(
       "Unable to clear the pending company logo after registration.",
+
       error,
     )
   }
+
   return {
     companyId: result.companyId,
+
     registrationCompleted: Boolean(result.registrationCompleted),
+
     welcomeEmailSent: Boolean(result.welcomeEmailSent),
+
     welcomeEmailRecipientCount:
       result.welcomeEmailRecipientCount ??
       0,
+
     welcomeEmailError: result.welcomeEmailError,
   }
 }
@@ -750,8 +1125,11 @@ function readPendingCompanyLogo() {
     const pendingLogo = window.localStorage.getItem(
       pendingCompanyLogoStorageKey,
     )
+
     if (!pendingLogo) return null
+
     const parsed: unknown = JSON.parse(pendingLogo)
+
     if (
       !parsed ||
       typeof parsed !==
@@ -762,23 +1140,32 @@ function readPendingCompanyLogo() {
       )
     )
       return null
+
     return typeof parsed.dataUrl ===
       "string"
       ? parsed.dataUrl
       : null
   } catch (error) {
     console.error("Unable to read the pending company logo.", error)
+
     return null
   }
 }
+
 async function checkMustChangePassword(userId: string): Promise<boolean> {
   try {
     const supabase = createSupabaseBrowserClient()
+
     const { data } = await supabase
+
       .from("profiles")
+
       .select("must_change_password")
+
       .eq("id", userId)
+
       .maybeSingle()
+
     return Boolean(
       (data as { must_change_password?: boolean } | null)?.must_change_password,
     )
@@ -788,137 +1175,232 @@ async function checkMustChangePassword(userId: string): Promise<boolean> {
 }
 
 export default function App() {
-  // Restore last active view from localStorage, default to dashboard
   const getInitialView = (): View => {
     try {
       const saved = localStorage.getItem("kilax.lastActiveView")
-      if (saved && (saved as View)) {
+
+      if (saved && saved as View) {
         return saved as View
       }
-    } catch {
-      // localStorage not available
-    }
+    } catch {}
+
     return "dashboard"
   }
 
   const [view, setView] = useState<View>(getInitialView())
-  const [staffChatReturnView, setStaffChatReturnView] = useState<View>("dashboard")
+
+  const [staffChatReturnView, setStaffChatReturnView] =
+    useState<View>("dashboard")
+
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+
   const [role, setRole] = useState<WorkspaceRole>("Chairman")
+
   const [theme, setTheme] = useState<Theme>("dark")
+
   const [density, setDensity] = useState<Density>("comfortable")
+
   const [preferencesReady, setPreferencesReady] = useState(false)
 
   const [companies, setCompanies] = useState<CompanyProfile[]>([])
+
   const [users, setUsers] = useState<CompanyUser[]>([])
+
   const [session, setSession] = useState<Session | null>(null)
+
   const [hrPersonalDetailsComplete, setHrPersonalDetailsComplete] =
     useState<boolean | null>(null)
+
   const [hrProfileReminder, setHrProfileReminder] =
     useState<"profile_completion" | "information_review" | null>(null)
-  const [hrProfileUpdateRequired, setHrProfileUpdateRequired] =
-    useState(false)
+
+  const [hrProfileUpdateRequired, setHrProfileUpdateRequired] = useState(false)
+
   const [hrReminderSaving, setHrReminderSaving] = useState(false)
+
   const [hrReminderError, setHrReminderError] = useState("")
+
   const [authView, setAuthView] =
     useState<"landing" | "login" | "register" | "verify" | "invite" | "reset-password">(
       "login",
     )
+
   const [authLoading, setAuthLoading] = useState(true)
+
   const [companyForm, setCompanyForm] = useState<CompanyForm>(emptyCompanyForm)
+
   const [loginForm, setLoginForm] = useState({ email: "", password: "" })
+
   const [loginSubmitting, setLoginSubmitting] = useState(false)
+
   const [registerError, setRegisterError] = useState("")
+
   const [registerSubmitting, setRegisterSubmitting] = useState(false)
+
   const [registrationCompletion, setRegistrationCompletion] = useState<{
     welcomeEmailSent: boolean
+
     welcomeEmailRecipientCount: number
+
     welcomeEmailError?: string
   } | null>(null)
+
   const [loginError, setLoginError] = useState("")
+
   const [resetEmailSending, setResetEmailSending] = useState(false)
+
   const [resetEmailMessage, setResetEmailMessage] = useState("")
+
   const [resetPassword, setResetPassword] = useState("")
+
   const [resetPasswordConfirm, setResetPasswordConfirm] = useState("")
+
   const [resetPasswordEmail, setResetPasswordEmail] = useState("")
+
   const [resetPasswordError, setResetPasswordError] = useState("")
+
   const [resetPasswordSaving, setResetPasswordSaving] = useState(false)
+
   const [inviteEmail, setInviteEmail] = useState("")
+
   const [inviteId, setInviteId] = useState("")
+
   const [inviteCompanyId, setInviteCompanyId] = useState("")
+
   const [inviteCompanyName, setInviteCompanyName] = useState("")
+
   const [inviteRoleName, setInviteRoleName] = useState("")
+
   const [invitePassword, setInvitePassword] = useState("")
+
   const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("")
+
   const [inviteError, setInviteError] = useState("")
+
   const [inviteSaving, setInviteSaving] = useState(false)
+
   const [wizardStep, setWizardStep] = useState(0)
+
   const [mustChangePassword, setMustChangePassword] = useState(false)
+
   const [forcedNewPassword, setForcedNewPassword] = useState("")
+
   const [forcedNewPasswordConfirm, setForcedNewPasswordConfirm] = useState("")
+
   const [forcedPasswordSaving, setForcedPasswordSaving] = useState(false)
+
   const [forcedPasswordError, setForcedPasswordError] = useState("")
+
   const [forcedShowPassword, setForcedShowPassword] = useState(false)
+
   const [idleLocked, setIdleLocked] = useState(false)
+
   const [unlockPassword, setUnlockPassword] = useState("")
+
   const [unlockError, setUnlockError] = useState("")
+
   const [unlockSaving, setUnlockSaving] = useState(false)
+
   const [idleCancelSaving, setIdleCancelSaving] = useState(false)
+
   const idleLockedRef = useRef(false)
+
   const lastActivityAt = useRef(Date.now())
 
   const handleNavigate = useCallback(
     (nextView: View) => {
       if (
         session &&
-        session.role !== "Chairman" &&
-        (hrPersonalDetailsComplete !== true || hrProfileUpdateRequired) &&
-        nextView !== "human-resources"
+        session.role !==
+          "Chairman" &&
+        (hrPersonalDetailsComplete !==
+          true ||
+          hrProfileUpdateRequired) &&
+        nextView !==
+          "human-resources"
       ) {
         setView("human-resources")
+
         return
       }
+
       if (session && !canAccessView(nextView, session.permissions)) return
+
       preloadView(nextView)
+
       setView(nextView)
     },
+
     [hrPersonalDetailsComplete, hrProfileUpdateRequired, session],
   )
 
-  const respondToHrProfileReminder = async (action: "reviewed" | "review_later" | "same" | "changed") => {
+  const respondToHrProfileReminder = async (
+    action: "reviewed" | "review_later" | "same" | "changed",
+  ) => {
     setHrReminderSaving(true)
+
     setHrReminderError("")
+
     try {
       const response = await fetch("/api/workspace/staff/profile/reminder", {
         method: "POST",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({ action }),
       })
-      const result = await response.json() as {
+
+      const result = (await response.json()) as {
         reminder?: {
           prompt: "profile_completion" | "information_review" | null
+
           updateRequired: boolean
         }
+
         error?: string
       }
+
       if (!response.ok || !result.reminder) {
-        throw new Error(result.error ?? "Unable to update your HR profile reminder.")
+        throw new Error(
+          result.error ??
+            "Unable to update your HR profile reminder.",
+        )
       }
+
       setHrProfileReminder(result.reminder.prompt)
+
       setHrProfileUpdateRequired(result.reminder.updateRequired)
-      if (action === "changed") setView("human-resources")
-      if (action === "review_later") setView("human-resources")
+
+      if (
+        action ===
+        "changed"
+      )
+        setView("human-resources")
+
+      if (
+        action ===
+        "review_later"
+      )
+        setView("human-resources")
     } catch (error) {
-      setHrReminderError(error instanceof Error ? error.message : "Unable to update your HR profile reminder.")
+      setHrReminderError(
+        error instanceof
+          Error
+          ? error.message
+          : "Unable to update your HR profile reminder.",
+      )
     } finally {
       setHrReminderSaving(false)
     }
   }
+
   const handleSidebarNavigate = useCallback(
     (nextView: View) => {
       handleNavigate(nextView)
+
       setMobileNavOpen(false)
     },
+
     [handleNavigate],
   )
 
@@ -926,31 +1408,42 @@ export default function App() {
     if (!session?.onboarded || mustChangePassword) return
 
     const lockStorageKey = `kilax.idle-locked:${session.userId}`
+
     if (
       window.sessionStorage.getItem(lockStorageKey) ===
       "true"
     ) {
       idleLockedRef.current = true
+
       setIdleLocked(true)
+
       return
     }
 
     idleLockedRef.current = false
+
     lastActivityAt.current = Date.now()
+
     let timeoutId: number | undefined
 
     const checkIdleTime = () => {
       const remaining =
         IDLE_LOCK_TIMEOUT_MS - (Date.now() - lastActivityAt.current)
+
       if (
         remaining <=
         0
       ) {
         idleLockedRef.current = true
+
         window.sessionStorage.setItem(lockStorageKey, "true")
+
         setUnlockPassword("")
+
         setUnlockError("")
+
         setIdleLocked(true)
+
         return
       }
 
@@ -959,37 +1452,50 @@ export default function App() {
 
     const recordActivity = () => {
       if (idleLockedRef.current) return
+
       if (
         timeoutId !==
         undefined
       )
         window.clearTimeout(timeoutId)
+
       lastActivityAt.current = Date.now()
+
       checkIdleTime()
     }
 
     const checkAfterVisibilityChange = () => {
       if (document.hidden) return
+
       if (
         timeoutId !==
         undefined
       )
         window.clearTimeout(timeoutId)
+
       checkIdleTime()
     }
 
     const activityEvents = [
       "pointerdown",
+
       "pointermove",
+
       "keydown",
+
       "touchstart",
+
       "wheel",
+
       "scroll",
     ] as const
+
     for (const eventName of activityEvents) {
       window.addEventListener(eventName, recordActivity, { passive: true })
     }
+
     document.addEventListener("visibilitychange", checkAfterVisibilityChange)
+
     checkIdleTime()
 
     return () => {
@@ -998,11 +1504,14 @@ export default function App() {
         undefined
       )
         window.clearTimeout(timeoutId)
+
       for (const eventName of activityEvents) {
         window.removeEventListener(eventName, recordActivity)
       }
+
       document.removeEventListener(
         "visibilitychange",
+
         checkAfterVisibilityChange,
       )
     }
@@ -1011,20 +1520,26 @@ export default function App() {
   useEffect(() => {
     for (const key of [
       "recruitos.companies",
+
       "recruitos.users",
+
       "recruitos.session",
     ]) {
       window.localStorage.removeItem(key)
     }
+
     const preferences = window.localStorage.getItem(
       "kilax.workspace-preferences",
     )
+
     if (preferences) {
       try {
         const saved = JSON.parse(preferences) as Partial<{
           theme: Theme
+
           density: Density
         }>
+
         if (
           saved.theme ===
             "light" ||
@@ -1032,6 +1547,7 @@ export default function App() {
             "dark"
         )
           setTheme(saved.theme)
+
         if (
           saved.density ===
             "compact" ||
@@ -1043,73 +1559,124 @@ export default function App() {
         window.localStorage.removeItem("kilax.workspace-preferences")
       }
     }
+
     setPreferencesReady(true)
 
     let cancelled = false
+
     const restoreSession = async () => {
       const currentUrl = new URL(window.location.href)
+
       if (
         currentUrl.searchParams.get("view") ===
         "communications"
       )
         setView("communications")
+
       const validViews = new Set<string>([
         "dashboard",
+
         "candidates",
+
         "candidate-inquiries",
+
         "agents",
+
         "suppliers",
+
         "jobs",
+
         "interviews",
+
         "offers",
+
         "analytics",
+
         "finance",
+
         "agent-invoices",
+
         "accounts",
+
         "payments",
+
         "paychecks",
+
         "passport",
+
         "documents",
+
         "ai",
+
         "reports",
+
         "users",
+
         "settings",
+
         "contractors",
+
         "projects",
+
         "invoices",
+
         "tasks",
+
         "communications",
+
         "staff-chat",
+
         "attendance",
+
         "leave",
+
         "human-resources",
+
         "medical-appointments",
+
         "medical-management",
+
         "hospital-management",
+
         "branches",
+
         "approvals",
+
         "requisitions",
+
         "expense-requests",
+
         "drive",
       ])
+
       const pathParts = currentUrl.pathname
+
         .replace(/^\//, "")
+
         .split("/")
+
         .filter(Boolean)
+
       const pathView =
         pathParts.length >=
         2
           ? pathParts[1]
           : (pathParts[0] ??
             "")
+
       const authPaths: Record<string, "login" | "register" | "invite" | "reset-password"> =
         {
           login: "login",
+
           register: "register",
+
           invite: "invite",
+
           "reset-password": "reset-password",
+
           onboarding: "register",
         }
+
       if (
         pathParts.length ===
           1 &&
@@ -1117,34 +1684,46 @@ export default function App() {
       ) {
         setAuthView(authPaths[pathParts[0]])
       }
+
       const paramView =
         currentUrl.searchParams.get("v") ??
         currentUrl.searchParams.get("view")
+
       const notificationTarget = currentUrl.searchParams.get("notification")
+
       const notificationView =
-        notificationTarget === "tasks" ||
-        notificationTarget === "staff-chat" ||
-        notificationTarget === "expense-requests"
+        notificationTarget ===
+          "tasks" ||
+        notificationTarget ===
+          "staff-chat" ||
+        notificationTarget ===
+          "expense-requests"
           ? notificationTarget
           : null
+
       const detectedView =
         (validViews.has(pathView) ? pathView : null) ??
         (paramView &&
         validViews.has(paramView)
           ? paramView
           : notificationView)
+
       if (detectedView) setView(detectedView as View)
+
       const hashParams = new URLSearchParams(currentUrl.hash.slice(1))
+
       const inviteLink =
         hashParams.get("type") ===
           "invite" ||
         currentUrl.searchParams.get("invite") ===
           "1"
+
       const recoveryLink =
         currentUrl.searchParams.get("view") ===
           "reset-password" ||
         hashParams.get("type") ===
           "recovery"
+
       const signupLink =
         currentUrl.searchParams.get("view") ===
           "company-provisioning" ||
@@ -1152,25 +1731,34 @@ export default function App() {
           "signup" ||
         hashParams.get("type") ===
           "signup"
+
       const currentInviteId =
         currentUrl.searchParams.get("invitation_id") ??
         ""
+
       if (inviteLink) setAuthView("invite")
+
       if (recoveryLink) {
         setAuthView("reset-password")
+
         setResetPasswordError(
           "This password reset link is invalid or expired. Request a new one from the login screen.",
         )
       }
+
       try {
         const supabase = createSupabaseBrowserClient()
+
         const accessToken = hashParams.get("access_token")
+
         const refreshToken = hashParams.get("refresh_token")
+
         const recoveryCode =
           currentUrl.searchParams.get("code") ??
           hashParams.get("code") ??
           currentUrl.searchParams.get("token") ??
           ""
+
         if (
           (inviteLink || recoveryLink || signupLink) &&
           accessToken &&
@@ -1178,8 +1766,10 @@ export default function App() {
         ) {
           const { error: sessionError } = await supabase.auth.setSession({
             access_token: accessToken,
+
             refresh_token: refreshToken,
           })
+
           if (sessionError) {
             throw new Error(
               recoveryLink
@@ -1189,16 +1779,21 @@ export default function App() {
                   : "This invitation link is invalid or expired. Ask the company administrator to send a new invitation.",
             )
           }
+
           window.history.replaceState(
             null,
+
             "",
+
             `${currentUrl.pathname}${currentUrl.search}`,
           )
         } else if ((recoveryLink || signupLink) && recoveryCode) {
           const {
             data: { session },
+
             error: sessionError,
           } = await supabase.auth.exchangeCodeForSession(recoveryCode)
+
           if (sessionError || !session) {
             throw new Error(
               recoveryLink
@@ -1206,38 +1801,54 @@ export default function App() {
                 : "This email verification link is invalid or expired. Request a new registration link.",
             )
           }
+
           window.history.replaceState(
             null,
+
             "",
+
             `${currentUrl.pathname}${currentUrl.search}`,
           )
         }
+
         const {
           data: { user },
+
           error,
         } = await supabase.auth.getUser()
+
         if (error) throw error
+
         if (user) {
           const needsGoogleMailLink =
             window.sessionStorage.getItem("kilax.googleConnectGmail") ===
             "gmail"
+
           if (needsGoogleMailLink) {
             window.sessionStorage.removeItem("kilax.googleConnectGmail")
+
             try {
               const connectResponse = await fetch(
                 "/api/communications/mail/connect?provider=gmail",
+
                 { cache: "no-store" },
               )
+
               const connectPayload = (await connectResponse.json()) as {
                 url?: string
+
                 error?: string
               }
+
               if (connectResponse.ok && connectPayload.url) {
                 window.location.assign(connectPayload.url)
+
                 return
               }
+
               console.warn(
                 "Google Gmail link not started",
+
                 connectPayload.error ??
                   "unknown error",
               )
@@ -1251,38 +1862,53 @@ export default function App() {
               user.email ??
                 "",
             )
+
             setAuthView("invite")
+
             const invitationResponse = await fetch(
               `/api/workspace/invitations/${encodeURIComponent(invitationId)}`,
+
               { cache: "no-store" },
             )
+
             const invitation = (await invitationResponse.json()) as {
               invitationId?: string
+
               companyId?: string
+
               companyName?: string
+
               roleName?: string
+
               error?: string
             }
+
             if (!invitationResponse.ok || !invitation.companyId) {
               setInviteError(
                 invitation.error ??
                   "This invitation is invalid or has expired. Ask for a new invitation.",
               )
+
               return
             }
+
             setInviteId(
               invitation.invitationId ??
                 currentInviteId,
             )
+
             setInviteCompanyId(invitation.companyId)
+
             setInviteCompanyName(
               invitation.companyName ??
                 "",
             )
+
             setInviteRoleName(
               invitation.roleName ??
                 "",
             )
+
             setInviteError("")
           }
 
@@ -1291,53 +1917,73 @@ export default function App() {
               currentInviteId ||
                 "legacy",
             )
+
             window.history.replaceState(
               null,
+
               "",
+
               `${currentUrl.pathname}${currentUrl.search}`,
             )
+
             return
           }
+
           if (recoveryLink) {
             setResetPasswordError("")
+
             setResetPasswordEmail(
               user.email ??
                 "",
             )
+
             return
           }
+
           const registrationResult =
             await provisionPendingCompanyRegistration(user)
+
           if (registrationResult?.registrationCompleted) {
             setRegistrationCompletion({
               welcomeEmailSent: registrationResult.welcomeEmailSent,
+
               welcomeEmailRecipientCount:
                 registrationResult.welcomeEmailRecipientCount,
+
               welcomeEmailError: registrationResult.welcomeEmailError,
             })
           }
+
           const hasInviteMetadata = Boolean(
             user.app_metadata?.invitation_company_id ||
               (user.user_metadata?.company_name &&
                 user.user_metadata?.role_name),
           )
+
           if (hasInviteMetadata) {
             const currentInvitationResponse = await fetch(
               "/api/workspace/invitations/current",
+
               { cache: "no-store" },
             )
+
             const currentInvitation =
               (await currentInvitationResponse.json()) as {
                 invitationId?: string | null
+
                 requiresAcceptance?: boolean
+
                 legacyInvitation?: boolean
+
                 error?: string
               }
+
             if (!currentInvitationResponse.ok)
               throw new Error(
                 currentInvitation.error ??
                   "Unable to verify your invitation.",
               )
+
             if (
               currentInvitation.requiresAcceptance ||
               currentInvitation.legacyInvitation
@@ -1346,30 +1992,42 @@ export default function App() {
                 currentInvitation.invitationId ??
                   "legacy",
               )
+
               return
             }
           }
+
           const workspace = await resolveUserWorkspace(
             user,
+
             registrationResult?.companyId,
           )
+
           if (!cancelled) {
             setCompanies([workspace.company])
+
             setUsers([workspace.user])
+
             setSession(workspace.session)
+
             setRole(workspace.user.role)
+
             const mustChange = await checkMustChangePassword(workspace.user.id)
+
             if (!cancelled) setMustChangePassword(mustChange)
-            
-            // Restore last active view when session is restored from storage
+
             try {
-              const lastView = localStorage.getItem("kilax.lastActiveView") as View | null
-              if (lastView && canAccessView(lastView, workspace.session.permissions)) {
+              const lastView = localStorage.getItem(
+                "kilax.lastActiveView",
+              ) as View | null
+
+              if (
+                lastView &&
+                canAccessView(lastView, workspace.session.permissions)
+              ) {
                 if (!cancelled) setView(lastView)
               }
-            } catch {
-              // localStorage not available
-            }
+            } catch {}
           }
         }
       } catch (error) {
@@ -1396,7 +2054,9 @@ export default function App() {
         if (!cancelled) setAuthLoading(false)
       }
     }
+
     void restoreSession()
+
     return () => {
       cancelled = true
     }
@@ -1405,46 +2065,72 @@ export default function App() {
   useEffect(() => {
     if (!session) {
       setHrPersonalDetailsComplete(null)
+
       setHrProfileReminder(null)
+
       setHrProfileUpdateRequired(false)
+
       return
     }
-    if (session.role === "Chairman") {
+
+    if (
+      session.role ===
+      "Chairman"
+    ) {
       setHrPersonalDetailsComplete(true)
+
       setHrProfileReminder(null)
+
       setHrProfileUpdateRequired(false)
+
       return
     }
 
     let cancelled = false
+
     setHrPersonalDetailsComplete(null)
+
     void fetch("/api/workspace/staff/profile", { cache: "no-store" })
+
       .then(async (response) => {
         const result = (await response.json()) as {
           personalDetailsComplete?: boolean
+
           reminder?: {
             prompt: "profile_completion" | "information_review" | null
+
             updateRequired: boolean
           }
         }
-        if (!response.ok)
-          throw new Error("Unable to check your HR profile.")
+
+        if (!response.ok) throw new Error("Unable to check your HR profile.")
+
         if (!cancelled) {
           setHrPersonalDetailsComplete(
             Boolean(result.personalDetailsComplete),
           )
-          setHrProfileReminder(result.reminder?.prompt ?? null)
+
+          setHrProfileReminder(
+            result.reminder?.prompt ??
+              null,
+          )
+
           setHrProfileUpdateRequired(Boolean(result.reminder?.updateRequired))
         }
       })
+
       .catch((error: unknown) => {
         console.error("Staff HR onboarding check failed:", error)
+
         if (!cancelled) {
           setHrPersonalDetailsComplete(false)
+
           setHrProfileUpdateRequired(false)
+
           setHrProfileReminder(null)
         }
       })
+
     return () => {
       cancelled = true
     }
@@ -1452,23 +2138,31 @@ export default function App() {
 
   useEffect(() => {
     if (!session) return
+
     const preloadCommonViews = () => {
       for (const commonView of [
         "dashboard",
+
         "candidates",
+
         "tasks",
+
         "finance",
       ] as const) {
         preloadView(commonView)
       }
     }
+
     const idleWindow = window as Window & {
       requestIdleCallback?: (
         callback: IdleRequestCallback,
+
         options?: IdleRequestOptions,
       ) => number
+
       cancelIdleCallback?: (handle: number) => void
     }
+
     if (
       typeof idleWindow.requestIdleCallback ===
       "function"
@@ -1476,14 +2170,18 @@ export default function App() {
       const idleId = idleWindow.requestIdleCallback(preloadCommonViews, {
         timeout: 2500,
       })
+
       return () => idleWindow.cancelIdleCallback?.(idleId)
     }
+
     const timeoutId = window.setTimeout(preloadCommonViews, 1200)
+
     return () => window.clearTimeout(timeoutId)
   }, [session])
 
   useEffect(() => {
     const main = document.querySelector("main")
+
     if (!main) return
 
     if (
@@ -1495,44 +2193,59 @@ export default function App() {
       return
 
     const observed = new WeakSet<Element>()
+
     const revealObserver = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (!entry.isIntersecting) continue
+
           entry.target.setAttribute("data-scroll-reveal", "visible")
+
           revealObserver.unobserve(entry.target)
         }
       },
+
       { threshold: 0.01, rootMargin: "0px 0px -24px 0px" },
     )
 
     const revealContent = () => {
       main
+
         .querySelectorAll(
           "h1, h2, section, article, table, [role='tabpanel'], .grid > *, [class*='overflow-y-auto'] > *",
         )
+
         .forEach((element) => {
           if (observed.has(element)) return
+
           observed.add(element)
+
           element.setAttribute("data-scroll-reveal", "pending")
+
           revealObserver.observe(element)
         })
     }
 
     revealContent()
+
     const contentObserver = new MutationObserver(revealContent)
+
     contentObserver.observe(main, { childList: true, subtree: true })
 
     return () => {
       contentObserver.disconnect()
+
       revealObserver.disconnect()
     }
   }, [session, view])
 
   useEffect(() => {
     const main = document.querySelector("main")
+
     if (!main) return
+
     main.scrollTo({ top: 0, behavior: "smooth" })
+
     main.querySelectorAll<HTMLElement>("*").forEach((element) => {
       if (
         element.scrollHeight > element.clientHeight + 1 &&
@@ -1548,10 +2261,12 @@ export default function App() {
     if (preferencesReady) {
       window.localStorage.setItem(
         "kilax.workspace-preferences",
+
         JSON.stringify({ role, theme, density }),
       )
     }
   }, [density, preferencesReady, role, theme])
+
   useEffect(() => {
     if (
       !session ||
@@ -1559,10 +2274,13 @@ export default function App() {
         "dashboard"
     )
       return
+
     const defaultView = getDefaultViewByPermissions(
       session.permissions,
+
       session.role,
     )
+
     if (
       defaultView !==
       "dashboard"
@@ -1577,14 +2295,11 @@ export default function App() {
     }
   }, [session, view])
 
-  // Save current view to localStorage when user is authenticated and view changes
   useEffect(() => {
     if (session) {
       try {
         localStorage.setItem("kilax.lastActiveView", view)
-      } catch {
-        // localStorage not available, silently fail
-      }
+      } catch {}
     }
   }, [session, view])
 
@@ -1592,12 +2307,19 @@ export default function App() {
     if (!session) return
 
     const supabase = createSupabaseBrowserClient()
+
     let cancelled = false
+
     let refreshing = false
+
     let refreshAgain = false
+
     let refreshTimer: ReturnType<typeof setTimeout> | undefined
+
     let retryTimer: ReturnType<typeof setTimeout> | undefined
+
     let retryDelay = 1_000
+
     let lastRefreshError = ""
 
     const clearWorkspace = async (
@@ -1606,99 +2328,148 @@ export default function App() {
       await removeBrowserPushSubscription().catch((error: unknown) =>
         console.error(
           "[Access Refresh] Push subscription cleanup failed.",
+
           error,
         ),
       )
+
       const { error } = await supabase.auth.signOut()
+
       if (
         error &&
-        error.name !== "AuthSessionMissingError"
+        error.name !==
+          "AuthSessionMissingError"
       )
         console.error(
           "[Access Refresh] Unable to sign out after company access was removed.",
+
           error,
         )
+
       if (cancelled) return
+
       setCompanies([])
+
       setUsers([])
+
       setSession(null)
+
       setView("dashboard")
+
       setAuthView("login")
+
       setLoginError(message)
     }
 
     const refreshAccess = async () => {
       if (retryTimer) {
         refreshAgain = true
+
         return
       }
+
       if (refreshing) {
         refreshAgain = true
+
         return
       }
+
       refreshing = true
+
       try {
         const {
           data: { user },
+
           error: authError,
         } = await supabase.auth.getUser()
+
         if (authError) {
-          if (authError.name === "AuthSessionMissingError") {
+          if (
+            authError.name ===
+            "AuthSessionMissingError"
+          ) {
             await clearWorkspace("Your session has expired. Sign in again.")
+
             return
           }
+
           throw authError
         }
+
         if (
           !user ||
           user.id !==
             session.userId
         ) {
           await clearWorkspace()
+
           return
         }
 
         const { data: membership, error: membershipError } = await supabase
+
           .from("company_memberships")
+
           .select(
             "role_id, branch_id, role:company_roles(id, name, access_settings), branch:company_branches(id, name, is_main_branch)",
           )
+
           .eq("user_id", session.userId)
+
           .eq("company_id", session.companyId)
+
           .eq("status", "active")
+
           .limit(1)
+
           .maybeSingle()
 
         if (membershipError) throw membershipError
+
         if (!membership) {
           await clearWorkspace()
+
           return
         }
 
         const roleValue = membership.role as unknown as {
           id: string
+
           name: string
+
           access_settings: unknown
-              } | { id: string; name: string; access_settings: unknown }[]
+        } | { id: string; name: string; access_settings: unknown }[]
+
         const roleRecord = Array.isArray(roleValue) ? roleValue[0] : roleValue
+
         if (!roleRecord)
           throw new Error("The active membership has no assigned role.")
 
         const { data: rolePerms, error: permsError } = await supabase
+
           .from("role_permissions")
+
           .select("permission_code")
+
           .eq("role_id", roleRecord.id)
+
           .eq("company_id", session.companyId)
 
         if (permsError) throw permsError
+
         if (!rolePerms)
           throw new Error("Unable to load the assigned role permissions.")
+
         const roleAccess = roleAccessSettings(
           roleRecord.access_settings,
+
           roleRecord.name,
         )
+
         const newPermissions = rolePerms
+
           .map((rp) => rp.permission_code)
+
           .filter(
             (permission) =>
               permission !==
@@ -1706,33 +2477,47 @@ export default function App() {
               (isRecruitmentAgentRole(roleRecord.name) &&
                 roleAccess.agent_visa_finance),
           )
+
         const branchValue = membership.branch as unknown as {
           id: string
+
           name: string
+
           is_main_branch: boolean
         } | { id: string; name: string; is_main_branch: boolean }[] | null
+
         const branchRecord = Array.isArray(branchValue)
           ? branchValue[0]
           : branchValue
+
         const nextRole = roleRecord.name as WorkspaceRole
+
         const nextBranchId =
           membership.branch_id ??
           null
+
         const nextBranchName =
           branchRecord?.name ??
           "Main Branch"
+
         const nextIsMainBranch =
           !branchRecord ||
           Boolean(branchRecord.is_main_branch)
 
         if (cancelled) return
+
         if (retryTimer) {
           clearTimeout(retryTimer)
+
           retryTimer = undefined
         }
+
         retryDelay = 1_000
+
         refreshAgain = false
+
         lastRefreshError = ""
+
         setSession((current) => {
           if (
             !current ||
@@ -1742,12 +2527,14 @@ export default function App() {
               session.companyId
           )
             return current
+
           const permissionsMatch =
             current.permissions.length ===
               newPermissions.length &&
             current.permissions.every((permission) =>
               newPermissions.includes(permission),
             )
+
           if (
             current.roleId ===
               roleRecord.id &&
@@ -1762,29 +2549,40 @@ export default function App() {
             permissionsMatch
           )
             return current
+
           return {
             ...current,
+
             roleId: roleRecord.id,
+
             role: nextRole,
+
             branchId: nextBranchId,
+
             branchName: nextBranchName,
+
             isMainBranchUser: nextIsMainBranch,
+
             permissions: newPermissions,
           }
         })
+
         setRole(nextRole)
+
         setUsers((current) => {
           const companyUser = current.find(
             (entry) =>
               entry.id ===
               session.userId,
           )
+
           if (
             !companyUser ||
             companyUser.role ===
               nextRole
           )
             return current
+
           return current.map((entry) =>
             entry.id ===
             session.userId
@@ -1798,6 +2596,7 @@ export default function App() {
           Error
             ? error.message
             : String(error)
+
         const isRetryableNetworkError =
           error instanceof
             Error &&
@@ -1814,18 +2613,25 @@ export default function App() {
           ) {
             console.warn(
               "[Access Refresh] Supabase is temporarily unreachable; retrying access refresh.",
+
               error,
             )
+
             lastRefreshError = message
           }
+
           retryTimer = setTimeout(() => {
             retryTimer = undefined
+
             refreshAgain = false
+
             void refreshAccess()
           }, retryDelay)
+
           retryDelay = Math.min(
             retryDelay *
               2,
+
             30_000,
           )
         } else if (
@@ -1834,14 +2640,18 @@ export default function App() {
         ) {
           console.error(
             "[Access Refresh] Unable to refresh role and permissions:",
+
             error,
           )
+
           lastRefreshError = message
         }
       } finally {
         refreshing = false
+
         if (refreshAgain && !cancelled && !retryTimer) {
           refreshAgain = false
+
           void refreshAccess()
         }
       }
@@ -1849,31 +2659,46 @@ export default function App() {
 
     const scheduleRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer)
+
       refreshTimer = setTimeout(() => void refreshAccess(), 100)
     }
 
     const channel = supabase
+
       .channel(`workspace-access:${session.companyId}:${session.userId}`)
+
       .on(
         "postgres_changes",
+
         {
           event: "*",
+
           schema: "public",
+
           table: "company_memberships",
+
           filter: `user_id=eq.${session.userId}`,
         },
+
         scheduleRefresh,
       )
+
       .on(
         "postgres_changes",
+
         {
           event: "*",
+
           schema: "public",
+
           table: "role_permissions",
+
           filter: `role_id=eq.${session.roleId}`,
         },
+
         scheduleRefresh,
       )
+
       .subscribe((status, error) => {
         if (
           (status ===
@@ -1884,75 +2709,120 @@ export default function App() {
         ) {
           console.error(
             "[Access Refresh] Realtime subscription is unavailable; polling will continue.",
+
             error,
           )
         }
       })
 
     const interval = setInterval(() => void refreshAccess(), 30_000)
+
     const handleFocus = () => void refreshAccess()
+
     window.addEventListener("focus", handleFocus)
+
     void refreshAccess()
 
     return () => {
       cancelled = true
+
       if (refreshTimer) clearTimeout(refreshTimer)
+
       if (retryTimer) clearTimeout(retryTimer)
+
       clearInterval(interval)
+
       window.removeEventListener("focus", handleFocus)
+
       void supabase.removeChannel(channel)
     }
   }, [session?.companyId, session?.roleId, session?.userId])
+
   useEffect(() => {
     if (!session) return
+
     const slug = session.companySlug
+
     const targetPath =
       view ===
       "dashboard"
         ? `/${slug}`
         : `/${slug}/${view}`
+
     const viewTitles: Partial<Record<View, string>> = {
       dashboard: "Dashboard",
+
       candidates: "Candidates",
+
       "candidate-inquiries": "Inquiries",
+
       agents: "Agents",
+
       suppliers: "Partners",
+
       finance: "Finance",
+
       accounts: "Accounts",
+
       payments: "Payments",
+
       paychecks: "Paychecks",
+
       invoices: "Invoices",
+
       passport: "Passport Custody",
+
       documents: "Documents",
+
       ai: "AI Assistant",
+
       reports: "Reports",
+
       users: "Users & Roles",
+
       settings: "Settings",
+
       contractors: "Contractors",
+
       projects: "Projects",
+
       tasks: "Tasks",
+
       communications: "Communications",
+
       "staff-chat": "Staff chat",
+
       attendance: "Attendance",
+
       leave: "Leave",
+
       "human-resources":
         session.role ===
         "Chairman"
           ? "HR Profiles"
           : "My HR Profile",
+
       "medical-appointments": "Medical Appointments",
+
       "medical-management": "Medical Examinations",
+
       "hospital-management": "Hospital Management",
+
       requisitions: "Requisitions",
+
       "expense-requests": "Expense Requests",
+
       branches: "Branches",
+
       approvals: "Approvals",
+
       drive: "Drive",
     }
 
     const viewLabel =
       viewTitles[view] ??
       view
+
     document.title = `${viewLabel} — ${session.companyName} | Kilax Smart Recruit`
 
     if (
@@ -1960,40 +2830,61 @@ export default function App() {
       targetPath
     ) {
       const url = new URL(window.location.href)
+
       url.searchParams.delete("v")
+
       url.searchParams.delete("view")
+
       url.pathname = targetPath
+
       window.history.pushState({ view, companySlug: slug }, "", url.toString())
     }
   }, [view, session])
+
   useEffect(() => {
     if (session) return
+
     const authPaths: Record<string, string> = {
       login: "/login",
+
       register: "/register",
+
       landing: "/",
+
       invite: "/invite",
+
       "reset-password": "/reset-password",
+
       verify: "/register",
     }
+
     const titles: Record<string, string> = {
       login: "Sign In — Kilax Smart Recruit",
+
       register: "Register Your Company — Kilax Smart Recruit",
+
       landing: "Kilax Smart Recruit | Recruitment ERP",
+
       invite: "Accept Invitation — Kilax Smart Recruit",
+
       "reset-password": "Reset Password — Kilax Smart Recruit",
+
       verify: "Account Created — Kilax Smart Recruit",
     }
+
     document.title =
       titles[authView] ??
       "Kilax Smart Recruit | Recruitment ERP"
+
     const targetPath =
       authPaths[authView] ??
       "/login"
+
     const hasSpecialParams =
       window.location.search.includes("invite=1") ||
       window.location.search.includes("view=reset-password") ||
       window.location.hash.includes("type=")
+
     if (
       !hasSpecialParams &&
       window.location.pathname !==
@@ -2002,74 +2893,125 @@ export default function App() {
       window.history.pushState({ authView }, "", targetPath)
     }
   }, [authView, session])
+
   useEffect(() => {
     const validViews = new Set<string>([
       "dashboard",
+
       "candidates",
+
       "candidate-inquiries",
+
       "agents",
+
       "suppliers",
+
       "jobs",
+
       "interviews",
+
       "offers",
+
       "analytics",
+
       "finance",
+
       "agent-invoices",
+
       "accounts",
+
       "payments",
+
       "paychecks",
+
       "passport",
+
       "documents",
+
       "ai",
+
       "reports",
+
       "users",
+
       "settings",
+
       "contractors",
+
       "projects",
+
       "invoices",
+
       "tasks",
+
       "communications",
+
       "staff-chat",
+
       "attendance",
+
       "leave",
+
       "human-resources",
+
       "medical-appointments",
+
       "medical-management",
+
       "hospital-management",
+
       "branches",
+
       "approvals",
+
       "requisitions",
+
       "drive",
     ])
+
     const authViewSet = new Set<string>([
       "login",
+
       "register",
+
       "invite",
+
       "reset-password",
     ])
+
     const onPopState = (event: PopStateEvent) => {
       const state = event.state as {
         view?: string
+
         authView?: string
+
         companySlug?: string
       } | null
+
       const pathParts = window.location.pathname
+
         .replace(/^\//, "")
+
         .split("/")
+
         .filter(Boolean)
+
       const pathView =
         pathParts.length >=
         2
           ? pathParts[1]
           : (pathParts[0] ??
             "")
+
       const stateView = state?.view
+
       const resolved =
         (stateView &&
         validViews.has(stateView)
           ? stateView
           : null) ??
         (validViews.has(pathView) ? pathView : null)
+
       if (resolved) {
         setView(resolved as View)
       } else if (
@@ -2088,7 +3030,9 @@ export default function App() {
         setView("dashboard")
       }
     }
+
     window.addEventListener("popstate", onPopState)
+
     return () => window.removeEventListener("popstate", onPopState)
   }, [])
 
@@ -2100,6 +3044,7 @@ export default function App() {
           session?.companyId,
       ) ??
       companies[0],
+
     [companies, session],
   )
 
@@ -2111,6 +3056,7 @@ export default function App() {
           session?.userId,
       ) ??
       users[0],
+
     [session, users],
   )
 
@@ -2122,51 +3068,79 @@ export default function App() {
 
   const handleRegisterSubmit = async (event: FormEvent) => {
     event.preventDefault()
+
     setRegisterError("")
+
     const form = companyForm
+
     if (
       form.password !==
       form.confirmPassword
     ) {
       setRegisterError("The passwords do not match.")
+
       return
     }
+
     setRegisterSubmitting(true)
+
     try {
       const supabase = createSupabaseBrowserClient()
+
       const redirectOrigin = (
         process.env.NEXT_PUBLIC_SITE_URL ||
         window.location.origin
-      ).replace(/\/+$/, "")
+      )
+
+        .replace(/\/+$/, "")
+
       const { data, error } = await supabase.auth.signUp({
         email: form.adminEmail.trim(),
+
         password: form.password,
+
         options: {
           emailRedirectTo: `${redirectOrigin}/?view=company-provisioning`,
+
           data: {
             full_name: form.fullName.trim(),
+
             phone: form.adminPhone.trim(),
+
             company_registration: {
               companyName: form.companyName.trim(),
+
               registrationNumber: form.registrationNumber.trim(),
+
               country: form.country.trim(),
+
               city: form.city.trim(),
+
               officeAddress: form.officeAddress.trim(),
+
               phone: form.phone.trim(),
+
               email: form.email.trim(),
+
               website: form.website.trim(),
+
               fullName: form.fullName.trim(),
+
               position: form.position.trim(),
+
               adminPhone: form.adminPhone.trim(),
             },
           },
         },
       })
+
       if (error) throw error
+
       if (!data.user)
         throw new Error("Supabase did not return the new user account.")
 
       setCompanyForm({ ...form, password: "", confirmPassword: "" })
+
       if (!data.session) {
         if (
           data.user.identities?.length ===
@@ -2176,7 +3150,9 @@ export default function App() {
             "An account with this email already exists. Sign in or use the password reset link.",
           )
         }
+
         setAuthView("verify")
+
         return
       }
 
@@ -2184,29 +3160,41 @@ export default function App() {
         const registrationResult = await provisionPendingCompanyRegistration(
           data.user,
         )
+
         if (!registrationResult)
           throw new Error(
             "The new account is missing its company registration details.",
           )
+
         const workspace = await resolveUserWorkspace(
           data.user,
+
           registrationResult.companyId,
         )
+
         setCompanies([workspace.company])
+
         setUsers([workspace.user])
+
         setRole(workspace.user.role)
+
         setSession(workspace.session)
+
         setMustChangePassword(false)
+
         if (registrationResult.registrationCompleted) {
           setRegistrationCompletion({
             welcomeEmailSent: registrationResult.welcomeEmailSent,
+
             welcomeEmailRecipientCount:
               registrationResult.welcomeEmailRecipientCount,
+
             welcomeEmailError: registrationResult.welcomeEmailError,
           })
         }
       } catch (error) {
         await supabase.auth.signOut()
+
         throw new Error(
           `Your account was created, but company setup did not finish. Sign in with this email and password to retry. ${
             error instanceof
@@ -2231,29 +3219,40 @@ export default function App() {
   const handleRetryWelcomeEmail = async () => {
     try {
       const supabase = createSupabaseBrowserClient()
+
       const {
         data: { user },
+
         error,
       } = await supabase.auth.getUser()
+
       if (error) throw error
+
       if (!user)
         throw new Error(
           "Sign in again before requesting another welcome email.",
         )
+
       const result = await provisionPendingCompanyRegistration(user, {
         resendWelcomeEmail: true,
       })
+
       if (!result)
         throw new Error("Company registration details could not be found.")
+
       setRegistrationCompletion({
         welcomeEmailSent: result.welcomeEmailSent,
+
         welcomeEmailRecipientCount: result.welcomeEmailRecipientCount,
+
         welcomeEmailError: result.welcomeEmailError,
       })
     } catch (error) {
       setRegistrationCompletion({
         welcomeEmailSent: false,
+
         welcomeEmailRecipientCount: 0,
+
         welcomeEmailError:
           error instanceof
           Error
@@ -2265,51 +3264,79 @@ export default function App() {
 
   const handleLoginSubmit = async (event: FormEvent) => {
     event.preventDefault()
+
     if (loginSubmitting) return
+
     setLoginSubmitting(true)
+
     setLoginError("")
+
     try {
       const supabase = createSupabaseBrowserClient()
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email: loginForm.email.trim(),
+
         password: loginForm.password,
       })
+
       if (error || !data.user) {
         setLoginError("Sign-in failed. Check your email and password.")
+
         return
       }
 
       const registrationResult = await provisionPendingCompanyRegistration(
         data.user,
       )
+
       const workspace = await resolveUserWorkspace(
         data.user,
+
         registrationResult?.companyId,
       )
+
       setCompanies([workspace.company])
+
       setUsers([workspace.user])
+
       setRole(workspace.user.role)
+
       setSession(workspace.session)
+
       const mustChange = await checkMustChangePassword(workspace.user.id)
+
       setMustChangePassword(mustChange)
-      
-      // Restore last active view after login
+
       try {
-        const lastView = localStorage.getItem("kilax.lastActiveView") as View | null
-        if (lastView && canAccessView(lastView, workspace.session.permissions)) {
+        const lastView = localStorage.getItem(
+          "kilax.lastActiveView",
+        ) as View | null
+
+        if (
+          lastView &&
+          canAccessView(lastView, workspace.session.permissions)
+        ) {
           setView(lastView)
         } else {
-          setView(getDefaultViewByPermissions(workspace.session.permissions, workspace.user.role))
+          setView(
+            getDefaultViewByPermissions(
+              workspace.session.permissions,
+              workspace.user.role,
+            ),
+          )
         }
       } catch {
         setView("dashboard")
       }
-      
+
       if (registrationResult?.registrationCompleted) {
         setRegistrationCompletion({
           welcomeEmailSent: registrationResult.welcomeEmailSent,
+
           welcomeEmailRecipientCount:
             registrationResult.welcomeEmailRecipientCount,
+
           welcomeEmailError: registrationResult.welcomeEmailError,
         })
       }
@@ -2327,19 +3354,26 @@ export default function App() {
 
   const handleContinueWithGoogle = async () => {
     setLoginError("")
+
     try {
       const supabase = createSupabaseBrowserClient()
+
       window.sessionStorage.setItem("kilax.googleConnectGmail", "gmail")
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
+
         options: {
           redirectTo: `${window.location.origin}/`,
+
           queryParams: { access_type: "offline", prompt: "consent" },
         },
       })
+
       if (error) throw error
     } catch (error) {
       window.sessionStorage.removeItem("kilax.googleConnectGmail")
+
       setLoginError(
         error instanceof
           Error
@@ -2351,26 +3385,37 @@ export default function App() {
 
   const handlePasswordResetRequest = async () => {
     setLoginError("")
+
     setResetEmailMessage("")
+
     const email = loginForm.email.trim()
+
     if (!email) {
       setLoginError(
         "Enter your email address first, then request a password reset.",
       )
+
       return
     }
 
     setResetEmailSending(true)
+
     try {
       const redirectUrl = new URL(window.location.href)
+
       redirectUrl.search = ""
+
       redirectUrl.hash = ""
+
       redirectUrl.searchParams.set("view", "reset-password")
+
       const { error } =
         await createSupabaseBrowserClient().auth.resetPasswordForEmail(email, {
           redirectTo: redirectUrl.toString(),
         })
+
       if (error) throw error
+
       setResetEmailMessage(
         "If an account exists for that email, a password reset link has been sent.",
       )
@@ -2388,61 +3433,91 @@ export default function App() {
 
   const handlePasswordReset = async (event: FormEvent) => {
     event.preventDefault()
+
     setResetPasswordError("")
+
     if (
       resetPassword.length <
       8
     ) {
       setResetPasswordError("Choose a password with at least 8 characters.")
+
       return
     }
+
     if (
       resetPassword !==
       resetPasswordConfirm
     ) {
       setResetPasswordError("The passwords do not match.")
+
       return
     }
 
     setResetPasswordSaving(true)
+
     try {
       const { data, error } =
         await createSupabaseBrowserClient().auth.updateUser({
           password: resetPassword,
         })
+
       if (error || !data.user) {
         throw new Error(
           error?.message ??
             "Unable to update your password. Request a new reset link and try again.",
         )
       }
+
       const workspace = await resolveUserWorkspace(data.user)
+
       setCompanies([workspace.company])
+
       setUsers([workspace.user])
+
       setRole(workspace.user.role)
+
       setSession(workspace.session)
+
       setResetPassword("")
+
       setResetPasswordConfirm("")
-      
-      // Restore last active view after password reset
+
       try {
-        const lastView = localStorage.getItem("kilax.lastActiveView") as View | null
-        if (lastView && canAccessView(lastView, workspace.session.permissions)) {
+        const lastView = localStorage.getItem(
+          "kilax.lastActiveView",
+        ) as View | null
+
+        if (
+          lastView &&
+          canAccessView(lastView, workspace.session.permissions)
+        ) {
           setView(lastView)
         } else {
-          setView(getDefaultViewByPermissions(workspace.session.permissions, workspace.user.role))
+          setView(
+            getDefaultViewByPermissions(
+              workspace.session.permissions,
+              workspace.user.role,
+            ),
+          )
         }
       } catch {
         setView("dashboard")
       }
-      
+
       const completedUrl = new URL(window.location.href)
+
       completedUrl.searchParams.delete("view")
+
       completedUrl.searchParams.delete("code")
+
       completedUrl.hash = ""
+
       window.history.replaceState(
         null,
+
         "",
+
         `${completedUrl.pathname}${completedUrl.search}`,
       )
     } catch (error) {
@@ -2451,6 +3526,7 @@ export default function App() {
         Error
           ? error.message
           : "Unable to update your password."
+
       setResetPasswordError(
         message ===
           "Auth session missing!"
@@ -2464,52 +3540,69 @@ export default function App() {
 
   const handleAcceptInvitation = async (event: FormEvent) => {
     event.preventDefault()
+
     setInviteError("")
+
     if (
       invitePassword.length <
       8
     ) {
       setInviteError("Choose a password with at least 8 characters.")
+
       return
     }
+
     if (
       invitePassword !==
       invitePasswordConfirm
     ) {
       setInviteError("The passwords do not match.")
+
       return
     }
+
     if (!inviteCompanyId) {
       setInviteError(
         "This invitation has no valid company assignment. Ask the company administrator to resend it.",
       )
+
       return
     }
 
     setInviteSaving(true)
+
     try {
       const supabase = createSupabaseBrowserClient()
+
       const {
         data: { user },
+
         error: userError,
       } = await supabase.auth.getUser()
+
       if (userError || !user)
         throw new Error(
           "Your invitation session has expired. Open the latest invitation email to continue.",
         )
+
       const validationResponse = await fetch(
         `/api/workspace/invitations/${encodeURIComponent(inviteId)}`,
+
         { cache: "no-store" },
       )
+
       const validation = (await validationResponse.json()) as { error?: string }
+
       if (!validationResponse.ok)
         throw new Error(
           validation.error ??
             "This invitation is invalid or has expired. Ask for a new invitation.",
         )
+
       const { data, error } = await supabase.auth.updateUser({
         password: invitePassword,
       })
+
       if (error || !data.user)
         throw new Error(
           error?.message ??
@@ -2518,40 +3611,65 @@ export default function App() {
 
       const acceptanceResponse = await fetch(
         `/api/workspace/invitations/${encodeURIComponent(inviteId)}`,
+
         { method: "POST" },
       )
+
       const acceptance = (await acceptanceResponse.json()) as { error?: string }
+
       if (!acceptanceResponse.ok)
         throw new Error(
           acceptance.error ??
             "This invitation expired before it could be completed. Ask for a new invitation.",
         )
+
       const workspace = await resolveUserWorkspace(data.user, inviteCompanyId)
+
       setCompanies([workspace.company])
+
       setUsers([workspace.user])
+
       setRole(workspace.user.role)
+
       setSession(workspace.session)
+
       setInvitePassword("")
+
       setInvitePasswordConfirm("")
-      
-      // Restore last active view after invitation acceptance
+
       try {
-        const lastView = localStorage.getItem("kilax.lastActiveView") as View | null
-        if (lastView && canAccessView(lastView, workspace.session.permissions)) {
+        const lastView = localStorage.getItem(
+          "kilax.lastActiveView",
+        ) as View | null
+
+        if (
+          lastView &&
+          canAccessView(lastView, workspace.session.permissions)
+        ) {
           setView(lastView)
         } else {
-          setView(getDefaultViewByPermissions(workspace.session.permissions, workspace.user.role))
+          setView(
+            getDefaultViewByPermissions(
+              workspace.session.permissions,
+              workspace.user.role,
+            ),
+          )
         }
       } catch {
         setView("dashboard")
       }
-      
+
       const completedUrl = new URL(window.location.href)
+
       completedUrl.searchParams.delete("invite")
+
       completedUrl.searchParams.delete("invitation_id")
+
       window.history.replaceState(
         null,
+
         "",
+
         `${completedUrl.pathname}${completedUrl.search}`,
       )
     } catch (error) {
@@ -2568,50 +3686,68 @@ export default function App() {
 
   const handleChangeForcedPassword = async (event: FormEvent) => {
     event.preventDefault()
+
     setForcedPasswordError("")
+
     if (
       forcedNewPassword.length <
       8
     ) {
       setForcedPasswordError("Your new password must be at least 8 characters.")
+
       return
     }
+
     if (
       forcedNewPassword !==
       forcedNewPasswordConfirm
     ) {
       setForcedPasswordError("The passwords do not match.")
+
       return
     }
 
     setForcedPasswordSaving(true)
+
     try {
       const response = await fetch("/api/workspace/users/change-password", {
         method: "POST",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({ newPassword: forcedNewPassword }),
       })
+
       const result = (await response.json()) as {
         error?: string
+
         success?: boolean
       }
+
       if (!response.ok)
         throw new Error(
           result.error ??
             "Unable to update your password.",
         )
+
       setMustChangePassword(false)
+
       setForcedNewPassword("")
+
       setForcedNewPasswordConfirm("")
-      
-      // Restore last active view after forced password change
+
       if (session) {
         try {
-          const lastView = localStorage.getItem("kilax.lastActiveView") as View | null
+          const lastView = localStorage.getItem(
+            "kilax.lastActiveView",
+          ) as View | null
+
           if (lastView && canAccessView(lastView, session.permissions)) {
             setView(lastView)
           } else {
-            setView(getDefaultViewByPermissions(session.permissions, session.role))
+            setView(
+              getDefaultViewByPermissions(session.permissions, session.role),
+            )
           }
         } catch {
           setView("dashboard")
@@ -2619,8 +3755,7 @@ export default function App() {
       }
     } catch (error) {
       setForcedPasswordError(
-        error instanceof
-          Error
+        error instanceof Error
           ? error.message
           : "Unable to update your password.",
       )
@@ -2631,72 +3766,84 @@ export default function App() {
 
   const handleUnlockSession = async (event: FormEvent) => {
     event.preventDefault()
+
     setUnlockError("")
+
     const email = activeUser?.email
+
     if (!session || !email || !unlockPassword) {
       setUnlockError("Enter your password to continue.")
+
       return
     }
 
     setUnlockSaving(true)
+
     try {
       const verifier = createSupabasePasswordVerificationClient()
+
       const { data: verification, error: verificationError } =
         await verifier.auth.signInWithPassword({
           email,
+
           password: unlockPassword,
         })
+
       if (verificationError) {
         if (
           verificationError.message
+
             .toLowerCase()
+
             .includes("invalid login credentials")
         ) {
           throw new Error("Incorrect password. Please try again.")
         }
-        if (
-          verificationError.status ===
-          429
-        ) {
+
+        if (verificationError.status === 429) {
           throw new Error("Too many attempts. Please wait before trying again.")
         }
+
         throw new Error("Unable to verify your password. Please try again.")
       }
-      if (
-        !verification.user ||
-        verification.user.id !==
-          session.userId
-      ) {
+
+      if (!verification.user || verification.user.id !== session.userId) {
         throw new Error("Incorrect password. Please try again.")
       }
+
       if (!verification.session) {
         throw new Error("Unable to restore your session. Please try again.")
       }
 
       const supabase = createSupabaseBrowserClient()
+
       const { data: restoredSession, error: restoreError } =
         await supabase.auth.setSession({
           access_token: verification.session.access_token,
+
           refresh_token: verification.session.refresh_token,
         })
+
       if (
         restoreError ||
         !restoredSession.user ||
-        restoredSession.user.id !==
-          session.userId
+        restoredSession.user.id !== session.userId
       ) {
         throw new Error("Unable to restore your session. Please try again.")
       }
 
       window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`)
+
       lastActivityAt.current = Date.now()
+
       idleLockedRef.current = false
+
       setIdleLocked(false)
+
       setUnlockPassword("")
     } catch (error) {
       setUnlockError(
-        error instanceof
-          Error
+        error instanceof Error
           ? error.message
           : "Unable to verify your password. Please try again.",
       )
@@ -2707,31 +3854,48 @@ export default function App() {
 
   const handleCancelIdleLock = async () => {
     if (!session) return
+
     setUnlockError("")
+
     setIdleCancelSaving(true)
+
     try {
       await removeBrowserPushSubscription().catch((error: unknown) =>
         console.error(
           "Push subscription cleanup failed during session cancellation.",
+
           error,
         ),
       )
+
       const { error } = await createSupabaseBrowserClient().auth.signOut()
+
       if (error) throw error
+
       window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`)
+
       idleLockedRef.current = false
+
       setIdleLocked(false)
+
       setUnlockPassword("")
+
       setCompanies([])
+
       setUsers([])
+
       setSession(null)
+
       setView("dashboard")
+
       setAuthView("login")
+
       window.location.replace(
         `/${encodeURIComponent(session.companySlug)}/login`,
       )
     } catch (error) {
       console.error("Unable to cancel the expired session.", error)
+
       setUnlockError("Unable to sign out. Check your connection and try again.")
     } finally {
       setIdleCancelSaving(false)
@@ -2747,34 +3911,52 @@ export default function App() {
       await removeBrowserPushSubscription().catch((error: unknown) =>
         console.error(
           "Push subscription cleanup failed during sign-out.",
+
           error,
         ),
       )
+
       const supabase = createSupabaseBrowserClient()
+
       const { error } = await supabase.auth.signOut()
+
       if (error) {
         console.error("Unable to revoke the current sign-in session.", error)
+
         const { error: localSignOutError } = await supabase.auth.signOut({
           scope: "local",
         })
+
         if (localSignOutError) throw localSignOutError
       }
     } finally {
       if (session) {
         window.sessionStorage.removeItem(`kilax.idle-locked:${session.userId}`)
       }
+
       window.sessionStorage.removeItem("session")
+
       idleLockedRef.current = false
+
       setIdleLocked(false)
+
       setUnlockPassword("")
+
       setCompanies([])
+
       setUsers([])
+
       setSession(null)
     }
+
     setAuthView("login")
+
     setView("dashboard")
+
     setLoginError("")
+
     setRegisterError("")
+
     window.location.replace(companyLoginPath)
   }
 
@@ -2794,6 +3976,7 @@ export default function App() {
             onNavigate={handleNavigate}
           />
         )
+
       case "candidates":
         return (
           <Candidates
@@ -2802,6 +3985,7 @@ export default function App() {
             onNavigate={handleNavigate}
           />
         )
+
       case "candidate-inquiries":
         return (
           <Candidates
@@ -2810,6 +3994,7 @@ export default function App() {
             onNavigate={handleNavigate}
           />
         )
+
       case "documents":
         return (
           <CompanyDrive
@@ -2817,6 +4002,7 @@ export default function App() {
             permissions={session?.permissions ?? []}
           />
         )
+
       case "users":
         return (
           <UsersRoles
@@ -2824,6 +4010,7 @@ export default function App() {
             currentUserId={session?.userId ?? ""}
           />
         )
+
       case "agents":
         return (
           <Agents
@@ -2832,28 +4019,40 @@ export default function App() {
             }
           />
         )
+
       case "finance":
         return <Finance />
+
       case "accounts":
         return <AccountsWorkspace />
+
       case "invoices":
         return <Invoices />
+
       case "agent-invoices":
         return <AgentFinance />
+
       case "payments":
         return <Payments onOpenInvoices={() => handleNavigate("invoices")} />
+
       case "paychecks":
         return <Paychecks />
+
       case "suppliers":
         return <Partners />
+
       case "contractors":
         return <Contractors />
+
       case "projects":
         return <Projects />
+
       case "attendance":
         return <Attendance />
+
       case "leave":
         return <LeaveManagement />
+
       case "human-resources":
         return (
           <HumanResources
@@ -2863,22 +4062,31 @@ export default function App() {
             onPersonalDetailsComplete={setHrPersonalDetailsComplete}
           />
         )
+
       case "medical-appointments":
         return <MedicalAppointments />
+
       case "medical-management":
         return <MedicalManagement />
+
       case "hospital-management":
         return <HospitalManagement />
+
       case "branches":
         return <Branches />
+
       case "approvals":
         return <BranchApprovals />
+
       case "requisitions":
         return <Requisitions />
+
       case "expense-requests":
         return <ExpenseRequests />
+
       case "tasks":
         return <Tasks />
+
       case "communications":
         return isRecruitmentAgentRole(session?.role ?? "") ? (
           <AgentCommunicationsNotes />
@@ -2889,6 +4097,7 @@ export default function App() {
             userEmail={activeUser?.email ?? ""}
           />
         )
+
       case "staff-chat":
         return (
           <StaffChat
@@ -2898,10 +4107,13 @@ export default function App() {
             onBack={() => handleNavigate(staffChatReturnView)}
           />
         )
+
       case "ai":
         return <AIAssistant />
+
       case "reports":
         return <Reports permissions={session?.permissions ?? []} />
+
       case "passport":
         return (
           <PassportCustody
@@ -2909,10 +4121,13 @@ export default function App() {
             onRegisterCandidate={() => handleNavigate("candidates")}
           />
         )
+
       case "settings":
         return <SettingsPage company={activeCompany} user={activeUser} />
+
       case "profile":
         return <ProfileSettings />
+
       default:
         return <DatabaseModulePending view={view} />
     }
@@ -3006,6 +4221,7 @@ export default function App() {
             className="mt-6 rounded border p-4 text-left"
             style={{
               background: "var(--secondary)",
+
               borderColor: "var(--border)",
             }}
           >
@@ -3049,11 +4265,13 @@ export default function App() {
             type="button"
             onClick={() => {
               setRegistrationCompletion(null)
+
               setView("dashboard")
             }}
             className="mt-7 w-full rounded px-5 py-3 font-700"
             style={{
               background: "var(--primary)",
+
               color: "var(--primary-foreground)",
             }}
           >
@@ -3071,8 +4289,10 @@ export default function App() {
         onSwitchView={(nextView) => {
           if (nextView === "landing") {
             window.location.assign("/")
+
             return
           }
+
           setAuthView(nextView)
         }}
         companyForm={companyForm}
@@ -3129,6 +4349,7 @@ export default function App() {
         </div>
       )
     }
+
     return (
       <HumanResources
         companyId={session.companyId}
@@ -3136,8 +4357,10 @@ export default function App() {
         forcePersonalDetailsUpdate={hrProfileUpdateRequired}
         onPersonalDetailsComplete={(complete) => {
           setHrPersonalDetailsComplete(complete)
+
           if (complete) {
             setHrProfileUpdateRequired(false)
+
             setView("dashboard")
           }
         }}
@@ -3156,6 +4379,7 @@ export default function App() {
           setSession((current) =>
             current ? { ...current, onboarded: true } : current,
           )
+
           setView("dashboard")
         }}
       />
@@ -3225,7 +4449,10 @@ export default function App() {
             >
               <section
                 className="w-full max-w-lg rounded-2xl border p-6 shadow-2xl"
-                style={{ background: "var(--card)", borderColor: "var(--border)" }}
+                style={{
+                  background: "var(--card)",
+                  borderColor: "var(--border)",
+                }}
               >
                 <h2
                   id="hr-profile-reminder-title"
@@ -3236,13 +4463,18 @@ export default function App() {
                     ? "Review your HR profile"
                     : "Have your contact details changed?"}
                 </h2>
-                <p className="mt-2 text-sm" style={{ color: "var(--muted-foreground)" }}>
+                <p
+                  className="mt-2 text-sm"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
                   {hrProfileReminder === "profile_completion"
                     ? "Please review the remaining sections of your Human Resource profile. You can update identification, qualifications, work history, or languages at any time."
                     : "Please confirm whether your phone number, local address, or other personal contact information is still current."}
                 </p>
                 {hrReminderError && (
-                  <p className="mt-3 text-sm text-red-400" role="alert">{hrReminderError}</p>
+                  <p className="mt-3 text-sm text-red-400" role="alert">
+                    {hrReminderError}
+                  </p>
                 )}
                 <div className="mt-6 flex flex-wrap justify-end gap-3">
                   {hrProfileReminder === "profile_completion" ? (
@@ -3250,18 +4482,28 @@ export default function App() {
                       <button
                         type="button"
                         disabled={hrReminderSaving}
-                        onClick={() => void respondToHrProfileReminder("review_later")}
+                        onClick={() =>
+                          void respondToHrProfileReminder("review_later")
+                        }
                         className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
-                        style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                        style={{
+                          borderColor: "var(--border)",
+                          color: "var(--foreground)",
+                        }}
                       >
                         Review my profile
                       </button>
                       <button
                         type="button"
                         disabled={hrReminderSaving}
-                        onClick={() => void respondToHrProfileReminder("reviewed")}
+                        onClick={() =>
+                          void respondToHrProfileReminder("reviewed")
+                        }
                         className="rounded px-4 py-2 text-sm font-700 disabled:opacity-50"
-                        style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                        style={{
+                          background: "var(--primary)",
+                          color: "var(--primary-foreground)",
+                        }}
                       >
                         I have reviewed my profile
                       </button>
@@ -3273,16 +4515,24 @@ export default function App() {
                         disabled={hrReminderSaving}
                         onClick={() => void respondToHrProfileReminder("same")}
                         className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
-                        style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                        style={{
+                          borderColor: "var(--border)",
+                          color: "var(--foreground)",
+                        }}
                       >
                         Yes, my information is still the same
                       </button>
                       <button
                         type="button"
                         disabled={hrReminderSaving}
-                        onClick={() => void respondToHrProfileReminder("changed")}
+                        onClick={() =>
+                          void respondToHrProfileReminder("changed")
+                        }
                         className="rounded px-4 py-2 text-sm font-700 disabled:opacity-50"
-                        style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                        style={{
+                          background: "var(--primary)",
+                          color: "var(--primary-foreground)",
+                        }}
                       >
                         No, my information has changed
                       </button>
@@ -3303,6 +4553,7 @@ export default function App() {
                 className="w-full max-w-md rounded-2xl border p-8 shadow-2xl"
                 style={{
                   background: "var(--card)",
+
                   borderColor: "var(--border)",
                 }}
               >
@@ -3347,7 +4598,9 @@ export default function App() {
                         className="w-full rounded border px-3 py-2.5 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
                         style={{
                           background: "var(--secondary)",
+
                           borderColor: "var(--border)",
+
                           color: "var(--foreground)",
                         }}
                       />
@@ -3383,7 +4636,9 @@ export default function App() {
                       className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
                       style={{
                         background: "var(--secondary)",
+
                         borderColor: "var(--border)",
+
                         color: "var(--foreground)",
                       }}
                     />
@@ -3402,6 +4657,7 @@ export default function App() {
                     className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
                     style={{
                       background: "var(--primary)",
+
                       color: "var(--primary-foreground)",
                     }}
                   >
@@ -3418,7 +4674,9 @@ export default function App() {
             className="min-w-0 flex-1 overflow-auto"
             onClick={(event) => {
               const target = event.target
+
               if (!(target instanceof Element)) return
+
               if (
                 target.closest(
                   "button, a, input, select, textarea, [role='button']",
@@ -3427,6 +4685,7 @@ export default function App() {
                 return
 
               const row = target.closest("tbody > tr")
+
               if (
                 !(row instanceof HTMLTableRowElement) ||
                 row.querySelector("[colspan]")
@@ -3434,10 +4693,13 @@ export default function App() {
                 return
 
               row.parentElement
+
                 ?.querySelectorAll(":scope > tr[data-row-selected='true']")
+
                 .forEach((selectedRow) =>
                   selectedRow.removeAttribute("data-row-selected"),
                 )
+
               row.setAttribute("data-row-selected", "true")
             }}
           >
@@ -3451,6 +4713,7 @@ export default function App() {
             presentation="launcher"
             onExpand={() => {
               setStaffChatReturnView(view)
+
               handleNavigate("staff-chat")
             }}
           />
@@ -3503,7 +4766,9 @@ export default function App() {
                   className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -3524,7 +4789,9 @@ export default function App() {
                   className="mt-1 w-full rounded border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none disabled:opacity-50"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -3543,6 +4810,7 @@ export default function App() {
                 className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
                 }}
               >
@@ -3555,7 +4823,9 @@ export default function App() {
                 className="w-full rounded border px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               >
@@ -3571,109 +4841,196 @@ export default function App() {
 
 function AuthenticationExperience({
   authView,
+
   onSwitchView,
+
   companyForm,
+
   onCompanyFormChange,
+
   onRegister,
+
   registerSubmitting,
+
   registerError,
+
   onRegisterErrorChange,
+
   loginForm,
+
   onLoginFormChange,
+
   onLogin,
+
   loginSubmitting,
+
   onGoogleContinue,
+
   loginError,
+
   onRequestPasswordReset,
+
   resetEmailSending,
+
   resetEmailMessage,
+
   resetPassword,
+
   resetPasswordConfirm,
+
   resetPasswordEmail,
+
   resetPasswordError,
+
   resetPasswordSaving,
+
   onResetPasswordChange,
+
   onResetPasswordConfirmChange,
+
   onResetPassword,
+
   inviteEmail,
+
   inviteCompanyName,
+
   inviteRoleName,
+
   invitePassword,
+
   invitePasswordConfirm,
+
   inviteError,
+
   inviteSaving,
+
   onInvitePasswordChange,
+
   onInvitePasswordConfirmChange,
+
   onAcceptInvitation,
 }: {
   authView: "landing" | "login" | "register" | "verify" | "invite" | "reset-password"
+
   onSwitchView: (
     view: "landing" | "login" | "register" | "verify" | "invite" | "reset-password",
   ) => void
+
   companyForm: CompanyForm
+
   onCompanyFormChange: (next: CompanyForm) => void
+
   onRegister: (event: FormEvent) => void | Promise<void>
+
   registerSubmitting: boolean
+
   registerError: string
+
   onRegisterErrorChange: (error: string) => void
+
   loginForm: { email: string; password: string }
+
   onLoginFormChange: (next: { email: string; password: string }) => void
+
   onLogin: (event: FormEvent) => void | Promise<void>
+
   loginSubmitting: boolean
+
   onGoogleContinue: () => void
+
   loginError: string
+
   onRequestPasswordReset: () => void
+
   resetEmailSending: boolean
+
   resetEmailMessage: string
+
   resetPassword: string
+
   resetPasswordConfirm: string
+
   resetPasswordEmail: string
+
   resetPasswordError: string
+
   resetPasswordSaving: boolean
+
   onResetPasswordChange: (password: string) => void
+
   onResetPasswordConfirmChange: (password: string) => void
+
   onResetPassword: (event: FormEvent) => void
+
   inviteEmail: string
+
   inviteCompanyName: string
+
   inviteRoleName: string
+
   invitePassword: string
+
   invitePasswordConfirm: string
+
   inviteError: string
+
   inviteSaving: boolean
+
   onInvitePasswordChange: (password: string) => void
+
   onInvitePasswordConfirmChange: (password: string) => void
+
   onAcceptInvitation: (event: FormEvent) => void
 }) {
   const [showLoginPassword, setShowLoginPassword] = useState(false)
+
   const [showRegisterPassword, setShowRegisterPassword] = useState(false)
+
   const [showRegisterConfirmPassword, setShowRegisterConfirmPassword] =
     useState(false)
+
   const [showResetPassword, setShowResetPassword] = useState(false)
+
   const [showResetPasswordConfirm, setShowResetPasswordConfirm] =
     useState(false)
+
   const [registerStep, setRegisterStep] = useState(0)
+
   const [registerTermsAccepted, setRegisterTermsAccepted] = useState(false)
+
   const registrationStepTitles = [
     "Company basics",
+
     "Company contact",
+
     "Your details",
+
     "Secure account",
   ]
+
   const formInputStyle = {
     background: "var(--secondary)",
+
     borderColor: "var(--border)",
+
     color: "var(--foreground)",
   } as const
+
   const advanceRegistrationStep = () => {
     const form = document.getElementById("company-registration-form")
+
     if (!(form instanceof HTMLFormElement) || !form.reportValidity()) return
+
     onRegisterErrorChange("")
+
     setRegisterStep((current) =>
       Math.min(current + 1, registrationStepTitles.length - 1),
     )
   }
+
   const handleCompanyLogoChange = async (file?: File) => {
     if (!file) return
+
     if (
       !["image/png", "image/jpeg"].includes(file.type) ||
       file.size > 256 * 1024
@@ -3681,32 +5038,44 @@ function AuthenticationExperience({
       onRegisterErrorChange(
         "Choose a PNG or JPEG company logo no larger than 256 KB.",
       )
+
       return
     }
 
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
+
         reader.onerror = () =>
           reject(new Error("Unable to read the selected company logo."))
+
         reader.onload = () => {
           if (typeof reader.result !== "string") {
             reject(new Error("Unable to read the selected company logo."))
+
             return
           }
+
           resolve(reader.result)
         }
+
         reader.readAsDataURL(file)
       })
+
       window.localStorage.setItem(
         pendingCompanyLogoStorageKey,
+
         JSON.stringify({ dataUrl }),
       )
+
       onCompanyFormChange({
         ...companyForm,
+
         logoFile: file,
+
         logoPreview: dataUrl,
       })
+
       onRegisterErrorChange("")
     } catch (error) {
       onRegisterErrorChange(
@@ -3716,12 +5085,16 @@ function AuthenticationExperience({
       )
     }
   }
+
   const handleRegistrationFormSubmit = (event: FormEvent) => {
     if (registerStep < registrationStepTitles.length - 1) {
       event.preventDefault()
+
       advanceRegistrationStep()
+
       return
     }
+
     void onRegister(event)
   }
 
@@ -3794,6 +5167,7 @@ function AuthenticationExperience({
               className="mt-4 border px-3 py-2 text-sm"
               style={{
                 borderColor: "var(--border)",
+
                 color: "var(--foreground)",
               }}
             >
@@ -3849,6 +5223,7 @@ function AuthenticationExperience({
               className="w-full px-4 py-3 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50"
               style={{
                 background: "var(--primary)",
+
                 color: "var(--primary-foreground)",
               }}
             >
@@ -3982,6 +5357,7 @@ function AuthenticationExperience({
               className="w-full rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-50"
               style={{
                 background: "var(--primary)",
+
                 color: "var(--primary-foreground)",
               }}
             >
@@ -4068,6 +5444,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onLoginFormChange({
                       ...loginForm,
+
                       password: event.target.value,
                     })
                   }
@@ -4117,6 +5494,7 @@ function AuthenticationExperience({
                   className="px-2 text-[10px] font-700 uppercase tracking-[0.2em]"
                   style={{
                     background: "var(--card)",
+
                     color: "var(--muted-foreground)",
                   }}
                 >
@@ -4131,7 +5509,9 @@ function AuthenticationExperience({
               className="flex w-full items-center justify-center gap-2 rounded border px-4 py-3 font-600"
               style={{
                 borderColor: "var(--border)",
+
                 background: "var(--secondary)",
+
                 color: "var(--foreground)",
               }}
             >
@@ -4173,6 +5553,7 @@ function AuthenticationExperience({
               className="flex w-full items-center justify-center gap-2 rounded px-4 py-3 font-600 disabled:cursor-not-allowed disabled:opacity-70"
               style={{
                 background: "var(--primary)",
+
                 color: "var(--primary-foreground)",
               }}
             >
@@ -4261,6 +5642,7 @@ function AuthenticationExperience({
             className="mt-6 rounded border p-4 text-left"
             style={{
               background: "var(--secondary)",
+
               borderColor: "var(--border)",
             }}
           >
@@ -4290,7 +5672,9 @@ function AuthenticationExperience({
               className="px-5 py-3 rounded border font-600"
               style={{
                 borderColor: "var(--border)",
+
                 background: "var(--secondary)",
+
                 color: "var(--foreground)",
               }}
             >
@@ -4301,6 +5685,7 @@ function AuthenticationExperience({
               className="px-5 py-3 rounded font-600"
               style={{
                 background: "var(--primary)",
+
                 color: "var(--primary-foreground)",
               }}
             >
@@ -4344,7 +5729,9 @@ function AuthenticationExperience({
             className="rounded border px-3 py-2 text-sm font-600"
             style={{
               borderColor: "var(--border)",
+
               background: "var(--secondary)",
+
               color: "var(--foreground)",
             }}
           >
@@ -4375,6 +5762,7 @@ function AuthenticationExperience({
               className="h-full rounded-full transition-all duration-300"
               style={{
                 width: `${registerStep * 25}%`,
+
                 background: "var(--primary)",
               }}
             />
@@ -4422,6 +5810,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       companyName: event.target.value,
                     })
                   }
@@ -4441,6 +5830,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       registrationNumber: event.target.value,
                     })
                   }
@@ -4460,6 +5850,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       country: event.target.value,
                     })
                   }
@@ -4479,6 +5870,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       city: event.target.value,
                     })
                   }
@@ -4503,6 +5895,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       officeAddress: event.target.value,
                     })
                   }
@@ -4521,6 +5914,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       phone: event.target.value,
                     })
                   }
@@ -4541,6 +5935,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       email: event.target.value,
                     })
                   }
@@ -4559,6 +5954,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       website: event.target.value,
                     })
                   }
@@ -4588,6 +5984,7 @@ function AuthenticationExperience({
                       className="flex h-14 w-14 items-center justify-center rounded text-sm"
                       style={{
                         background: "var(--secondary)",
+
                         color: "var(--muted-foreground)",
                       }}
                     >
@@ -4610,9 +6007,12 @@ function AuthenticationExperience({
                         window.localStorage.removeItem(
                           pendingCompanyLogoStorageKey,
                         )
+
                         onCompanyFormChange({
                           ...companyForm,
+
                           logoFile: undefined,
+
                           logoPreview: undefined,
                         })
                       }}
@@ -4649,6 +6049,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       fullName: event.target.value,
                     })
                   }
@@ -4667,6 +6068,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       position: event.target.value,
                     })
                   }
@@ -4688,6 +6090,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       adminEmail: event.target.value,
                     })
                   }
@@ -4706,6 +6109,7 @@ function AuthenticationExperience({
                   onChange={(event) =>
                     onCompanyFormChange({
                       ...companyForm,
+
                       adminPhone: event.target.value,
                     })
                   }
@@ -4734,6 +6138,7 @@ function AuthenticationExperience({
                     onChange={(event) =>
                       onCompanyFormChange({
                         ...companyForm,
+
                         password: event.target.value,
                       })
                     }
@@ -4775,6 +6180,7 @@ function AuthenticationExperience({
                     onChange={(event) =>
                       onCompanyFormChange({
                         ...companyForm,
+
                         confirmPassword: event.target.value,
                       })
                     }
@@ -4842,11 +6248,13 @@ function AuthenticationExperience({
               disabled={registerStep === 0 || registerSubmitting}
               onClick={() => {
                 onRegisterErrorChange("")
+
                 setRegisterStep((current) => Math.max(current - 1, 0))
               }}
               className="rounded border px-4 py-2.5 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-40"
               style={{
                 borderColor: "var(--border)",
+
                 color: "var(--foreground)",
               }}
             >
@@ -4858,6 +6266,7 @@ function AuthenticationExperience({
               className="rounded px-5 py-2.5 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-60"
               style={{
                 background: "var(--primary)",
+
                 color: "var(--primary-foreground)",
               }}
             >
@@ -4881,11 +6290,16 @@ function OfflineBanner() {
 
   useEffect(() => {
     const goOffline = () => setOffline(true)
+
     const goOnline = () => setOffline(false)
+
     window.addEventListener("offline", goOffline)
+
     window.addEventListener("online", goOnline)
+
     return () => {
       window.removeEventListener("offline", goOffline)
+
       window.removeEventListener("online", goOnline)
     }
   }, [])
@@ -4899,7 +6313,9 @@ function OfflineBanner() {
       className="flex shrink-0 items-center gap-2 px-4 py-2 text-sm font-600"
       style={{
         background: "#78350f",
+
         color: "#fef3c7",
+
         borderBottom: "1px solid #92400e",
       }}
     >
@@ -4930,7 +6346,9 @@ function OfflineBanner() {
 
 function DatabaseModulePending({ view }: { view: View }) {
   const label = view
+
     .replace(/([A-Z])/g, " $1")
+
     .replace(/^./, (letter) => letter.toUpperCase())
 
   return (
@@ -4957,36 +6375,53 @@ function DatabaseModulePending({ view }: { view: View }) {
 
 function OnboardingWizard({
   company,
+
   user,
+
   step,
+
   onStepChange,
+
   onComplete,
 }: {
   company?: CompanyProfile
+
   user?: CompanyUser
+
   step: number
+
   onStepChange: (next: number) => void
+
   onComplete: () => void
 }) {
   const [logoPreview, setLogoPreview] = useState<string | undefined>(
     company?.logo || undefined,
   )
+
   const steps = [
     {
       title: "Company Profile",
+
       subtitle: "Complete your company information and registration details.",
     },
+
     {
       title: "Recruitment Setup",
+
       subtitle: "Configure candidate stages, statuses, and categories.",
     },
+
     {
       title: "Finance Setup",
+
       subtitle: "Define currencies, payment methods, and invoice settings.",
     },
+
     { title: "Users", subtitle: "Invite your team and assign their roles." },
+
     {
       title: "Complete",
+
       subtitle: "Your company workspace is ready for recruitment operations.",
     },
   ]
@@ -5042,6 +6477,7 @@ function OnboardingWizard({
           className="rounded border p-5 mb-6"
           style={{
             borderColor: "var(--border)",
+
             background: "var(--secondary)",
           }}
         >
@@ -5075,6 +6511,7 @@ function OnboardingWizard({
                 className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded border border-dashed px-3 py-4 transition-colors hover:border-current"
                 style={{
                   borderColor: logoPreview ? "var(--primary)" : "var(--border)",
+
                   color: "var(--muted-foreground)",
                 }}
               >
@@ -5093,7 +6530,9 @@ function OnboardingWizard({
                   className="sr-only"
                   onChange={(e) => {
                     const file = e.target.files?.[0]
+
                     if (!file) return
+
                     setLogoPreview(URL.createObjectURL(file))
                   }}
                 />
@@ -5121,7 +6560,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5138,7 +6579,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5155,7 +6598,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5172,7 +6617,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5189,7 +6636,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5211,7 +6660,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5228,7 +6679,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5245,7 +6698,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5262,7 +6717,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5284,7 +6741,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5301,7 +6760,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5318,7 +6779,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5335,7 +6798,9 @@ function OnboardingWizard({
                 className="w-full rounded border px-3 py-2.5 outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -5349,6 +6814,7 @@ function OnboardingWizard({
               className="rounded border p-4"
               style={{
                 borderColor: "var(--border)",
+
                 background: "var(--secondary)",
               }}
             >
@@ -5363,6 +6829,7 @@ function OnboardingWizard({
                   className="rounded border px-3 py-1.5 text-xs font-600"
                   style={{
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 >
@@ -5375,7 +6842,9 @@ function OnboardingWizard({
                   className="w-full rounded border px-3 py-2.5 outline-none"
                   style={{
                     background: "var(--card)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -5384,7 +6853,9 @@ function OnboardingWizard({
                   className="w-full rounded border px-3 py-2.5 outline-none"
                   style={{
                     background: "var(--card)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -5393,7 +6864,9 @@ function OnboardingWizard({
                   className="w-full rounded border px-3 py-2.5 outline-none"
                   style={{
                     background: "var(--card)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -5408,6 +6881,7 @@ function OnboardingWizard({
               className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full text-2xl"
               style={{
                 background: "rgba(245,158,11,0.12)",
+
                 color: "var(--primary)",
               }}
             >
@@ -5435,7 +6909,9 @@ function OnboardingWizard({
             className="rounded border px-4 py-2 text-sm font-600"
             style={{
               borderColor: "var(--border)",
+
               background: "var(--secondary)",
+
               color: "var(--foreground)",
             }}
           >
@@ -5453,7 +6929,9 @@ function OnboardingWizard({
               className="rounded border px-4 py-2 text-sm font-600"
               style={{
                 borderColor: "var(--border)",
+
                 background: "var(--secondary)",
+
                 color: "var(--foreground)",
               }}
             >
@@ -5468,6 +6946,7 @@ function OnboardingWizard({
               className="rounded px-5 py-2.5 text-sm font-600"
               style={{
                 background: "var(--primary)",
+
                 color: "var(--primary-foreground)",
               }}
             >
@@ -5484,29 +6963,43 @@ function OnboardingWizard({
 
 function SettingsPage({
   company,
+
   user,
 }: {
   company?: CompanyProfile
+
   user?: CompanyUser
 }) {
   const isChairman = user?.role === "Chairman"
-  const [settingsTab, setSettingsTab] = useState<
-    "general" | "departments" | "currencies" | "service-providers" | "attendance"
-  >("general")
+
+  const [settingsTab, setSettingsTab] =
+    useState<"general" | "departments" | "currencies" | "service-providers" | "expense-categories" | "attendance">(
+      "general",
+    )
 
   const permissionRows = [
     ["Candidates", "View / Create / Edit / Approve", "Recruitment Agent"],
+
     ["Finance", "View only", "Recruitment Agent"],
+
     ["Users", "No access", "Recruitment Agent"],
+
     ["Invoices", "View / Edit / Export", "Finance Manager"],
+
     ["Passport Custody", "View / Approve", "Document Officer"],
   ]
 
   const tabs: { id: typeof settingsTab; label: string }[] = [
     { id: "general", label: "General" },
+
     { id: "departments", label: "Departments" },
+
     { id: "currencies", label: "Currencies" },
+
     { id: "service-providers", label: "Service Providers" },
+
+    { id: "expense-categories", label: "Expense Categories" },
+
     ...(isChairman ? [{ id: "attendance" as const, label: "Attendance" }] : []),
   ]
 
@@ -5555,6 +7048,7 @@ function SettingsPage({
                 settingsTab === t.id
                   ? "var(--primary)"
                   : "var(--muted-foreground)",
+
               borderBottom:
                 settingsTab === t.id
                   ? "2px solid var(--primary)"
@@ -5576,6 +7070,7 @@ function SettingsPage({
                   className="rounded border p-5"
                   style={{
                     background: "var(--card)",
+
                     borderColor: "var(--border)",
                   }}
                 >
@@ -5588,15 +7083,23 @@ function SettingsPage({
                   <div className="grid gap-4 md:grid-cols-2">
                     {[
                       ["Company Name", company?.name ?? ""],
+
                       [
                         "Registration Number",
+
                         company?.registrationNumber ?? "",
                       ],
+
                       ["Country", company?.country ?? ""],
+
                       ["City", company?.city ?? ""],
+
                       ["Phone", company?.phone ?? ""],
+
                       ["Email", company?.email ?? ""],
+
                       ["Website", company?.website ?? ""],
+
                       ["Currency", company?.currency ?? "USD"],
                     ].map(([label, value]) => (
                       <div key={label}>
@@ -5611,7 +7114,9 @@ function SettingsPage({
                           className="w-full rounded border px-3 py-2.5 outline-none"
                           style={{
                             background: "var(--secondary)",
+
                             borderColor: "var(--border)",
+
                             color: "var(--foreground)",
                           }}
                         />
@@ -5624,6 +7129,7 @@ function SettingsPage({
                   className="rounded border p-5"
                   style={{
                     background: "var(--card)",
+
                     borderColor: "var(--border)",
                   }}
                 >
@@ -5637,60 +7143,62 @@ function SettingsPage({
                     className="overflow-hidden rounded border"
                     style={{ borderColor: "var(--border)" }}
                   >
-                    <div className="app-table-scroll"><table className="w-full text-left text-sm">
-                      <thead style={{ background: "var(--secondary)" }}>
-                        <tr>
-                          <th
-                            className="px-3 py-2 font-600"
-                            style={{ color: "var(--foreground)" }}
-                          >
-                            Module
-                          </th>
-                          <th
-                            className="px-3 py-2 font-600"
-                            style={{ color: "var(--foreground)" }}
-                          >
-                            Permission
-                          </th>
-                          <th
-                            className="px-3 py-2 font-600"
-                            style={{ color: "var(--foreground)" }}
-                          >
-                            Role
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {permissionRows.map(
-                          ([module, permission, roleName]) => (
-                            <tr
-                              key={module}
-                              className="border-t"
-                              style={{ borderColor: "var(--border)" }}
+                    <div className="app-table-scroll">
+                      <table className="w-full text-left text-sm">
+                        <thead style={{ background: "var(--secondary)" }}>
+                          <tr>
+                            <th
+                              className="px-3 py-2 font-600"
+                              style={{ color: "var(--foreground)" }}
                             >
-                              <td
-                                className="px-3 py-2"
-                                style={{ color: "var(--foreground)" }}
+                              Module
+                            </th>
+                            <th
+                              className="px-3 py-2 font-600"
+                              style={{ color: "var(--foreground)" }}
+                            >
+                              Permission
+                            </th>
+                            <th
+                              className="px-3 py-2 font-600"
+                              style={{ color: "var(--foreground)" }}
+                            >
+                              Role
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {permissionRows.map(
+                            ([module, permission, roleName]) => (
+                              <tr
+                                key={module}
+                                className="border-t"
+                                style={{ borderColor: "var(--border)" }}
                               >
-                                {module}
-                              </td>
-                              <td
-                                className="px-3 py-2"
-                                style={{ color: "var(--muted-foreground)" }}
-                              >
-                                {permission}
-                              </td>
-                              <td
-                                className="px-3 py-2"
-                                style={{ color: "var(--muted-foreground)" }}
-                              >
-                                {roleName}
-                              </td>
-                            </tr>
-                          ),
-                        )}
-                      </tbody>
-                    </table></div>
+                                <td
+                                  className="px-3 py-2"
+                                  style={{ color: "var(--foreground)" }}
+                                >
+                                  {module}
+                                </td>
+                                <td
+                                  className="px-3 py-2"
+                                  style={{ color: "var(--muted-foreground)" }}
+                                >
+                                  {permission}
+                                </td>
+                                <td
+                                  className="px-3 py-2"
+                                  style={{ color: "var(--muted-foreground)" }}
+                                >
+                                  {roleName}
+                                </td>
+                              </tr>
+                            ),
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5700,6 +7208,7 @@ function SettingsPage({
                   className="rounded border p-5"
                   style={{
                     background: "var(--card)",
+
                     borderColor: "var(--border)",
                   }}
                 >
@@ -5714,6 +7223,7 @@ function SettingsPage({
                       className="flex h-12 w-12 items-center justify-center rounded-full font-700"
                       style={{
                         background: "var(--secondary)",
+
                         color: "var(--primary)",
                       }}
                     >
@@ -5740,6 +7250,7 @@ function SettingsPage({
                   className="rounded border p-5"
                   style={{
                     background: "var(--card)",
+
                     borderColor: "var(--border)",
                   }}
                 >
@@ -5751,8 +7262,11 @@ function SettingsPage({
                   </div>
                   {[
                     "Company profile updated",
+
                     "Security policy applied",
+
                     "Primary admin role confirmed",
+
                     "Recruitment stages configured",
                   ].map((entry) => (
                     <div
@@ -5760,7 +7274,9 @@ function SettingsPage({
                       className="mb-3 rounded border px-3 py-2 text-sm"
                       style={{
                         borderColor: "var(--border)",
+
                         background: "var(--secondary)",
+
                         color: "var(--muted-foreground)",
                       }}
                     >
@@ -5776,6 +7292,7 @@ function SettingsPage({
         {settingsTab === "departments" && <DepartmentsSettings />}
         {settingsTab === "currencies" && <CurrenciesSettings />}
         {settingsTab === "service-providers" && <ServiceProvidersSettings />}
+        {settingsTab === "expense-categories" && <ExpenseCategoriesSettings />}
         {settingsTab === "attendance" && isChairman && company?.id && (
           <AttendanceSettings
             companyId={company.id}

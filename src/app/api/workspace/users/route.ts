@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { NextResponse } from "next/server"
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+
 import {
   isPrimaryAdministratorRole,
   isRecruitmentAgentRestrictedPermission,
@@ -43,6 +44,7 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
 
   const {
     data: { user },
+
     error: authError,
   } = await supabase.auth.getUser()
 
@@ -66,11 +68,13 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
   if (membershipError || !membership)
     return {
       error: "Active company membership not found.",
+
       status: 403 as const,
     }
 
   const { data: isMainBranch, error: branchError } = await supabase.rpc(
     "current_user_is_main_branch_user",
+
     {
       requested_company_id: membership.company_id,
     },
@@ -79,17 +83,20 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
   if (branchError)
     return {
       error: "Unable to verify your company branch.",
+
       status: 503 as const,
     }
 
   if (!isMainBranch && !membership.branch_id)
     return {
       error: "Your account must be assigned to a branch.",
+
       status: 403 as const,
     }
 
   const { data: allowed, error: permissionError } = await supabase.rpc(
     "current_user_has_company_permission",
+
     {
       requested_company_id: membership.company_id,
 
@@ -100,6 +107,7 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
   if (permissionError || !allowed)
     return {
       error: "You do not have permission to manage company users.",
+
       status: 403 as const,
     }
 
@@ -115,10 +123,13 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
   if (rolePermissionError)
     return {
       error: "Unable to verify role-management permission.",
+
       status: 503 as const,
     }
 
   return {
+    supabase,
+
     companyId: membership.company_id,
 
     userId: user.id,
@@ -138,6 +149,7 @@ export async function GET() {
     if ("error" in access)
       return NextResponse.json({ error: access.error }, {
         status: access.status,
+
         headers: responseHeaders,
       })
 
@@ -149,10 +161,12 @@ export async function GET() {
           error:
             "Set SUPABASE_SERVICE_ROLE_KEY in .env.local and restart the Next.js server to enable user management.",
         },
+
         { status: 503, headers: responseHeaders },
       )
 
     let membershipsQuery = admin
+
       .from("company_memberships")
 
       .select("user_id, status, role_id, branch_id, role:company_roles(name)")
@@ -165,6 +179,7 @@ export async function GET() {
       membershipsQuery = membershipsQuery.eq("branch_id", access.branchId)
 
     let branchesQuery = admin
+
       .from("company_branches")
 
       .select("id, name, code, is_main_branch")
@@ -178,15 +193,25 @@ export async function GET() {
 
     const [
       rolesResult,
+
       membershipsResult,
+
       permissionsResult,
+
       companyResult,
+
       branchesResult,
     ] = await Promise.all([
       admin
+
         .from("company_roles")
-        .select("id, name, description, is_system_default, created_at, access_settings")
+
+        .select(
+          "id, name, description, is_system_default, created_at, access_settings",
+        )
+
         .eq("company_id", access.companyId)
+
         .order("name"),
 
       membershipsQuery,
@@ -194,9 +219,13 @@ export async function GET() {
       admin.from("permissions").select("code, description").order("code"),
 
       admin
+
         .from("companies")
+
         .select("primary_admin_user_id")
+
         .eq("id", access.companyId)
+
         .single(),
 
       branchesQuery.order("is_main_branch", { ascending: false }).order("name"),
@@ -211,6 +240,7 @@ export async function GET() {
     ) {
       console.error(
         "Workspace user management query failed",
+
         rolesResult.error ??
           membershipsResult.error ??
           permissionsResult.error ??
@@ -220,6 +250,7 @@ export async function GET() {
 
       return NextResponse.json(
         { error: "Unable to load company users and roles." },
+
         { status: 500, headers: responseHeaders },
       )
     }
@@ -230,19 +261,27 @@ export async function GET() {
 
     const [
       { data: profiles },
+
       { data: authUsers, error: authUsersError },
+
       { data: rolePermissions, error: rolePermissionsError },
     ] = await Promise.all([
       userIds.length
         ? admin
+
             .from("profiles")
+
             .select("id, display_name, phone, branch")
+
             .in("id", userIds)
         : Promise.resolve({
             data: [] as {
               id: string
+
               display_name: string
+
               phone: string
+
               branch: string
             }[],
           }),
@@ -251,11 +290,15 @@ export async function GET() {
 
       rolesResult.data?.length
         ? admin
+
             .from("role_permissions")
+
             .select("role_id, permission_code")
+
             .eq("company_id", access.companyId)
         : Promise.resolve({
             data: [] as { role_id: string; permission_code: string }[],
+
             error: null,
           }),
     ])
@@ -263,11 +306,13 @@ export async function GET() {
     if (authUsersError || rolePermissionsError) {
       console.error(
         "Workspace user details query failed",
+
         authUsersError ?? rolePermissionsError,
       )
 
       return NextResponse.json({ error: "Unable to load user details." }, {
         status: 500,
+
         headers: responseHeaders,
       })
     }
@@ -283,14 +328,19 @@ export async function GET() {
     const roleNameById = new Map(
       (rolesResult.data ?? []).map((roleRecord) => [
         roleRecord.id,
+
         roleRecord.name,
       ]),
     )
+
     const recruitmentAgentRoleIds = new Set(
       (rolesResult.data ?? [])
+
         .filter((roleRecord) => isRecruitmentAgentRole(roleRecord.name))
+
         .map((roleRecord) => roleRecord.id),
     )
+
     const visibleRolePermissions = (rolePermissions ?? []).filter(
       (rolePermission) =>
         !recruitmentAgentRoleIds.has(rolePermission.role_id) ||
@@ -355,6 +405,9 @@ export async function GET() {
 
         canManageRoles: access.canManageRoles,
 
+        canEditAgentDetails:
+          access.userId === companyResult.data.primary_admin_user_id,
+
         branches: (branchesResult.data ?? []).map((branch) => ({
           id: branch.id,
 
@@ -365,6 +418,7 @@ export async function GET() {
           isMainBranch: branch.is_main_branch,
         })),
       },
+
       { headers: responseHeaders },
     )
   } catch (error) {
@@ -372,6 +426,7 @@ export async function GET() {
 
     return NextResponse.json({ error: "User management is unavailable." }, {
       status: 503,
+
       headers: responseHeaders,
     })
   }
@@ -384,6 +439,7 @@ export async function POST(request: Request) {
     if ("error" in access)
       return NextResponse.json({ error: access.error }, {
         status: access.status,
+
         headers: responseHeaders,
       })
 
@@ -395,16 +451,248 @@ export async function POST(request: Request) {
           error:
             "Set SUPABASE_SERVICE_ROLE_KEY in .env.local and restart the Next.js server to enable user management.",
         },
+
         { status: 503, headers: responseHeaders },
       )
 
     const body = (await request.json()) as Record<string, unknown>
 
+    if (body.action === "edit-agent-details") {
+      const userId = typeof body.userId === "string" ? body.userId : ""
+
+      const name = typeof body.name === "string" ? body.name.trim() : ""
+
+      const phone = typeof body.phone === "string" ? body.phone.trim() : ""
+
+      const email =
+        typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
+
+      const branchId = typeof body.branchId === "string" ? body.branchId : ""
+
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          userId,
+        ) ||
+        !name ||
+        name.length > 200 ||
+        phone.length > 100 ||
+        !/^\S+@\S+\.\S+$/.test(email) ||
+        email.length > 200 ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          branchId,
+        )
+      ) {
+        return NextResponse.json(
+          { error: "Enter a valid agent name, phone, email, and branch." },
+
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const { data: company, error: companyError } = await admin
+
+        .from("companies")
+
+        .select("primary_admin_user_id")
+
+        .eq("id", access.companyId)
+
+        .maybeSingle()
+
+      if (companyError || !company) {
+        console.error("Agent edit company lookup failed", companyError)
+
+        return NextResponse.json(
+          { error: "Unable to verify company ownership." },
+
+          { status: 500, headers: responseHeaders },
+        )
+      }
+
+      if (company.primary_admin_user_id !== access.userId)
+        return NextResponse.json(
+          { error: "Only the Chairman can edit agent details." },
+
+          { status: 403, headers: responseHeaders },
+        )
+
+      const { data: target, error: targetError } = await admin
+
+        .from("company_memberships")
+
+        .select("user_id, role:company_roles(name)")
+
+        .eq("company_id", access.companyId)
+
+        .eq("user_id", userId)
+
+        .maybeSingle()
+
+      if (targetError || !target)
+        return NextResponse.json(
+          { error: "Selected user is not a member of this company." },
+
+          { status: 404, headers: responseHeaders },
+        )
+
+      const targetRole = target.role as { name: string } | {
+        name: string
+      }[] | null
+
+      const targetRoleName = Array.isArray(targetRole)
+        ? targetRole[0]?.name
+        : targetRole?.name
+
+      if (!isRecruitmentAgentRole(targetRoleName ?? ""))
+        return NextResponse.json(
+          { error: "Only Recruitment Agent details can be edited here." },
+
+          { status: 400, headers: responseHeaders },
+        )
+
+      const { data: branch, error: branchError } = await admin
+
+        .from("company_branches")
+
+        .select("id")
+
+        .eq("id", branchId)
+
+        .eq("company_id", access.companyId)
+
+        .eq("status", "active")
+
+        .maybeSingle()
+
+      if (branchError || !branch)
+        return NextResponse.json(
+          { error: "Select an active branch from this company." },
+
+          { status: 400, headers: responseHeaders },
+        )
+
+      const { data: authUser, error: authUserError } =
+        await admin.auth.admin.getUserById(userId)
+
+      if (authUserError || !authUser.user?.email)
+        return NextResponse.json(
+          { error: "Unable to retrieve the agent's login email." },
+
+          { status: 404, headers: responseHeaders },
+        )
+
+      const previousEmail = authUser.user.email
+
+      const emailChanged =
+        previousEmail.toLocaleLowerCase() !== email.toLocaleLowerCase()
+
+      if (emailChanged) {
+        const { error: emailError } = await admin.auth.admin.updateUserById(
+          userId,
+
+          { email },
+        )
+
+        if (emailError) {
+          console.error("Agent login email update failed", emailError)
+
+          return NextResponse.json(
+            {
+              error:
+                emailError.code === "email_exists"
+                  ? "That email address is already used by another account."
+                  : "Unable to update the agent's login email.",
+            },
+
+            {
+              status: emailError.code === "email_exists" ? 409 : 400,
+              headers: responseHeaders,
+            },
+          )
+        }
+      }
+
+      const { error: profileError } = await access.supabase.rpc(
+        "update_company_agent_details",
+
+        {
+          p_company_id: access.companyId,
+
+          p_agent_user_id: userId,
+
+          p_display_name: name,
+
+          p_phone: phone,
+
+          p_branch_id: branchId,
+        },
+      )
+
+      if (profileError) {
+        let emailRollbackFailed = false
+
+        if (emailChanged) {
+          const { error: rollbackError } =
+            await admin.auth.admin.updateUserById(userId, {
+              email: previousEmail,
+            })
+
+          if (rollbackError) {
+            emailRollbackFailed = true
+
+            console.error(
+              "Agent email rollback after profile update failure failed",
+
+              rollbackError,
+            )
+          }
+        }
+
+        console.error("Agent profile update failed", profileError)
+
+        if (emailRollbackFailed)
+          return NextResponse.json(
+            {
+              error:
+                "The agent email changed, but the profile update failed and the prior email could not be restored. Contact support.",
+            },
+
+            { status: 500, headers: responseHeaders },
+          )
+
+        if (profileError.code === "42501")
+          return NextResponse.json(
+            { error: profileError.message },
+
+            { status: 403, headers: responseHeaders },
+          )
+
+        if (["22023", "P0002"].includes(profileError.code ?? ""))
+          return NextResponse.json(
+            { error: profileError.message },
+
+            { status: 400, headers: responseHeaders },
+          )
+
+        return NextResponse.json(
+          { error: "Unable to update agent details." },
+
+          { status: 500, headers: responseHeaders },
+        )
+      }
+
+      return NextResponse.json({ success: true }, { headers: responseHeaders })
+    }
+
     const lifecycleActions = new Set([
       "change-role",
+
       "set-status",
+
       "resend-invite",
+
       "revoke-invite",
+
       "delete-user",
     ])
 
@@ -414,12 +702,14 @@ export async function POST(request: Request) {
       if (!userId)
         return NextResponse.json({ error: "Select a company user." }, {
           status: 400,
+
           headers: responseHeaders,
         })
 
       if (userId === access.userId)
         return NextResponse.json(
           { error: "You cannot change or remove your own company access." },
+
           { status: 400, headers: responseHeaders },
         )
 
@@ -438,25 +728,32 @@ export async function POST(request: Request) {
       if (membershipError || !membership)
         return NextResponse.json(
           { error: "User is not a member of this company." },
+
           { status: 404, headers: responseHeaders },
         )
 
       if (!access.isMainBranch && membership.branch_id !== access.branchId) {
         return NextResponse.json(
           { error: "You can only manage users assigned to your branch." },
+
           { status: 403, headers: responseHeaders },
         )
       }
 
       const { data: company, error: companyError } = await admin
+
         .from("companies")
+
         .select("primary_admin_user_id")
+
         .eq("id", access.companyId)
+
         .single()
 
       if (companyError)
         return NextResponse.json(
           { error: "Unable to verify protected company users." },
+
           { status: 500, headers: responseHeaders },
         )
 
@@ -477,6 +774,7 @@ export async function POST(request: Request) {
             error:
               "The primary company administrator account is protected from user-management actions.",
           },
+
           { status: 403, headers: responseHeaders },
         )
       }
@@ -485,72 +783,105 @@ export async function POST(request: Request) {
         if (membership.status !== "active")
           return NextResponse.json(
             { error: "This company membership is not active." },
+
             { status: 409, headers: responseHeaders },
           )
 
         const { data: authUser, error: authUserError } =
           await admin.auth.admin.getUserById(userId)
+
         if (authUserError || !authUser.user)
           return NextResponse.json(
             { error: "Unable to find the invited account." },
+
             { status: 404, headers: responseHeaders },
           )
+
         if (authUser.user.confirmed_at)
           return NextResponse.json(
             { error: "This user has already accepted the invitation." },
-            { status: 409, headers: responseHeaders },
-          )
-        if (!authUser.user.email)
-          return NextResponse.json(
-            { error: "The invited account has no email address." },
+
             { status: 409, headers: responseHeaders },
           )
 
-        const { data: companyDetails, error: companyDetailsError } =
-          await admin
-            .from("companies")
-            .select("name, slug")
-            .eq("id", access.companyId)
-            .maybeSingle()
+        if (!authUser.user.email)
+          return NextResponse.json(
+            { error: "The invited account has no email address." },
+
+            { status: 409, headers: responseHeaders },
+          )
+
+        const { data: companyDetails, error: companyDetailsError } = await admin
+
+          .from("companies")
+
+          .select("name, slug")
+
+          .eq("id", access.companyId)
+
+          .maybeSingle()
+
         if (companyDetailsError || !companyDetails?.slug)
           return NextResponse.json(
             { error: "Unable to load the inviting company." },
+
             { status: 500, headers: responseHeaders },
           )
 
         const invitationId = crypto.randomUUID()
+
         const { error: invitationInsertError } = await admin
+
           .from("workspace_invitations")
+
           .insert({
             id: invitationId,
+
             company_id: access.companyId,
+
             user_id: userId,
+
             role_id: membership.role_id,
           })
+
         if (invitationInsertError) {
-          console.error("Workspace invitation renewal record creation failed", invitationInsertError)
+          console.error(
+            "Workspace invitation renewal record creation failed",
+            invitationInsertError,
+          )
+
           return NextResponse.json(
             { error: "Unable to create a fresh invitation link." },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+
         const publicKey =
           process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
           process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
         if (!supabaseUrl || !publicKey) {
           const { error: cleanupError } = await admin
+
             .from("workspace_invitations")
+
             .delete()
+
             .eq("id", invitationId)
+
           if (cleanupError)
             console.error(
               "Failed to remove invitation record without email configuration",
+
               cleanupError,
             )
+
           return NextResponse.json(
             { error: "Invitation email delivery is not configured." },
+
             { status: 503, headers: responseHeaders },
           )
         }
@@ -558,45 +889,63 @@ export async function POST(request: Request) {
         const siteUrl =
           process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
           new URL(request.url).origin
+
         const redirectUrl = new URL(
           `/${encodeURIComponent(companyDetails.slug)}`,
+
           siteUrl,
         )
+
         redirectUrl.searchParams.set("invite", "1")
+
         redirectUrl.searchParams.set("invitation_id", invitationId)
 
         const mailer = createClient(supabaseUrl, publicKey, {
           auth: {
             autoRefreshToken: false,
+
             persistSession: false,
           },
         })
+
         const { error: emailError } = await mailer.auth.signInWithOtp({
           email: authUser.user.email,
+
           options: {
             shouldCreateUser: false,
+
             emailRedirectTo: redirectUrl.toString(),
           },
         })
+
         if (emailError) {
           const { error: cleanupError } = await admin
+
             .from("workspace_invitations")
+
             .delete()
+
             .eq("id", invitationId)
+
           if (cleanupError)
             console.error(
               "Failed to remove invitation record after email delivery failure",
+
               cleanupError,
             )
+
           console.error("Workspace invitation email resend failed", emailError)
+
           return NextResponse.json(
             { error: "Unable to send the invitation email. Please try again." },
+
             { status: 502, headers: responseHeaders },
           )
         }
 
         return NextResponse.json(
           { success: true },
+
           { headers: responseHeaders },
         )
       }
@@ -607,19 +956,26 @@ export async function POST(request: Request) {
         if (!roleId)
           return NextResponse.json({ error: "Select a role." }, {
             status: 400,
+
             headers: responseHeaders,
           })
 
         const { data: role, error: roleError } = await admin
+
           .from("company_roles")
+
           .select("id, name")
+
           .eq("id", roleId)
+
           .eq("company_id", access.companyId)
+
           .maybeSingle()
 
         if (roleError || !role)
           return NextResponse.json(
             { error: "Selected role does not belong to this company." },
+
             { status: 400, headers: responseHeaders },
           )
 
@@ -629,18 +985,24 @@ export async function POST(request: Request) {
               error:
                 "The primary administrator role is reserved for the protected company user.",
             },
+
             { status: 400, headers: responseHeaders },
           )
 
         const { error } = await admin
+
           .from("company_memberships")
+
           .update({ role_id: roleId })
+
           .eq("company_id", access.companyId)
+
           .eq("user_id", userId)
 
         if (error)
           return NextResponse.json(
             { error: "Unable to change the user's role." },
+
             { status: 500, headers: responseHeaders },
           )
 
@@ -655,18 +1017,24 @@ export async function POST(request: Request) {
         if (status !== "active" && status !== "disabled")
           return NextResponse.json(
             { error: "Choose active or disabled status." },
+
             { status: 400, headers: responseHeaders },
           )
 
         const { error } = await admin
+
           .from("company_memberships")
+
           .update({ status })
+
           .eq("company_id", access.companyId)
+
           .eq("user_id", userId)
 
         if (error)
           return NextResponse.json(
             { error: "Unable to update the user's status." },
+
             { status: 500, headers: responseHeaders },
           )
 
@@ -689,6 +1057,7 @@ export async function POST(request: Request) {
       if (otherMembershipsError)
         return NextResponse.json(
           { error: "Unable to verify the user's other company access." },
+
           { status: 500, headers: responseHeaders },
         )
 
@@ -699,18 +1068,21 @@ export async function POST(request: Request) {
         if (authUserError || !authUser.user)
           return NextResponse.json(
             { error: "Unable to find the invited account." },
+
             { status: 404, headers: responseHeaders },
           )
 
         if (authUser.user.confirmed_at)
           return NextResponse.json(
             { error: "This user has already accepted the invitation." },
+
             { status: 409, headers: responseHeaders },
           )
       }
 
       if (!otherMemberships?.length) {
         const { error: disableError } = await admin
+
           .from("company_memberships")
 
           .update({ status: "disabled" })
@@ -722,6 +1094,7 @@ export async function POST(request: Request) {
         if (disableError) {
           console.error(
             "Company membership disable before account deletion failed",
+
             disableError,
           )
 
@@ -730,6 +1103,7 @@ export async function POST(request: Request) {
               error:
                 "Unable to disable the user's company access before deletion.",
             },
+
             { status: 500, headers: responseHeaders },
           )
         }
@@ -738,6 +1112,7 @@ export async function POST(request: Request) {
 
         const { error: deleteError } = await admin.auth.admin.deleteUser(
           userId,
+
           true,
         )
 
@@ -746,11 +1121,13 @@ export async function POST(request: Request) {
 
           return NextResponse.json(
             { error: "Unable to deactivate and remove the user's account." },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
         const { error: membershipDeleteError } = await admin
+
           .from("company_memberships")
 
           .delete()
@@ -762,6 +1139,7 @@ export async function POST(request: Request) {
         if (membershipDeleteError) {
           console.error(
             "Company membership removal after account deletion failed",
+
             membershipDeleteError,
           )
 
@@ -770,14 +1148,19 @@ export async function POST(request: Request) {
               error:
                 "The account was deactivated, but its company membership could not be removed.",
             },
+
             { status: 500, headers: responseHeaders },
           )
         }
       } else {
         const { error } = await admin
+
           .from("company_memberships")
+
           .delete()
+
           .eq("company_id", access.companyId)
+
           .eq("user_id", userId)
 
         if (error) {
@@ -790,6 +1173,7 @@ export async function POST(request: Request) {
                   ? "Unable to revoke the company invitation."
                   : "Unable to remove the user from this company.",
             },
+
             { status: 500, headers: responseHeaders },
           )
         }
@@ -805,6 +1189,7 @@ export async function POST(request: Request) {
             error:
               "Only main-branch users with role-management permission can manage company roles.",
           },
+
           { status: 403, headers: responseHeaders },
         )
 
@@ -818,28 +1203,34 @@ export async function POST(request: Request) {
       if (!name || name.length > 100)
         return NextResponse.json(
           { error: "Role name must be between 1 and 100 characters." },
+
           { status: 400, headers: responseHeaders },
         )
 
       if (!description || description.length > 1000)
         return NextResponse.json(
           { error: "Role duties must be between 1 and 1,000 characters." },
+
           { status: 400, headers: responseHeaders },
         )
 
       if (!requestedPermissions)
         return NextResponse.json(
           { error: "Provide the exact list of selected permissions." },
+
           { status: 400, headers: responseHeaders },
         )
 
       const { data: catalog, error: catalogError } = await admin
+
         .from("permissions")
+
         .select("code")
 
       if (catalogError)
         return NextResponse.json(
           { error: "Unable to validate the selected permissions." },
+
           { status: 500, headers: responseHeaders },
         )
 
@@ -854,6 +1245,7 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "One or more selected permissions are invalid." },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -863,7 +1255,11 @@ export async function POST(request: Request) {
         requestedPermissions.includes("agent_finance.view")
       ) {
         return NextResponse.json(
-          { error: "Agent finance access is restricted to the protected Recruitment Agent role." },
+          {
+            error:
+              "Agent finance access is restricted to the protected Recruitment Agent role.",
+          },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -877,6 +1273,7 @@ export async function POST(request: Request) {
             error:
               "Recruitment Agent roles cannot be granted Human Resource, Company Drive, Approvals, Tasks, or Communications access.",
           },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -887,8 +1284,11 @@ export async function POST(request: Request) {
 
         .insert({
           company_id: access.companyId,
+
           name,
+
           description,
+
           is_system_default: false,
         })
 
@@ -904,6 +1304,7 @@ export async function POST(request: Request) {
                 ? "A role with that name already exists."
                 : "Unable to create role.",
           },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -911,38 +1312,55 @@ export async function POST(request: Request) {
       const { data: savedPermissions, error: savePermissionsError } =
         await admin.rpc("replace_company_role_permissions", {
           requested_role_id: role.id,
+
           requested_company_id: access.companyId,
+
           requested_permissions: requestedPermissions,
         })
 
       if (savePermissionsError || !savedPermissions) {
         console.error(
           `[create-role] Failed to save permissions for role ${role.id}:`,
+
           savePermissionsError,
         )
 
         await admin
+
           .from("company_roles")
+
           .delete()
+
           .eq("id", role.id)
+
           .eq("company_id", access.companyId)
 
         return NextResponse.json(
           { error: "Unable to save role permissions." },
+
           { status: 500, headers: responseHeaders },
         )
       }
 
-      return NextResponse.json({
-        role: {
-          ...role,
-          access_settings: roleAccessSettings(role.access_settings, role.name),
+      return NextResponse.json(
+        {
+          role: {
+            ...role,
+
+            access_settings: roleAccessSettings(
+              role.access_settings,
+              role.name,
+            ),
+          },
+
+          permissions: savedPermissions,
         },
-        permissions: savedPermissions,
-      }, {
-        status: 201,
-        headers: responseHeaders,
-      })
+        {
+          status: 201,
+
+          headers: responseHeaders,
+        },
+      )
     }
 
     // ── update-role ──────────────────────────────────────────────────────────────
@@ -951,6 +1369,7 @@ export async function POST(request: Request) {
       if (!access.canManageRoles)
         return NextResponse.json(
           { error: "You do not have permission to manage roles." },
+
           { status: 403, headers: responseHeaders },
         )
 
@@ -962,35 +1381,41 @@ export async function POST(request: Request) {
         typeof body.description === "string" ? body.description.trim() : ""
 
       const requestedPermissions = parseRequestedPermissions(body.permissions)
+
       const requestedAccessSettings = body.accessSettings
 
       if (!roleId)
         return NextResponse.json({ error: "Select a role to update." }, {
           status: 400,
+
           headers: responseHeaders,
         })
 
       if (!name || name.length > 100)
         return NextResponse.json(
           { error: "Role name must be between 1 and 100 characters." },
+
           { status: 400, headers: responseHeaders },
         )
 
       if (!description || description.length > 1000)
         return NextResponse.json(
           { error: "Role duties must be between 1 and 1,000 characters." },
+
           { status: 400, headers: responseHeaders },
         )
 
       if (!requestedPermissions)
         return NextResponse.json(
           { error: "Provide the exact list of selected permissions." },
+
           { status: 400, headers: responseHeaders },
         )
 
       if (!isRoleAccessSettings(requestedAccessSettings))
         return NextResponse.json(
           { error: "Provide valid role access settings." },
+
           { status: 400, headers: responseHeaders },
         )
 
@@ -1011,6 +1436,7 @@ export async function POST(request: Request) {
       if (existingRoleError || !existingRole)
         return NextResponse.json({ error: "Role not found in this company." }, {
           status: 404,
+
           headers: responseHeaders,
         })
 
@@ -1020,6 +1446,7 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "The Recruitment Agent role name cannot be changed." },
+
           { status: 403, headers: responseHeaders },
         )
       }
@@ -1029,7 +1456,11 @@ export async function POST(request: Request) {
         requestedPermissions.includes("agent_finance.view")
       ) {
         return NextResponse.json(
-          { error: "Agent finance access is restricted to the protected Recruitment Agent role." },
+          {
+            error:
+              "Agent finance access is restricted to the protected Recruitment Agent role.",
+          },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -1043,6 +1474,7 @@ export async function POST(request: Request) {
             error:
               "Recruitment Agent roles cannot be granted Human Resource, Company Drive, Approvals, Tasks, or Communications access.",
           },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -1054,6 +1486,7 @@ export async function POST(request: Request) {
       if (isPrimaryAdminRole && name !== existingRole.name) {
         return NextResponse.json(
           { error: "The primary administrator role name cannot be changed." },
+
           { status: 403, headers: responseHeaders },
         )
       }
@@ -1061,12 +1494,15 @@ export async function POST(request: Request) {
       // Validate all requested permission codes against catalog
 
       const { data: catalog, error: catalogError } = await admin
+
         .from("permissions")
+
         .select("code")
 
       if (catalogError)
         return NextResponse.json(
           { error: "Unable to validate the selected permissions." },
+
           { status: 500, headers: responseHeaders },
         )
 
@@ -1075,6 +1511,7 @@ export async function POST(request: Request) {
       if (requestedPermissions.some((p) => !allowedPermissions.has(p))) {
         return NextResponse.json(
           { error: "One or more selected permissions are invalid." },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -1087,7 +1524,9 @@ export async function POST(request: Request) {
 
         .update({
           name,
+
           description,
+
           access_settings: roleAccessSettings(requestedAccessSettings, name),
         })
 
@@ -1095,7 +1534,9 @@ export async function POST(request: Request) {
 
         .eq("company_id", access.companyId)
 
-        .select("id, name, description, is_system_default, created_at, access_settings")
+        .select(
+          "id, name, description, is_system_default, created_at, access_settings",
+        )
 
         .single()
 
@@ -1107,6 +1548,7 @@ export async function POST(request: Request) {
                 ? "A role with that name already exists."
                 : "Unable to update role.",
           },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -1116,18 +1558,22 @@ export async function POST(request: Request) {
       const { data: savedPermissions, error: savePermissionsError } =
         await admin.rpc("replace_company_role_permissions", {
           requested_role_id: roleId,
+
           requested_company_id: access.companyId,
+
           requested_permissions: requestedPermissions,
         })
 
       if (savePermissionsError || !savedPermissions) {
         console.error(
           `[update-role] Failed to save permissions for role ${roleId}:`,
+
           savePermissionsError,
         )
 
         return NextResponse.json(
           { error: "Unable to update role permissions." },
+
           { status: 500, headers: responseHeaders },
         )
       }
@@ -1136,13 +1582,17 @@ export async function POST(request: Request) {
         {
           role: {
             ...updatedRole,
+
             access_settings: roleAccessSettings(
               updatedRole.access_settings,
+
               updatedRole.name,
             ),
           },
+
           permissions: savedPermissions,
         },
+
         { headers: responseHeaders },
       )
     }
@@ -1153,6 +1603,7 @@ export async function POST(request: Request) {
       if (!access.canManageRoles)
         return NextResponse.json(
           { error: "You do not have permission to manage roles." },
+
           { status: 403, headers: responseHeaders },
         )
 
@@ -1161,6 +1612,7 @@ export async function POST(request: Request) {
       if (!roleId)
         return NextResponse.json({ error: "Select a role to delete." }, {
           status: 400,
+
           headers: responseHeaders,
         })
 
@@ -1181,16 +1633,16 @@ export async function POST(request: Request) {
       if (existingRoleError || !existingRole)
         return NextResponse.json({ error: "Role not found in this company." }, {
           status: 404,
+
           headers: responseHeaders,
         })
 
       // Primary admin role and its system-default partners cannot be deleted
 
-      if (
-        isPrimaryAdministratorRole(existingRole.name)
-      ) {
+      if (isPrimaryAdministratorRole(existingRole.name)) {
         return NextResponse.json(
           { error: "The primary administrator role cannot be deleted." },
+
           { status: 403, headers: responseHeaders },
         )
       }
@@ -1210,6 +1662,7 @@ export async function POST(request: Request) {
       if (memberCountError)
         return NextResponse.json(
           { error: "Unable to verify role membership." },
+
           { status: 500, headers: responseHeaders },
         )
 
@@ -1220,6 +1673,7 @@ export async function POST(request: Request) {
               count === 1 ? "" : "s"
             }. Reassign them first.`,
           },
+
           { status: 409, headers: responseHeaders },
         )
       }
@@ -1237,6 +1691,7 @@ export async function POST(request: Request) {
       if (deleteError)
         return NextResponse.json({ error: "Unable to delete role." }, {
           status: 500,
+
           headers: responseHeaders,
         })
 
@@ -1268,21 +1723,27 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "Enter a valid name, email, role, phone, and branch." },
+
           { status: 400, headers: responseHeaders },
         )
       }
 
       const { data: targetBranch, error: targetBranchError } = await admin
+
         .from("company_branches")
+
         .select("id")
 
         .eq("id", branchId)
+
         .eq("company_id", access.companyId)
+
         .maybeSingle()
 
       if (targetBranchError)
         return NextResponse.json(
           { error: "Unable to verify the selected branch." },
+
           { status: 500, headers: responseHeaders },
         )
 
@@ -1292,44 +1753,55 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "Select a branch you are authorized to assign." },
+
           { status: 403, headers: responseHeaders },
         )
       }
 
       const { data: role, error: roleError } = await admin
+
         .from("company_roles")
+
         .select("id, name")
+
         .eq("id", roleId)
+
         .eq("company_id", access.companyId)
+
         .maybeSingle()
 
       if (roleError || !role)
         return NextResponse.json(
           { error: "Selected role does not belong to this company." },
+
           { status: 400, headers: responseHeaders },
         )
 
-      if (
-        isPrimaryAdministratorRole(role.name)
-      ) {
+      if (isPrimaryAdministratorRole(role.name)) {
         return NextResponse.json(
           {
             error:
               "The primary administrator role is reserved for the protected company user.",
           },
+
           { status: 400, headers: responseHeaders },
         )
       }
 
       const { data: company, error: companyError } = await admin
+
         .from("companies")
+
         .select("name, slug")
+
         .eq("id", access.companyId)
+
         .maybeSingle()
 
       if (companyError || !company || !company.slug)
         return NextResponse.json(
           { error: "Unable to load the inviting company." },
+
           { status: 500, headers: responseHeaders },
         )
 
@@ -1338,7 +1810,10 @@ export async function POST(request: Request) {
       const siteUrl =
         process.env.NEXT_PUBLIC_SITE_URL?.trim() || new URL(request.url).origin
 
-      const redirectUrl = new URL(`/${encodeURIComponent(company.slug)}`, siteUrl)
+      const redirectUrl = new URL(
+        `/${encodeURIComponent(company.slug)}`,
+        siteUrl,
+      )
 
       redirectUrl.searchParams.set("invite", "1")
 
@@ -1348,7 +1823,9 @@ export async function POST(request: Request) {
         await admin.auth.admin.inviteUserByEmail(email, {
           data: {
             full_name: name,
+
             company_name: company.name,
+
             role_name: role.name,
           },
 
@@ -1358,6 +1835,7 @@ export async function POST(request: Request) {
       if (inviteError || !inviteData.user) {
         return NextResponse.json(
           { error: inviteError?.message ?? "Unable to send invitation." },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -1368,6 +1846,7 @@ export async function POST(request: Request) {
         await admin.auth.admin.updateUserById(userId, {
           app_metadata: {
             ...inviteData.user.app_metadata,
+
             invitation_company_id: access.companyId,
           },
         })
@@ -1380,20 +1859,30 @@ export async function POST(request: Request) {
             error:
               "Invitation was sent but its company assignment could not be saved. Send a new invitation.",
           },
+
           { status: 500, headers: responseHeaders },
         )
       }
 
       const { error: profileError } = await admin
+
         .from("profiles")
+
         .upsert({ id: userId, display_name: name, phone, branch })
 
       if (profileError) {
-        console.error("Workspace invitation profile creation failed", profileError)
-        const { error: cleanupError } = await admin.auth.admin.deleteUser(userId)
+        console.error(
+          "Workspace invitation profile creation failed",
+          profileError,
+        )
+
+        const { error: cleanupError } =
+          await admin.auth.admin.deleteUser(userId)
+
         if (cleanupError) {
           console.error(
             "Failed to remove invited account after profile creation failed",
+
             cleanupError,
           )
         }
@@ -1403,26 +1892,40 @@ export async function POST(request: Request) {
             error:
               "Invitation was created but the user's profile could not be saved.",
           },
+
           { status: 500, headers: responseHeaders },
         )
       }
 
       const { error: membershipError } = await admin
+
         .from("company_memberships")
+
         .insert({
           company_id: access.companyId,
+
           user_id: userId,
+
           role_id: roleId,
+
           branch_id: branchId,
+
           status: "active",
         })
 
       if (membershipError) {
-        console.error("Workspace invitation membership assignment failed", membershipError)
-        const { error: cleanupError } = await admin.auth.admin.deleteUser(userId)
+        console.error(
+          "Workspace invitation membership assignment failed",
+          membershipError,
+        )
+
+        const { error: cleanupError } =
+          await admin.auth.admin.deleteUser(userId)
+
         if (cleanupError) {
           console.error(
             "Failed to remove invited account after membership assignment failed",
+
             cleanupError,
           )
         }
@@ -1432,12 +1935,15 @@ export async function POST(request: Request) {
             error:
               "Invitation was created but could not be assigned to the company role.",
           },
+
           { status: 500, headers: responseHeaders },
         )
       }
 
       const { error: invitationError } = await admin
+
         .from("workspace_invitations")
+
         .insert({
           id: invitationId,
 
@@ -1456,6 +1962,7 @@ export async function POST(request: Request) {
             error:
               "Invitation was sent but its one-hour acceptance record could not be saved. Send a new invitation.",
           },
+
           { status: 500, headers: responseHeaders },
         )
       }
@@ -1464,14 +1971,21 @@ export async function POST(request: Request) {
         {
           user: {
             id: userId,
+
             name,
+
             email,
+
             phone,
+
             branch,
+
             roleId,
+
             status: "invited",
           },
         },
+
         { status: 201, headers: responseHeaders },
       )
     }
@@ -1509,21 +2023,27 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "Enter a valid name, email, role, phone, and branch." },
+
           { status: 400, headers: responseHeaders },
         )
       }
 
       const { data: targetBranch, error: targetBranchError } = await admin
+
         .from("company_branches")
+
         .select("id")
 
         .eq("id", branchId)
+
         .eq("company_id", access.companyId)
+
         .maybeSingle()
 
       if (targetBranchError)
         return NextResponse.json(
           { error: "Unable to verify the selected branch." },
+
           { status: 500, headers: responseHeaders },
         )
 
@@ -1533,6 +2053,7 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "Select a branch you are authorized to assign." },
+
           { status: 403, headers: responseHeaders },
         )
       }
@@ -1540,31 +2061,37 @@ export async function POST(request: Request) {
       if (password.length < 8) {
         return NextResponse.json(
           { error: "The default password must be at least 8 characters." },
+
           { status: 400, headers: responseHeaders },
         )
       }
 
       const { data: role, error: roleError } = await admin
+
         .from("company_roles")
+
         .select("id, name")
+
         .eq("id", roleId)
+
         .eq("company_id", access.companyId)
+
         .maybeSingle()
 
       if (roleError || !role)
         return NextResponse.json(
           { error: "Selected role does not belong to this company." },
+
           { status: 400, headers: responseHeaders },
         )
 
-      if (
-        isPrimaryAdministratorRole(role.name)
-      ) {
+      if (isPrimaryAdministratorRole(role.name)) {
         return NextResponse.json(
           {
             error:
               "The primary administrator role is reserved for the protected company user.",
           },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -1582,6 +2109,7 @@ export async function POST(request: Request) {
       if (existing) {
         return NextResponse.json(
           { error: "A user with this email address already exists." },
+
           { status: 409, headers: responseHeaders },
         )
       }
@@ -1604,6 +2132,7 @@ export async function POST(request: Request) {
           {
             error: createError?.message ?? "Unable to create the user account.",
           },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -1629,6 +2158,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json(
           { error: "User was created but their profile could not be saved." },
+
           { status: 500, headers: responseHeaders },
         )
       }
@@ -1636,7 +2166,9 @@ export async function POST(request: Request) {
       // Insert company membership
 
       const { error: membershipError } = await admin
+
         .from("company_memberships")
+
         .insert({
           company_id: access.companyId,
 
@@ -1657,6 +2189,7 @@ export async function POST(request: Request) {
             error:
               "User was created but could not be assigned to the company role.",
           },
+
           { status: 500, headers: responseHeaders },
         )
       }
@@ -1665,20 +2198,28 @@ export async function POST(request: Request) {
         {
           user: {
             id: userId,
+
             name,
+
             email,
+
             phone,
+
             branch,
+
             roleId,
+
             status: "active",
           },
         },
+
         { status: 201, headers: responseHeaders },
       )
     }
 
     return NextResponse.json({ error: "Unsupported user management action." }, {
       status: 400,
+
       headers: responseHeaders,
     })
   } catch (error) {
@@ -1686,6 +2227,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       { error: "Unable to save user management changes." },
+
       { status: 503, headers: responseHeaders },
     )
   }

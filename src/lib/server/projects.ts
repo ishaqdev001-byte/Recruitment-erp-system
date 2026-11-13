@@ -3,13 +3,21 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export type ProjectPermission = "projects.view" | "projects.create" | "projects.edit" | "projects.delete" | "projects.status";
+export type ProjectPermission = "projects.view" | "projects.create" | "projects.edit" | "projects.delete" | "projects.status" | "projects.assign";
 export type ProjectSupabase = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 export type ProjectAccess =
   | { supabase: ProjectSupabase; companyId: string; userId: string; branchId: string | null }
   | { error: string; status: 401 | 403 };
 
 export type ProjectAccount = { id: string; name: string; branch_id: string | null };
+export type ProjectManagerOption = { id: string; name: string };
+export type ProjectStaffOption = { id: string; name: string; position: string; status: string };
+export type ProjectAssignmentContext = {
+  isChairman: boolean;
+  isProjectManager: boolean;
+  managers: ProjectManagerOption[];
+  staff: ProjectStaffOption[];
+};
 
 function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -80,6 +88,93 @@ export async function listProjectAccounts(access: ProjectAccess): Promise<Projec
   const { data, error } = await query;
   if (error) throw error;
   return data ?? [];
+}
+
+export async function getProjectAssignmentContext(
+  access: ProjectAccess,
+): Promise<ProjectAssignmentContext> {
+  if ("error" in access) throw new Error(access.error);
+
+  const admin = createAdminClient();
+  if (!admin)
+    throw new Error(
+      "Project assignments require the server service-role configuration.",
+    );
+
+  const [
+    { data: company, error: companyError },
+    { data: memberships, error: membershipError },
+    { data: roles, error: roleError },
+    { data: staff, error: staffError },
+  ] = await Promise.all([
+    admin
+      .from("companies")
+      .select("primary_admin_user_id")
+      .eq("id", access.companyId)
+      .maybeSingle(),
+    admin
+      .from("company_memberships")
+      .select("user_id, role_id")
+      .eq("company_id", access.companyId)
+      .eq("status", "active"),
+    admin
+      .from("company_roles")
+      .select("id, name, is_system_default")
+      .eq("company_id", access.companyId),
+    admin
+      .from("company_staff_members")
+      .select("id, name, position, status, linked_user_id")
+      .eq("company_id", access.companyId)
+      .order("name"),
+  ]);
+  if (companyError || membershipError || roleError || staffError) {
+    throw companyError ?? membershipError ?? roleError ?? staffError;
+  }
+  if (!company) throw new Error("Unable to verify company project assignments.");
+
+  const projectManagerRoleIds = new Set(
+    (roles ?? [])
+      .filter(
+        (role) =>
+          role.is_system_default &&
+          ["projects manager", "project manager"].includes(
+            role.name.trim().toLowerCase(),
+          ),
+      )
+      .map((role) => role.id),
+  );
+  const managerIds = (memberships ?? [])
+    .filter((membership) => projectManagerRoleIds.has(membership.role_id))
+    .map((membership) => membership.user_id);
+  const managerProfilesResult = managerIds.length
+    ? await admin
+        .from("profiles")
+        .select("id, display_name")
+        .in("id", managerIds)
+    : { data: [], error: null };
+  if (managerProfilesResult.error) throw managerProfilesResult.error;
+  const profileNameById = new Map(
+    (managerProfilesResult.data ?? []).map((profile) => [
+      profile.id,
+      profile.display_name,
+    ]),
+  );
+  const managerIdsSet = new Set(managerIds);
+
+  return {
+    isChairman: company.primary_admin_user_id === access.userId,
+    isProjectManager: managerIdsSet.has(access.userId),
+    managers: managerIds.map((id) => ({
+      id,
+      name: profileNameById.get(id) || "Projects Manager",
+    })),
+    staff: (staff ?? []).map((record) => ({
+      id: record.id,
+      name: record.name,
+      position: record.position,
+      status: record.status,
+    })),
+  };
 }
 
 export type ProjectInput = {

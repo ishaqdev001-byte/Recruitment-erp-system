@@ -30,6 +30,8 @@ type UserRecord = {
 
   email: string
 
+  phone: string
+
   roleId: string
 
   role: string
@@ -102,6 +104,24 @@ type StaffRecord = {
 
   weeklyTransportAllowance: number
 
+  transportAccountId: string
+}
+
+type UserEditForm = {
+  name: string
+  email: string
+  phone: string
+  roleId: string
+  branchId: string
+  status: "active" | "disabled" | "invited"
+  userType: "staff" | "member"
+  position: string
+  staffStatus: StaffRecord["status"]
+  dateJoined: string
+  lineManagerStaffId: string
+  payType: StaffPayType
+  baseSalary: string
+  weeklyTransportAllowance: string
   transportAccountId: string
 }
 
@@ -600,6 +620,24 @@ const emptyInvitedStaffForm = {
   lineManagerStaffId: "",
 }
 
+const emptyUserEditForm = (): UserEditForm => ({
+  name: "",
+  email: "",
+  phone: "",
+  roleId: "",
+  branchId: "",
+  status: "active",
+  userType: "member",
+  position: "",
+  staffStatus: "Active",
+  dateJoined: "",
+  lineManagerStaffId: "",
+  payType: "no_payroll",
+  baseSalary: "0",
+  weeklyTransportAllowance: "0",
+  transportAccountId: "",
+})
+
 export default function UsersRoles({
   companyId,
 
@@ -695,12 +733,13 @@ export default function UsersRoles({
     null,
   )
 
-  const [editUserType, setEditUserType] =
-    useState<"staff" | "member">("member")
+  const [editingUserStaff, setEditingUserStaff] =
+    useState<StaffRecord | null>(null)
 
-  const [editStaffPosition, setEditStaffPosition] = useState("")
+  const [editUserForm, setEditUserForm] =
+    useState<UserEditForm>(emptyUserEditForm)
 
-  const [editStaffDateJoined, setEditStaffDateJoined] = useState("")
+  const [editUserLoading, setEditUserLoading] = useState(false)
 
   const [invitedStaffForm, setInvitedStaffForm] = useState(
     emptyInvitedStaffForm,
@@ -1024,27 +1063,84 @@ export default function UsersRoles({
     }
   }
 
-  const openEditUserType = (user: UserRecord) => {
-    setEditingUserType(user)
-    setEditUserType(user.userType)
-    setEditStaffPosition("")
-    setEditStaffDateJoined("")
+  const openEditUserType = async (user: UserRecord) => {
+    setUserActionPending(user.id)
+    setEditUserLoading(true)
     setError("")
     setNotice("")
+    try {
+      const response = await fetch("/api/workspace/staff", {
+        cache: "no-store",
+      })
+      const result = (await response.json()) as {
+        staff?: StaffRecord[]
+        accounts?: StaffAccount[]
+        branches?: BranchOption[]
+        error?: string
+      }
+      if (!response.ok)
+        throw new Error(result.error ?? "Unable to load staff details.")
+
+      const linkedRecords = (result.staff ?? []).filter(
+        (staff) => staff.linkedUserId === user.id,
+      )
+      if (linkedRecords.length > 1)
+        throw new Error(
+          "This user has multiple linked staff records. Contact support.",
+        )
+
+      const staff = linkedRecords[0] ?? null
+      setStaffMembers(result.staff ?? [])
+      setStaffAccounts(result.accounts ?? [])
+      setStaffBranches(result.branches ?? [])
+      setEditingUserStaff(staff)
+      setEditUserForm({
+        name: user.name,
+        email: user.email,
+        phone: staff?.phone ?? user.phone,
+        roleId: user.roleId,
+        branchId:
+          user.branchId ??
+          result.branches?.find((branch) => branch.isMainBranch)?.id ??
+          "",
+        status:
+          user.status === "disabled"
+            ? "disabled"
+            : user.status === "invited"
+              ? "invited"
+              : "active",
+        userType: user.userType,
+        position: staff?.position ?? "",
+        staffStatus: staff?.status ?? "Active",
+        dateJoined: staff?.dateJoined ?? "",
+        lineManagerStaffId: staff?.lineManagerStaffId ?? "",
+        payType: staff?.payType ?? "no_payroll",
+        baseSalary: String(staff?.baseSalary ?? 0),
+        weeklyTransportAllowance: String(
+          staff?.weeklyTransportAllowance ?? 0,
+        ),
+        transportAccountId: staff?.transportAccountId ?? "",
+      })
+      setEditingUserType(user)
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load user details.",
+      )
+    } finally {
+      setEditUserLoading(false)
+      setUserActionPending("")
+    }
   }
 
   const submitUserType = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!editingUserType) return
 
-    if (editUserType === editingUserType.userType) {
-      setEditingUserType(null)
-      return
-    }
-
     if (
       editingUserType.userType === "staff" &&
-      editUserType === "member" &&
+      editUserForm.userType === "member" &&
       !window.confirm(
         `Change ${editingUserType.name} to Member? Their staff record will be unlinked and marked inactive; historical HR and payroll records will be retained.`,
       )
@@ -1061,29 +1157,45 @@ export default function UsersRoles({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "change-user-type",
+          action: "edit-user-details",
           userId: editingUserType.id,
-          userType: editUserType,
-          ...(editUserType === "staff"
+          name: editUserForm.name,
+          email: editUserForm.email,
+          phone: editUserForm.phone,
+          roleId: editUserForm.roleId,
+          branchId: editUserForm.branchId,
+          status: editUserForm.status,
+          userType: editUserForm.userType,
+          ...(editUserForm.userType === "staff"
             ? {
                 staff: {
-                  position: editStaffPosition,
-                  dateJoined: editStaffDateJoined,
+                  position: editUserForm.position,
+                  status: editUserForm.staffStatus,
+                  dateJoined: editUserForm.dateJoined,
+                  lineManagerStaffId: editUserForm.lineManagerStaffId,
+                  payType: editUserForm.payType,
+                  baseSalary: editUserForm.baseSalary,
+                  weeklyTransportAllowance:
+                    editUserForm.weeklyTransportAllowance,
+                  transportAccountId: editUserForm.transportAccountId,
                 },
               }
             : {}),
         }),
       })
-      const result = (await response.json()) as { error?: string }
+      const result = (await response.json()) as {
+        error?: string
+        emailChangePending?: boolean
+        emailChangeWarning?: string
+      }
       if (!response.ok)
-        throw new Error(result.error ?? "Unable to update the user type.")
+        throw new Error(result.error ?? "Unable to update user details.")
 
       setEditingUserType(null)
-      setNotice(
-        editUserType === "staff"
-          ? `${editingUserType.name} is now Staff. Add compensation details from the Staff tab if needed.`
-          : `${editingUserType.name} is now a Member. Staff history was retained.`,
-      )
+      setNotice(result.emailChangeWarning ??
+        (result.emailChangePending
+          ? `${editUserForm.name} was updated. Confirm the email change using the links sent to the current and new addresses.`
+          : `${editUserForm.name} was updated.`))
       setReloadKey((key) => key + 1)
     } catch (saveError) {
       setError(
@@ -3351,7 +3463,7 @@ export default function UsersRoles({
         </div>
       )}
 
-      {editingUserType && (
+      {(editingUserType || editUserLoading) && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
           onMouseDown={(event) => {
@@ -3359,129 +3471,460 @@ export default function UsersRoles({
               setEditingUserType(null)
           }}
         >
-          <form
-            onSubmit={submitUserType}
-            className="w-full max-w-md rounded border p-6"
-            style={{ background: "var(--card)", borderColor: "var(--border)" }}
-          >
-            <h2
-              className="mb-1 text-lg font-700"
-              style={{ color: "var(--foreground)" }}
+          {editUserLoading || !editingUserType ? (
+            <div
+              className="rounded border p-6 text-sm"
+              style={{
+                background: "var(--card)",
+                borderColor: "var(--border)",
+                color: "var(--muted-foreground)",
+              }}
             >
-              Edit user
-            </h2>
-            <p
-              className="mb-5 text-sm"
-              style={{ color: "var(--muted-foreground)" }}
-            >
-              {editingUserType.name} · {editingUserType.email}
-            </p>
-            <label
-              className="block text-xs font-700 uppercase tracking-wider"
-              style={{ color: "var(--muted-foreground)" }}
-            >
-              User type
-              <select
-                value={editUserType}
-                onChange={(event) =>
-                  setEditUserType(event.target.value as "staff" | "member")
-                }
-                className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
-                style={fieldStyle}
-              >
-                <option value="member">Member — Users table only</option>
-                <option value="staff">Staff — Staff roster and HR</option>
-              </select>
-            </label>
-
-            {editUserType === "staff" &&
-              editingUserType.userType === "member" && (
-                <div className="mt-4 space-y-3">
-                  <label
-                    className="block text-xs font-700 uppercase tracking-wider"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    Position
-                    <input
-                      required
-                      maxLength={150}
-                      value={editStaffPosition}
-                      onChange={(event) =>
-                        setEditStaffPosition(event.target.value)
-                      }
-                      className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
-                      style={fieldStyle}
-                    />
-                  </label>
-                  <label
-                    className="block text-xs font-700 uppercase tracking-wider"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    Date joined
-                    <input
-                      required
-                      type="date"
-                      value={editStaffDateJoined}
-                      onChange={(event) =>
-                        setEditStaffDateJoined(event.target.value)
-                      }
-                      className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
-                      style={fieldStyle}
-                    />
-                  </label>
-                  <p
-                    className="text-xs"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    The user keeps their current branch. The new staff record
-                    starts with no payroll; compensation can be added from the
-                    Staff tab.
-                  </p>
-                </div>
-              )}
-
-            {editingUserType.userType === "staff" &&
-              editUserType === "member" && (
-                <p
-                  className="mt-4 rounded border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600"
-                  role="status"
-                >
-                  The staff record will be unlinked and marked inactive.
-                  Historical HR and payroll records are retained.
-                </p>
-              )}
-
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => setEditingUserType(null)}
-                className="rounded border px-4 py-2 text-sm disabled:opacity-50"
-                style={{
-                  borderColor: "var(--border)",
-                  color: "var(--muted-foreground)",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={
-                  saving ||
-                  (editUserType === "staff" &&
-                    editingUserType.userType === "member" &&
-                    (!editStaffPosition.trim() || !editStaffDateJoined))
-                }
-                className="rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
-                style={{
-                  background: "var(--primary)",
-                  color: "var(--primary-foreground)",
-                }}
-              >
-                {saving ? "Saving…" : "Save"}
-              </button>
+              Loading user and staff details…
             </div>
-          </form>
+          ) : (
+            <form
+              onSubmit={submitUserType}
+              className="max-h-[92dvh] w-full max-w-3xl overflow-y-auto rounded border p-6"
+              style={{
+                background: "var(--card)",
+                borderColor: "var(--border)",
+              }}
+            >
+              <h2
+                className="mb-1 text-lg font-700"
+                style={{ color: "var(--foreground)" }}
+              >
+                Edit user details
+              </h2>
+              <p
+                className="mb-5 text-sm"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Update account access and linked staff details. Private HR
+                information and passwords are not changed here.
+              </p>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Full name
+                  <input
+                    required
+                    maxLength={200}
+                    value={editUserForm.name}
+                    onChange={(event) =>
+                      setEditUserForm((form) => ({
+                        ...form,
+                        name: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                    style={fieldStyle}
+                  />
+                </label>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Phone
+                  <input
+                    maxLength={100}
+                    value={editUserForm.phone}
+                    onChange={(event) =>
+                      setEditUserForm((form) => ({
+                        ...form,
+                        phone: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                    style={fieldStyle}
+                  />
+                </label>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Login email
+                  <input
+                    required
+                    type="email"
+                    maxLength={200}
+                    value={editUserForm.email}
+                    onChange={(event) =>
+                      setEditUserForm((form) => ({
+                        ...form,
+                        email: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                    style={fieldStyle}
+                  />
+                </label>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Role
+                  <select
+                    required
+                    value={editUserForm.roleId}
+                    onChange={(event) =>
+                      setEditUserForm((form) => ({
+                        ...form,
+                        roleId: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                    style={fieldStyle}
+                  >
+                    <option value="">Select role</option>
+                    {data.roles
+                      .filter(
+                        (role) => !isPrimaryAdministratorRole(role.name),
+                      )
+                      .map((role) => (
+                      <option key={role.id} value={role.id}>
+                        {role.name}
+                      </option>
+                      ))}
+                  </select>
+                </label>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Branch
+                  <select
+                    required
+                    value={editUserForm.branchId}
+                    onChange={(event) =>
+                      setEditUserForm((form) => ({
+                        ...form,
+                        branchId: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                    style={fieldStyle}
+                  >
+                    <option value="">Select branch</option>
+                    {staffBranches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Account status
+                  <select
+                    value={editUserForm.status}
+                    onChange={(event) =>
+                      setEditUserForm((form) => ({
+                        ...form,
+                        status: event.target.value as UserEditForm["status"],
+                      }))
+                    }
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                    style={fieldStyle}
+                  >
+                    {editUserForm.status === "invited" && (
+                      <option value="invited" disabled>
+                        Pending verification
+                      </option>
+                    )}
+                    <option value="active">Active</option>
+                    <option value="disabled">Disabled</option>
+                  </select>
+                </label>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  User type
+                  <select
+                    value={editUserForm.userType}
+                    onChange={(event) =>
+                      setEditUserForm((form) => ({
+                        ...form,
+                        userType: event.target.value as UserEditForm["userType"],
+                      }))
+                    }
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                    style={fieldStyle}
+                  >
+                    <option value="member">Member — Users table only</option>
+                    <option value="staff">Staff — Staff roster and HR</option>
+                  </select>
+                </label>
+              </div>
+
+              {editUserForm.userType === "staff" && (
+                <section className="mt-6 border-t pt-5" style={{ borderColor: "var(--border)" }}>
+                  <h3
+                    className="mb-4 text-sm font-700"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    Staff and compensation
+                  </h3>
+                  {editingUserStaff && (
+                    <p
+                      className="mb-4 text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Staff ID: {editingUserStaff.staffId}. Use the existing
+                      Staff tab control to edit this ID.
+                    </p>
+                  )}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Position
+                      <input
+                        required
+                        maxLength={150}
+                        value={editUserForm.position}
+                        onChange={(event) =>
+                          setEditUserForm((form) => ({
+                            ...form,
+                            position: event.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                        style={fieldStyle}
+                      />
+                    </label>
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Staff status
+                      <select
+                        value={editUserForm.staffStatus}
+                        onChange={(event) =>
+                          setEditUserForm((form) => ({
+                            ...form,
+                            staffStatus: event.target.value as StaffRecord["status"],
+                          }))
+                        }
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                        style={fieldStyle}
+                      >
+                        <option value="Active">Active</option>
+                        <option value="On Leave">On Leave</option>
+                        <option value="Inactive">Inactive</option>
+                      </select>
+                    </label>
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Date joined
+                      <input
+                        required
+                        type="date"
+                        value={editUserForm.dateJoined}
+                        onChange={(event) =>
+                          setEditUserForm((form) => ({
+                            ...form,
+                            dateJoined: event.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                        style={fieldStyle}
+                      />
+                    </label>
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Line manager
+                      <select
+                        value={editUserForm.lineManagerStaffId}
+                        onChange={(event) =>
+                          setEditUserForm((form) => ({
+                            ...form,
+                            lineManagerStaffId: event.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                        style={fieldStyle}
+                      >
+                        <option value="">No line manager</option>
+                        {staffMembers
+                          .filter(
+                            (staff) =>
+                              staff.id !== editingUserStaff?.id &&
+                              staff.status !== "Inactive",
+                          )
+                          .map((staff) => (
+                            <option key={staff.id} value={staff.id}>
+                              {staff.name} — {staff.position}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Pay arrangement
+                      <select
+                        value={editUserForm.payType}
+                        onChange={(event) =>
+                          setEditUserForm((form) => {
+                            const payType = event.target.value as StaffPayType
+                            return {
+                              ...form,
+                              payType,
+                              ...(payType === "payroll"
+                                ? {}
+                                : {
+                                    baseSalary: "0",
+                                    weeklyTransportAllowance: "0",
+                                    transportAccountId: "",
+                                  }),
+                            }
+                          })
+                        }
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                        style={fieldStyle}
+                      >
+                        <option value="payroll">Payroll</option>
+                        <option value="project">Project</option>
+                        <option value="no_payroll">No payroll</option>
+                      </select>
+                    </label>
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Base salary
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={editUserForm.baseSalary}
+                        onChange={(event) =>
+                          setEditUserForm((form) => ({
+                            ...form,
+                            baseSalary: event.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                        style={fieldStyle}
+                      />
+                    </label>
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Weekly transport allowance
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={editUserForm.weeklyTransportAllowance}
+                        onChange={(event) =>
+                          setEditUserForm((form) => ({
+                            ...form,
+                            weeklyTransportAllowance: event.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                        style={fieldStyle}
+                      />
+                    </label>
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider sm:col-span-2"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Transport funding account
+                      <select
+                        required={Number(editUserForm.weeklyTransportAllowance) > 0}
+                        value={editUserForm.transportAccountId}
+                        onChange={(event) =>
+                          setEditUserForm((form) => ({
+                            ...form,
+                            transportAccountId: event.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                        style={fieldStyle}
+                      >
+                        <option value="">Select account</option>
+                        {staffAccounts.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.name}
+                            {account.account_number
+                              ? ` (${account.account_number})`
+                              : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </section>
+              )}
+
+              {editingUserType.userType === "staff" &&
+                editUserForm.userType === "member" && (
+                  <p
+                    className="mt-4 rounded border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600"
+                    role="status"
+                  >
+                    The staff record will be unlinked and marked inactive.
+                    Historical HR and payroll records are retained.
+                  </p>
+                )}
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => setEditingUserType(null)}
+                  className="rounded border px-4 py-2 text-sm disabled:opacity-50"
+                  style={{
+                    borderColor: "var(--border)",
+                    color: "var(--muted-foreground)",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    saving ||
+                    !editUserForm.name.trim() ||
+                    !editUserForm.email.trim() ||
+                    !editUserForm.roleId ||
+                    !editUserForm.branchId ||
+                    (editUserForm.userType === "staff" &&
+                      (!editUserForm.position.trim() ||
+                        !editUserForm.dateJoined ||
+                        (editUserForm.payType === "payroll" &&
+                          Number(editUserForm.baseSalary) <= 0) ||
+                        (Number(editUserForm.weeklyTransportAllowance) > 0 &&
+                          staffAccounts.length === 0)))
+                  }
+                  className="rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
+                  style={{
+                    background: "var(--primary)",
+                    color: "var(--primary-foreground)",
+                  }}
+                >
+                  {saving ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       )}
 

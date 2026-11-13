@@ -1,5 +1,7 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import {
+  getProjectAssignmentContext,
   getProjectAccess,
   hasProjectPermission,
   listProjectAccounts,
@@ -10,6 +12,16 @@ import {
 export const runtime = "nodejs";
 const responseHeaders = { "Cache-Control": "private, no-store" };
 
+function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) return null;
+
+  return createClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
 export async function PATCH(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
     const access = await getProjectAccess();
@@ -18,10 +30,100 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body || Array.isArray(body)) return NextResponse.json({ error: "Project changes are required." }, { status: 400, headers: responseHeaders });
 
-    const { data: current, error: currentError } = await access.supabase.from("projects").select("status, account_id, branch_id").eq("id", projectId).eq("company_id", access.companyId).maybeSingle();
+    const { data: current, error: currentError } = await access.supabase.from("projects").select("status, account_id, branch_id, project_manager_user_id, assigned_staff_id").eq("id", projectId).eq("company_id", access.companyId).maybeSingle();
     if (currentError || !current) return NextResponse.json({ error: "Project not found." }, { status: 404, headers: responseHeaders });
 
     const changedFields = Object.keys(body);
+    if (body.action === "assign-staff") {
+      if (
+        changedFields.some((field) => !["action", "staffId"].includes(field)) ||
+        !changedFields.includes("staffId")
+      ) {
+        return NextResponse.json(
+          { error: "Choose one staff assignment change." },
+          { status: 400, headers: responseHeaders },
+        );
+      }
+
+      const [assignmentContext, canAssign] = await Promise.all([
+        getProjectAssignmentContext(access),
+        hasProjectPermission(access, "projects.assign"),
+      ]);
+      const canAssignAsManager =
+        canAssign &&
+        assignmentContext.isProjectManager &&
+        current.project_manager_user_id === access.userId;
+      if (!assignmentContext.isChairman && !canAssignAsManager) {
+        return NextResponse.json(
+          {
+            error:
+              "Only the Chairman or this project's assigned Projects Manager can assign staff.",
+          },
+          { status: 403, headers: responseHeaders },
+        );
+      }
+
+      const staffId =
+        body.staffId === null || body.staffId === ""
+          ? null
+          : typeof body.staffId === "string" &&
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+                body.staffId,
+              )
+            ? body.staffId
+            : undefined;
+      if (staffId === undefined) {
+        return NextResponse.json(
+          { error: "Select an active staff member from this company." },
+          { status: 400, headers: responseHeaders },
+        );
+      }
+
+      if (staffId) {
+        const selectedStaff = assignmentContext.staff.find(
+          (staff) => staff.id === staffId && staff.status === "Active",
+        );
+        if (!selectedStaff) {
+          return NextResponse.json(
+            { error: "Select an active staff member from this company." },
+            { status: 400, headers: responseHeaders },
+          );
+        }
+      }
+
+      const admin = createAdminClient();
+      if (!admin) {
+        return NextResponse.json(
+          { error: "Project assignment requires the server service-role configuration." },
+          { status: 503, headers: responseHeaders },
+        );
+      }
+      let assignmentQuery = admin
+        .from("projects")
+        .update({ assigned_staff_id: staffId })
+        .eq("id", projectId)
+        .eq("company_id", access.companyId);
+      if (!assignmentContext.isChairman) {
+        assignmentQuery = assignmentQuery.eq(
+          "project_manager_user_id",
+          access.userId,
+        );
+      }
+      const { data: updatedProject, error: assignmentError } =
+        await assignmentQuery.select("*").maybeSingle();
+      if (assignmentError || !updatedProject) {
+        console.error("Project staff assignment failed", assignmentError);
+        return NextResponse.json(
+          { error: "Unable to assign staff to this project." },
+          { status: 500, headers: responseHeaders },
+        );
+      }
+      return NextResponse.json(
+        { project: updatedProject },
+        { headers: responseHeaders },
+      );
+    }
+
     const statusOnly = changedFields.length === 1 && changedFields[0] === "status";
     if (statusOnly) {
       const status = body.status;
@@ -47,6 +149,47 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
       return NextResponse.json({ error: "You do not have permission to change project status." }, { status: 403, headers: responseHeaders });
     }
 
+    let managerUpdate: { project_manager_user_id: string | null } | null = null;
+    if ("projectManagerId" in body) {
+      const assignmentContext = await getProjectAssignmentContext(access);
+      if (!assignmentContext.isChairman) {
+        return NextResponse.json(
+          { error: "Only the Chairman can assign a Projects Manager." },
+          { status: 403, headers: responseHeaders },
+        );
+      }
+
+      const requestedManagerId =
+        body.projectManagerId === null || body.projectManagerId === ""
+          ? ""
+          : typeof body.projectManagerId === "string"
+            ? body.projectManagerId
+            : undefined;
+      if (
+        requestedManagerId === undefined ||
+        (assignmentContext.managers.length > 0 && !requestedManagerId)
+      ) {
+        return NextResponse.json(
+          { error: "Select an active Projects Manager for this project." },
+          { status: 400, headers: responseHeaders },
+        );
+      }
+      if (
+        requestedManagerId &&
+        !assignmentContext.managers.some(
+          (manager) => manager.id === requestedManagerId,
+        )
+      ) {
+        return NextResponse.json(
+          { error: "Select an active Projects Manager from this company." },
+          { status: 400, headers: responseHeaders },
+        );
+      }
+      managerUpdate = {
+        project_manager_user_id: requestedManagerId || null,
+      };
+    }
+
     let branchId = current.branch_id;
     if (input.accountId !== current.account_id) {
       const account = (await listProjectAccounts(access)).find(({ id }) => id === input.accountId);
@@ -56,7 +199,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
       branchId = account.branch_id;
     }
 
-    const { data, error } = await access.supabase.from("projects").update(projectToDatabase(input, branchId)).eq("id", projectId).eq("company_id", access.companyId).select("*").single();
+    const { data, error } = await access.supabase.from("projects").update({
+      ...projectToDatabase(input, branchId),
+      ...(managerUpdate ?? {}),
+    }).eq("id", projectId).eq("company_id", access.companyId).select("*").single();
     if (error || !data) {
       console.error("Project update failed", error);
       return NextResponse.json({ error: "Unable to update this project." }, { status: 500, headers: responseHeaders });

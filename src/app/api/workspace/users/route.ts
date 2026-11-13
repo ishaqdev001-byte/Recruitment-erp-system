@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js"
 
+import nodemailer from "nodemailer"
+
 import { NextResponse } from "next/server"
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
@@ -108,6 +110,7 @@ async function insertInvitedStaffRecord(
   createdBy: string,
   userId: string,
   staffInput: StaffInput,
+  phone = "",
 ) {
   const { data: allocation, error: allocationError } = await admin.rpc(
     "allocate_company_staff_sequence",
@@ -120,23 +123,42 @@ async function insertInvitedStaffRecord(
   } | null
   if (!sequence) throw new Error("Staff ID sequence is not configured.")
 
-  const { error } = await admin.from("company_staff_members").insert({
-    company_id: companyId,
-    branch_id: staffInput.branchId,
-    staff_id: `${sequence.staff_id_prefix}-${String(sequence.sequence_number).padStart(4, "0")}`,
-    linked_user_id: userId,
-    line_manager_staff_id: staffInput.lineManagerStaffId,
-    name: staffInput.name,
-    position: staffInput.position,
-    status: "Active",
-    date_joined: staffInput.dateJoined,
-    pay_type: staffInput.payType,
-    base_salary: staffInput.baseSalary,
-    weekly_transport_allowance: staffInput.weeklyTransportAllowance,
-    transport_account_id: staffInput.transportAccountId,
-    created_by: createdBy,
-  })
+  const { data: staff, error } = await admin
+    .from("company_staff_members")
+    .insert({
+      company_id: companyId,
+      branch_id: staffInput.branchId,
+      staff_id: `${sequence.staff_id_prefix}-${String(sequence.sequence_number).padStart(4, "0")}`,
+      linked_user_id: userId,
+      line_manager_staff_id: staffInput.lineManagerStaffId,
+      name: staffInput.name,
+      phone,
+      position: staffInput.position,
+      status: staffInput.status,
+      date_joined: staffInput.dateJoined,
+      pay_type: staffInput.payType,
+      base_salary: staffInput.baseSalary,
+      weekly_transport_allowance: staffInput.weeklyTransportAllowance,
+      transport_account_id: staffInput.transportAccountId,
+      created_by: createdBy,
+    })
+    .select("id")
+    .single()
   if (error) throw error
+  return staff.id
+}
+
+function escapeEmailHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;",
+      "'": "&#39;",
+    }
+    return entities[character] ?? character
+  })
 }
 
 function parseRequestedPermissions(value: unknown): string[] | null {
@@ -628,6 +650,575 @@ export async function POST(request: Request) {
       )
 
     const body = (await request.json()) as Record<string, unknown>
+
+    if (body.action === "edit-user-details") {
+      const userId = typeof body.userId === "string" ? body.userId : ""
+      const name = typeof body.name === "string" ? body.name.trim() : ""
+      const phone = typeof body.phone === "string" ? body.phone.trim() : ""
+      const email =
+        typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
+      const roleId = typeof body.roleId === "string" ? body.roleId : ""
+      const branchId = typeof body.branchId === "string" ? body.branchId : ""
+      const userType = body.userType
+      const requestedStatus = body.status
+      const staffBody =
+        body.staff && typeof body.staff === "object" && !Array.isArray(body.staff)
+          ? (body.staff as Record<string, unknown>)
+          : null
+
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          userId,
+        ) ||
+        !name ||
+        name.length > 200 ||
+        phone.length > 100 ||
+        !/^\S+@\S+\.\S+$/.test(email) ||
+        email.length > 200 ||
+        !roleId ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          branchId,
+        ) ||
+        (userType !== "staff" && userType !== "member") ||
+        (requestedStatus !== "active" &&
+          requestedStatus !== "disabled" &&
+          requestedStatus !== "invited")
+      ) {
+        return NextResponse.json(
+          { error: "Enter valid account, access, and staff details." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const { data: company, error: companyError } = await admin
+        .from("companies")
+        .select("name, slug, primary_admin_user_id")
+        .eq("id", access.companyId)
+        .maybeSingle()
+      if (companyError || !company) {
+        console.error("User edit company lookup failed", companyError)
+        return NextResponse.json(
+          { error: "Unable to verify company ownership." },
+          { status: 500, headers: responseHeaders },
+        )
+      }
+      if (company.primary_admin_user_id !== access.userId) {
+        return NextResponse.json(
+          { error: "Only the Chairman can edit all user details." },
+          { status: 403, headers: responseHeaders },
+        )
+      }
+      if (userId === access.userId) {
+        return NextResponse.json(
+          { error: "You cannot edit your own account from this screen." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const { data: membership, error: membershipError } = await admin
+        .from("company_memberships")
+        .select("user_id, role_id, branch_id, status, role:company_roles(name)")
+        .eq("company_id", access.companyId)
+        .eq("user_id", userId)
+        .maybeSingle()
+      if (membershipError) throw membershipError
+      if (!membership) {
+        return NextResponse.json(
+          { error: "Selected user is not a member of this company." },
+          { status: 404, headers: responseHeaders },
+        )
+      }
+
+      const joinedRole = membership.role as { name: string } | {
+        name: string
+      }[] | null
+      const currentRoleName = Array.isArray(joinedRole)
+        ? joinedRole[0]?.name
+        : joinedRole?.name
+      if (
+        userId === company.primary_admin_user_id ||
+        isPrimaryAdministratorRole(currentRoleName ?? "")
+      ) {
+        return NextResponse.json(
+          { error: "Protected administrator accounts cannot be edited." },
+          { status: 403, headers: responseHeaders },
+        )
+      }
+
+      const [
+        { data: targetRole, error: roleError },
+        { data: branch, error: branchError },
+        { data: authResult, error: authError },
+        { data: profile, error: profileError },
+        { data: linkedStaff, error: staffError },
+      ] = await Promise.all([
+        admin
+          .from("company_roles")
+          .select("id, name")
+          .eq("id", roleId)
+          .eq("company_id", access.companyId)
+          .maybeSingle(),
+        admin
+          .from("company_branches")
+          .select("id, name")
+          .eq("id", branchId)
+          .eq("company_id", access.companyId)
+          .eq("status", "active")
+          .maybeSingle(),
+        admin.auth.admin.getUserById(userId),
+        admin
+          .from("profiles")
+          .select("id, display_name, phone")
+          .eq("id", userId)
+          .maybeSingle(),
+        admin
+          .from("company_staff_members")
+          .select(
+            "id, staff_id, name, phone, position, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id, updated_by",
+          )
+          .eq("company_id", access.companyId)
+          .eq("linked_user_id", userId)
+          .limit(2),
+      ])
+
+      if (roleError || branchError || authError || profileError || staffError) {
+        throw roleError ?? branchError ?? authError ?? profileError ?? staffError
+      }
+      if (!targetRole || isPrimaryAdministratorRole(targetRole.name)) {
+        return NextResponse.json(
+          { error: "Choose an eligible role from this company." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+      if (!branch) {
+        return NextResponse.json(
+          { error: "Choose an active branch from this company." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+      if (!authResult.user?.email) {
+        return NextResponse.json(
+          { error: "Unable to retrieve the user's login email." },
+          { status: 404, headers: responseHeaders },
+        )
+      }
+      if ((linkedStaff ?? []).length > 1) {
+        return NextResponse.json(
+          { error: "This user has multiple linked staff records. Contact support." },
+          { status: 409, headers: responseHeaders },
+        )
+      }
+
+      const currentStaff = linkedStaff?.[0] ?? null
+      const staffInput =
+        userType === "staff" && staffBody
+          ? parseStaffInput({
+              ...staffBody,
+              name,
+              branchId,
+              linkedUserId: userId,
+            })
+          : null
+      if (userType === "staff" && !staffInput) {
+        return NextResponse.json(
+          {
+            error:
+              "Enter a position and joining date, and provide valid pay details for the selected arrangement.",
+          },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+      if (userType === "member" && currentStaff) {
+        const { count, error: reportsError } = await admin
+          .from("company_staff_members")
+          .select("id", { count: "exact", head: true })
+          .eq("company_id", access.companyId)
+          .eq("line_manager_staff_id", currentStaff.id)
+          .neq("status", "Inactive")
+        if (reportsError) throw reportsError
+        if (count) {
+          return NextResponse.json(
+            {
+              error:
+                "Reassign this staff member's direct reports before changing their type.",
+            },
+            { status: 409, headers: responseHeaders },
+          )
+        }
+      }
+
+      if (staffInput?.lineManagerStaffId) {
+        let managerQuery = admin
+          .from("company_staff_members")
+          .select("id")
+          .eq("id", staffInput.lineManagerStaffId)
+          .eq("company_id", access.companyId)
+          .eq("status", "Active")
+        if (currentStaff) managerQuery = managerQuery.neq("id", currentStaff.id)
+        const { data: manager, error: managerError } =
+          await managerQuery.maybeSingle()
+        if (managerError) throw managerError
+        if (!manager) {
+          return NextResponse.json(
+            { error: "Choose an active line manager from this company." },
+            { status: 400, headers: responseHeaders },
+          )
+        }
+      }
+
+      if (staffInput?.transportAccountId) {
+        const { data: account, error: accountError } = await admin
+          .from("company_accounts")
+          .select("id")
+          .eq("id", staffInput.transportAccountId)
+          .eq("company_id", access.companyId)
+          .eq("status", "active")
+          .maybeSingle()
+        if (accountError) throw accountError
+        if (!account) {
+          return NextResponse.json(
+            { error: "Choose an active funding account from this company." },
+            { status: 400, headers: responseHeaders },
+          )
+        }
+      }
+
+      const currentEmail = authResult.user.email
+      const emailChanged = currentEmail.toLowerCase() !== email
+      let currentEmailChangeLink = ""
+      let newEmailChangeLink = ""
+      let emailSmtpConfig: {
+        host: string
+        port: number
+        user: string
+        pass: string
+      } | null = null
+      let emailFrom = ""
+      if (emailChanged) {
+        const smtpHost = process.env.SYSTEM_SMTP_HOST?.trim()
+        const smtpPort = Number(process.env.SYSTEM_SMTP_PORT ?? "587")
+        const smtpUser = process.env.SYSTEM_SMTP_USER?.trim()
+        const smtpPass = process.env.SYSTEM_SMTP_PASS?.trim()
+        emailFrom = process.env.SYSTEM_SMTP_FROM?.trim() || smtpUser || ""
+        if (
+          !smtpHost ||
+          !smtpUser ||
+          !smtpPass ||
+          !emailFrom ||
+          !Number.isInteger(smtpPort) ||
+          smtpPort < 1 ||
+          smtpPort > 65535
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Login email changes require SYSTEM_SMTP_HOST, SYSTEM_SMTP_PORT, SYSTEM_SMTP_USER, and SYSTEM_SMTP_PASS on the server.",
+            },
+            { status: 503, headers: responseHeaders },
+          )
+        }
+        emailSmtpConfig = {
+          host: smtpHost,
+          port: smtpPort,
+          user: smtpUser,
+          pass: smtpPass,
+        }
+
+        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim()
+        const redirectTo = siteUrl && company.slug
+          ? new URL(`/${company.slug}/login`, siteUrl).toString()
+          : undefined
+        const options = redirectTo ? { redirectTo } : undefined
+        const [currentLinkResult, newLinkResult] = await Promise.all([
+          admin.auth.admin.generateLink({
+            type: "email_change_current",
+            email: currentEmail,
+            newEmail: email,
+            ...(options ? { options } : {}),
+          }),
+          admin.auth.admin.generateLink({
+            type: "email_change_new",
+            email: currentEmail,
+            newEmail: email,
+            ...(options ? { options } : {}),
+          }),
+        ])
+        if (currentLinkResult.error || newLinkResult.error) {
+          const linkError = currentLinkResult.error ?? newLinkResult.error
+          console.error("Email-change verification link generation failed", linkError)
+          return NextResponse.json(
+            {
+              error:
+                linkError?.code === "email_exists"
+                  ? "That login email is already used by another account."
+                  : "Unable to prepare the login email verification links.",
+            },
+            {
+              status: linkError?.code === "email_exists" ? 409 : 400,
+              headers: responseHeaders,
+            },
+          )
+        }
+
+        currentEmailChangeLink = currentLinkResult.data.properties.action_link
+        newEmailChangeLink = newLinkResult.data.properties.action_link
+      }
+
+      const originalRoleId = membership.role_id
+      const originalBranchId = membership.branch_id
+      const originalMembershipStatus = membership.status
+      const originalProfile = profile
+      const originalMetadata = authResult.user.user_metadata ?? {}
+      let profileUpdated = false
+      let membershipUpdated = false
+      let staffUpdated = false
+      let createdStaffId = ""
+
+      const rollback = async () => {
+        const failures: string[] = []
+        const actions: Array<[string, () => Promise<{ error: unknown } | { error: null }>]>
+          = []
+
+        if (staffUpdated && createdStaffId) {
+          actions.push([
+            "new staff record",
+            async () =>
+              await admin
+                .from("company_staff_members")
+                .delete()
+                .eq("company_id", access.companyId)
+                .eq("id", createdStaffId),
+          ])
+        } else if (staffUpdated && currentStaff) {
+          actions.push([
+            "staff record",
+            async () =>
+              await admin
+                .from("company_staff_members")
+                .update({
+                  branch_id: currentStaff.branch_id,
+                  linked_user_id: currentStaff.linked_user_id,
+                  line_manager_staff_id: currentStaff.line_manager_staff_id,
+                  name: currentStaff.name,
+                  phone: currentStaff.phone,
+                  position: currentStaff.position,
+                  status: currentStaff.status,
+                  date_joined: currentStaff.date_joined,
+                  pay_type: currentStaff.pay_type,
+                  base_salary: currentStaff.base_salary,
+                  weekly_transport_allowance: currentStaff.weekly_transport_allowance,
+                  transport_account_id: currentStaff.transport_account_id,
+                  updated_by: currentStaff.updated_by,
+                })
+                .eq("company_id", access.companyId)
+                .eq("id", currentStaff.id),
+          ])
+        }
+        if (membershipUpdated) {
+          actions.push([
+            "company membership",
+            async () =>
+              await admin
+                .from("company_memberships")
+                .update({
+                  role_id: originalRoleId,
+                  branch_id: originalBranchId,
+                  status: originalMembershipStatus,
+                })
+                .eq("company_id", access.companyId)
+                .eq("user_id", userId),
+          ])
+        }
+        if (profileUpdated) {
+          actions.push([
+            "user profile",
+            async () =>
+              originalProfile
+                ? await admin
+                    .from("profiles")
+                    .update({
+                      display_name: originalProfile.display_name,
+                      phone: originalProfile.phone,
+                    })
+                    .eq("id", userId)
+                : await admin.from("profiles").delete().eq("id", userId),
+          ])
+        }
+
+        await Promise.all(
+          actions.map(async ([label, action]) => {
+            try {
+              const { error } = await action()
+              if (error) {
+                failures.push(label)
+                console.error(`User edit rollback failed for ${label}`, error)
+              }
+            } catch (rollbackError) {
+              failures.push(label)
+              console.error(`User edit rollback failed for ${label}`, rollbackError)
+            }
+          }),
+        )
+        return failures
+      }
+
+      try {
+        const { error: profileUpdateError } = await admin
+          .from("profiles")
+          .upsert(
+            { id: userId, display_name: name, phone },
+            { onConflict: "id" },
+          )
+        if (profileUpdateError) throw profileUpdateError
+        profileUpdated = true
+
+        if (userType === "staff" && staffInput) {
+          if (currentStaff) {
+            const { data: updatedStaff, error: staffUpdateError } = await admin
+              .from("company_staff_members")
+              .update({
+                branch_id: branchId,
+                line_manager_staff_id: staffInput.lineManagerStaffId,
+                name,
+                phone,
+                position: staffInput.position,
+                status: staffInput.status,
+                date_joined: staffInput.dateJoined,
+                linked_user_id: userId,
+                pay_type: staffInput.payType,
+                base_salary: staffInput.baseSalary,
+                weekly_transport_allowance: staffInput.weeklyTransportAllowance,
+                transport_account_id: staffInput.transportAccountId,
+                updated_by: access.userId,
+              })
+              .eq("company_id", access.companyId)
+              .eq("id", currentStaff.id)
+              .select("id")
+              .maybeSingle()
+            if (staffUpdateError) throw staffUpdateError
+            if (!updatedStaff) throw new Error("The linked staff record was not found.")
+          } else {
+            createdStaffId = await insertInvitedStaffRecord(
+              admin,
+              access.companyId,
+              access.userId,
+              userId,
+              staffInput,
+              phone,
+            )
+          }
+          staffUpdated = true
+        } else if (userType === "member" && currentStaff) {
+          const { data: updatedStaff, error: staffUpdateError } = await admin
+            .from("company_staff_members")
+            .update({
+              linked_user_id: null,
+              status: "Inactive",
+              updated_by: access.userId,
+            })
+            .eq("company_id", access.companyId)
+            .eq("id", currentStaff.id)
+            .select("id")
+            .maybeSingle()
+          if (staffUpdateError) throw staffUpdateError
+          if (!updatedStaff) throw new Error("The linked staff record was not found.")
+          staffUpdated = true
+        }
+
+        const nextMembershipStatus =
+          requestedStatus === "invited"
+            ? membership.status
+            : requestedStatus
+        const { data: updatedMembership, error: membershipUpdateError } =
+          await admin
+            .from("company_memberships")
+            .update({
+              role_id: roleId,
+              branch_id: branchId,
+              status: nextMembershipStatus,
+            })
+            .eq("company_id", access.companyId)
+            .eq("user_id", userId)
+            .select("user_id")
+            .maybeSingle()
+        if (membershipUpdateError) throw membershipUpdateError
+        if (!updatedMembership) throw new Error("The company membership was not found.")
+        membershipUpdated = true
+
+        const { error: metadataError } = await admin.auth.admin.updateUserById(
+          userId,
+          {
+            user_metadata: {
+              ...originalMetadata,
+              full_name: name,
+            },
+          },
+        )
+        if (metadataError) throw metadataError
+      } catch (updateError) {
+        console.error("Company user details update failed", updateError)
+        const rollbackFailures = await rollback()
+        if (rollbackFailures.length) {
+          return NextResponse.json(
+            {
+              error:
+                "The user update failed and some changes could not be restored. Contact support before retrying.",
+            },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+        return NextResponse.json(
+          { error: "Unable to update user details. No profile, staff, or access changes were retained." },
+          { status: 500, headers: responseHeaders },
+        )
+      }
+
+      let emailChangeWarning = ""
+      if (emailChanged && emailSmtpConfig) {
+        const emailTransport = nodemailer.createTransport({
+          host: emailSmtpConfig.host,
+          port: emailSmtpConfig.port,
+          secure: emailSmtpConfig.port === 465,
+          auth: {
+            user: emailSmtpConfig.user,
+            pass: emailSmtpConfig.pass,
+          },
+        })
+        const displayName = escapeEmailHtml(name)
+        const companyName = escapeEmailHtml(company.name ?? "your company")
+        const escapedEmail = escapeEmailHtml(email)
+        const emailMessage = (link: string, recipient: string) => ({
+          from: emailFrom,
+          to: recipient,
+          subject: "Confirm your login email change",
+          text: `A Chairman requested a login email change for your ${company.name ?? "company"} account. Confirm the change using this link: ${link}`,
+          html: `<p>Hello ${displayName},</p><p>A Chairman requested changing the login email for your ${companyName} account to <strong>${escapedEmail}</strong>.</p><p><a href="${escapeEmailHtml(link)}">Confirm email change</a></p><p>If you did not expect this request, you can ignore this message. The login email will not change until the verification steps are completed.</p>`,
+        })
+        try {
+          const deliveries = await Promise.allSettled([
+            emailTransport.sendMail(emailMessage(currentEmailChangeLink, currentEmail)),
+            emailTransport.sendMail(emailMessage(newEmailChangeLink, email)),
+          ])
+          if (deliveries.some((delivery) => delivery.status === "rejected"))
+            throw new Error("One or more verification messages were not delivered.")
+        } catch (emailError) {
+          console.error("Company user email-change verification delivery failed", emailError)
+          emailChangeWarning =
+            "The account was updated, but email verification could not be fully delivered. The login email remains unchanged; retry the email change."
+        } finally {
+          emailTransport.close()
+        }
+      }
+
+      return NextResponse.json(
+        {
+          success: true,
+          emailChangePending: emailChanged && !emailChangeWarning,
+          emailChangeWarning: emailChangeWarning || undefined,
+        },
+        { headers: responseHeaders },
+      )
+    }
 
     if (body.action === "edit-agent-details") {
       const userId = typeof body.userId === "string" ? body.userId : ""

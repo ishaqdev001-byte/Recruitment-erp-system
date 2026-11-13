@@ -28,6 +28,13 @@ begin
     on conflict (role_id, permission_code) do nothing;
   end if;
 
+  if new.name = 'Administration Officer' then
+    delete from public.role_permissions
+    where role_id = new.id
+      and company_id = new.company_id
+      and permission_code in ('expense_requests.view', 'expense_requests.create');
+  end if;
+
   return new;
 end;
 $$;
@@ -44,8 +51,39 @@ using public.company_roles role
 where permission.role_id = role.id
   and permission.company_id = role.company_id
   and role.name = 'Administration Officer'
-  and role.is_system_default
   and permission.permission_code in ('expense_requests.view', 'expense_requests.create');
+
+create or replace function public.prevent_administration_officer_expense_request_access()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.permission_code in ('expense_requests.view', 'expense_requests.create')
+    and exists (
+      select 1
+      from public.company_roles role
+      where role.id = new.role_id
+        and role.company_id = new.company_id
+        and role.name = 'Administration Officer'
+    ) then
+    return null;
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.prevent_administration_officer_expense_request_access()
+  from public, anon, authenticated;
+drop trigger if exists role_permissions_prevent_administration_officer_expense_requests
+  on public.role_permissions;
+create trigger role_permissions_prevent_administration_officer_expense_requests
+  before insert or update of role_id, company_id, permission_code
+  on public.role_permissions
+  for each row
+  execute function public.prevent_administration_officer_expense_request_access();
 
 alter table public.expense_requests
   add column line_manager_user_id uuid references auth.users (id) on delete set null,
@@ -55,7 +93,7 @@ alter table public.expense_requests
   add column expense_category_id uuid,
   add column expense_category_name text not null default '',
   add column line_items jsonb not null default '[]'::jsonb,
-  add column requisition_id uuid references public.company_requisitions (id) on delete restrict,
+  add column requisition_id uuid references public.company_requisitions (id) on delete set null,
   add column requisition_number text,
   add constraint expense_requests_category_company_fkey
     foreign key (expense_category_id, company_id)
@@ -94,7 +132,7 @@ create unique index expense_requests_requisition_id_key
   where requisition_id is not null;
 
 alter table public.company_requisitions
-  add column source_expense_request_id uuid references public.expense_requests (id) on delete restrict,
+  add column source_expense_request_id uuid references public.expense_requests (id) on delete set null,
   add column source_expense_request_number text,
   add column requested_by_user_id uuid references auth.users (id) on delete set null,
   add column requested_by_name text not null default '',
@@ -141,11 +179,38 @@ drop policy if exists "Expense requests are visible to permitted staff and their
 create policy "Expense requests follow assigned approval visibility"
   on public.expense_requests for select to authenticated
   using (
-    created_by = (select auth.uid())
+    (
+      created_by = (select auth.uid())
+      and not exists (
+        select 1
+        from public.company_memberships membership
+        join public.company_roles role
+          on role.id = membership.role_id
+         and role.company_id = membership.company_id
+        where membership.company_id = expense_requests.company_id
+          and membership.user_id = (select auth.uid())
+          and membership.status = 'active'
+          and role.name = 'Administration Officer'
+      )
+    )
     or (
       status = 'pending_line_manager_review'
       and (
-        line_manager_user_id = (select auth.uid())
+        (
+          line_manager_user_id = (select auth.uid())
+          and public.current_user_is_linked_company_staff(company_id)
+          and not exists (
+            select 1
+            from public.company_memberships membership
+            join public.company_roles role
+              on role.id = membership.role_id
+             and role.company_id = membership.company_id
+            where membership.company_id = expense_requests.company_id
+              and membership.user_id = (select auth.uid())
+              and membership.status = 'active'
+              and role.name = 'Administration Officer'
+          )
+        )
         or (
           public.current_user_has_company_permission(company_id, 'expense_requests.review')
           and exists (
@@ -167,9 +232,13 @@ create policy "Expense requests follow assigned approval visibility"
                     on manager_membership.company_id = staff.company_id
                    and manager_membership.user_id = staff.linked_user_id
                    and manager_membership.status = 'active'
+                  join public.company_roles manager_role
+                    on manager_role.id = manager_membership.role_id
+                   and manager_role.company_id = manager_membership.company_id
                   where staff.company_id = expense_requests.company_id
                     and staff.linked_user_id = expense_requests.line_manager_user_id
                     and staff.status = 'active'
+                    and manager_role.name <> 'Administration Officer'
                 )
               )
           )
@@ -191,7 +260,6 @@ create policy "Expense requests follow assigned approval visibility"
           and membership.user_id = (select auth.uid())
           and membership.status = 'active'
           and role.name = 'Administration Officer'
-          and role.is_system_default
       )
       and (
         (
@@ -329,7 +397,11 @@ as $$
             from public.expense_requests request
             where request.id = requested_source_id
               and request.company_id = requested_company_id
-              and request.line_manager_user_id = requested_user_id
+              and (
+                request.line_manager_user_id = requested_user_id
+                or request.created_by = requested_user_id
+              )
+              and role.name <> 'Administration Officer'
           )
         )
         or (
@@ -487,10 +559,14 @@ begin
     on manager_membership.company_id = manager.company_id
    and manager_membership.user_id = manager.linked_user_id
    and manager_membership.status = 'active'
+  join public.company_roles manager_role
+    on manager_role.id = manager_membership.role_id
+   and manager_role.company_id = manager_membership.company_id
   where requester.company_id = requested_company_id
     and requester.linked_user_id = actor_id
     and requester.status = 'active'
     and manager.linked_user_id <> actor_id
+    and manager_role.name <> 'Administration Officer'
   limit 1;
 
   insert into public.expense_requests (
@@ -613,6 +689,7 @@ begin
     if request_row.status <> 'pending_line_manager_review'
       or (
         request_row.line_manager_user_id = actor_id
+        and actor_role_name <> 'Administration Officer'
         and public.current_user_is_linked_company_staff(request_row.company_id)
       ) is not true and not (
         actor_role_name = 'General Manager'
@@ -626,9 +703,13 @@ begin
               on membership.company_id = staff.company_id
              and membership.user_id = staff.linked_user_id
              and membership.status = 'active'
+            join public.company_roles manager_role
+              on manager_role.id = membership.role_id
+             and manager_role.company_id = membership.company_id
             where staff.company_id = request_row.company_id
               and staff.linked_user_id = request_row.line_manager_user_id
               and staff.status = 'active'
+              and manager_role.name <> 'Administration Officer'
           )
         )
       ) then
@@ -823,15 +904,15 @@ declare
   expected_payment_status text;
   expected_amount_paid numeric(16,2);
 begin
-  if tg_op = 'DELETE' then
-    if old.source_expense_request_id is not null then
-      raise exception 'Linked expense-request requisitions are read-only.'
-        using errcode = '42501';
-    end if;
-    return old;
+  if old.source_expense_request_id is null then
+    return new;
   end if;
 
-  if old.source_expense_request_id is null then
+  if new.source_expense_request_id is null and not exists (
+    select 1
+    from public.expense_requests request
+    where request.id = old.source_expense_request_id
+  ) then
     return new;
   end if;
 
@@ -875,7 +956,7 @@ $$;
 revoke all on function private.guard_linked_requisition_write() from public, anon, authenticated;
 drop trigger if exists guard_linked_requisition_write on public.company_requisitions;
 create trigger guard_linked_requisition_write
-  before update or delete on public.company_requisitions
+  before update on public.company_requisitions
   for each row execute function private.guard_linked_requisition_write();
 
 create or replace function private.sync_expense_request_requisition_status()
@@ -933,12 +1014,23 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  target_requisition_id uuid;
+  target_company_id uuid;
 begin
+  if tg_op = 'DELETE' then
+    target_requisition_id := old.requisition_id;
+    target_company_id := old.company_id;
+  else
+    target_requisition_id := new.requisition_id;
+    target_company_id := new.company_id;
+  end if;
+
   if exists (
     select 1
     from public.company_requisitions requisition
-    where requisition.id = case when tg_op = 'DELETE' then old.requisition_id else new.requisition_id end
-      and requisition.company_id = case when tg_op = 'DELETE' then old.company_id else new.company_id end
+    where requisition.id = target_requisition_id
+      and requisition.company_id = target_company_id
       and requisition.source_expense_request_id is not null
   ) then
     raise exception 'Items on linked expense-request requisitions are read-only.'
@@ -963,12 +1055,23 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  target_requisition_id uuid;
+  target_company_id uuid;
 begin
+  if tg_op = 'DELETE' then
+    target_requisition_id := old.requisition_id;
+    target_company_id := old.company_id;
+  else
+    target_requisition_id := new.requisition_id;
+    target_company_id := new.company_id;
+  end if;
+
   if exists (
     select 1
     from public.company_requisitions requisition
-    where requisition.id = case when tg_op = 'DELETE' then old.requisition_id else new.requisition_id end
-      and requisition.company_id = case when tg_op = 'DELETE' then old.company_id else new.company_id end
+    where requisition.id = target_requisition_id
+      and requisition.company_id = target_company_id
       and requisition.source_expense_request_id is not null
   ) then
     raise exception 'Linked expense-request requisitions are paid through the Expense Requests workflow.'

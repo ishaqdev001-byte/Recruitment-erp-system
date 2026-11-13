@@ -545,6 +545,8 @@ type Session = {
 
   isMainBranchUser: boolean
 
+  isLinkedStaff?: boolean
+
   permissions: string[]
 }
 
@@ -678,6 +680,27 @@ function getDefaultViewByPermissions(
   return "dashboard"
 }
 
+function canAccessSessionView(
+  view: View,
+  workspaceSession: Session | null | undefined,
+) {
+  if (!workspaceSession) return false
+  if (
+    view === "expense-requests" &&
+    workspaceSession.role === "Administration Officer"
+  ) {
+    return false
+  }
+  if (
+    view === "expense-requests" &&
+    workspaceSession.role !== "Administration Officer" &&
+    workspaceSession.isLinkedStaff
+  ) {
+    return true
+  }
+  return canAccessView(view, workspaceSession.permissions)
+}
+
 async function loadCompanyPermissionCodes(companyId: string) {
   const response = await fetch(
     `/api/workspace/permission-codes?companyId=${encodeURIComponent(companyId)}`,
@@ -803,6 +826,14 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
   if (!companyRecord || !roleRecord)
     throw new Error("Your company membership is incomplete.")
+
+  const { data: isLinkedStaff, error: staffStatusError } = await supabase.rpc(
+    "current_user_is_linked_company_staff",
+    { requested_company_id: companyRecord.id },
+  )
+
+  if (staffStatusError)
+    throw new Error("Unable to verify your linked staff status.")
 
   let permissions: string[]
   if (companyRecord.primary_admin_user_id === user.id) {
@@ -1045,6 +1076,8 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
       branchName,
 
       isMainBranchUser,
+
+      isLinkedStaff: Boolean(isLinkedStaff),
 
       permissions,
     } satisfies Session,
@@ -1348,7 +1381,7 @@ export default function App() {
         return
       }
 
-      if (session && !canAccessView(nextView, session.permissions)) return
+      if (session && !canAccessSessionView(nextView, session)) return
 
       preloadView(nextView)
 
@@ -2047,7 +2080,7 @@ export default function App() {
 
               if (
                 lastView &&
-                canAccessView(lastView, workspace.session.permissions)
+                canAccessSessionView(lastView, workspace.session)
               ) {
                 if (!cancelled) setView(lastView)
               }
@@ -2314,7 +2347,7 @@ export default function App() {
   }, [session?.companyId])
 
   useEffect(() => {
-    if (session && !canAccessView(view, session.permissions)) {
+    if (session && !canAccessSessionView(view, session)) {
       setView(getDefaultViewByPermissions(session.permissions, session.role))
     }
   }, [session, view])
@@ -3344,7 +3377,7 @@ export default function App() {
 
         if (
           lastView &&
-          canAccessView(lastView, workspace.session.permissions)
+          canAccessSessionView(lastView, workspace.session)
         ) {
           setView(lastView)
         } else {
@@ -3519,7 +3552,7 @@ export default function App() {
 
         if (
           lastView &&
-          canAccessView(lastView, workspace.session.permissions)
+          canAccessSessionView(lastView, workspace.session)
         ) {
           setView(lastView)
         } else {
@@ -3673,7 +3706,7 @@ export default function App() {
 
         if (
           lastView &&
-          canAccessView(lastView, workspace.session.permissions)
+          canAccessSessionView(lastView, workspace.session)
         ) {
           setView(lastView)
         } else {
@@ -3771,7 +3804,7 @@ export default function App() {
             "kilax.lastActiveView",
           ) as View | null
 
-          if (lastView && canAccessView(lastView, session.permissions)) {
+          if (lastView && canAccessSessionView(lastView, session)) {
             setView(lastView)
           } else {
             setView(
@@ -3990,7 +4023,7 @@ export default function App() {
   }
 
   const renderView = () => {
-    if (session && !canAccessView(view, session.permissions)) {
+    if (session && !canAccessSessionView(view, session)) {
       return <PageLoading />
     }
 
@@ -4437,6 +4470,7 @@ export default function App() {
           companyLogo={session.companyLogo}
           branchName={session.branchName}
           isMainBranchUser={session.isMainBranchUser}
+          isLinkedStaff={session.isLinkedStaff}
           permissions={session.permissions}
           onLogout={handleLogout}
         />

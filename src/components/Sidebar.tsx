@@ -171,6 +171,7 @@ export default function Sidebar({
   onLogout,
   branchName,
   isMainBranchUser,
+  isLinkedStaff,
   permissions,
 }: {
   active: View
@@ -185,6 +186,7 @@ export default function Sidebar({
   onLogout: () => void
   branchName?: string
   isMainBranchUser?: boolean
+  isLinkedStaff?: boolean
   permissions: string[]
 }) {
   const [openGroups, setOpenGroups] = useState({
@@ -199,6 +201,14 @@ export default function Sidebar({
         (permission) => !isRecruitmentAgentRestrictedPermission(permission),
       )
     : permissions
+  const canAccessNavigationView = (view: View) => {
+    if (view === "expense-requests" && role === "Administration Officer")
+      return false
+    return (
+      canAccessView(view, visiblePermissions) ||
+      (view === "expense-requests" && isLinkedStaff === true)
+    )
+  }
 
   useEffect(() => {
     if (financeViews.has(active))
@@ -306,7 +316,7 @@ export default function Sidebar({
         {nav.map((item, idx) => {
           // Check if this item is accessible based on permissions
           if (item.type === "item") {
-            if (!canAccessView(item.id, visiblePermissions)) {
+            if (!canAccessNavigationView(item.id)) {
               return null // Skip this nav item
             }
             const Icon = item.icon
@@ -349,7 +359,7 @@ export default function Sidebar({
 
           // Filter children based on permissions
           const allowedChildren = item.children.filter((child) =>
-            canAccessView(child.id, visiblePermissions),
+            canAccessNavigationView(child.id),
           )
 
           // Skip group entirely if no children are accessible

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react"
 import { Check, CircleDollarSign, Loader2, Plus, X } from "lucide-react"
 
 type ExpenseRequestStatus =
+  | "pending_line_manager_review"
+  | "pending_administration_officer_initiation"
   | "pending_general_manager_review"
   | "pending_finance_verification"
   | "pending_chairman_authorization"
@@ -20,7 +22,13 @@ type ExpenseRequestRecord = {
   amount: number
   due_date: string
   request_comment: string
+  expense_category_name: string
+  line_items: { description: string; quantity: number; rate: number }[]
   status: ExpenseRequestStatus
+  line_manager_user_id: string | null
+  line_manager_fallback: boolean
+  line_manager_comment: string | null
+  requisition_number: string | null
   rejected_stage: string | null
   created_by: string
   created_at: string
@@ -37,6 +45,7 @@ type ExpenseRequestRecord = {
 type Permissions = {
   canView: boolean
   canCreate: boolean
+  canReviewLineManager: boolean
   canReview: boolean
   canVerify: boolean
   canAuthorize: boolean
@@ -44,10 +53,13 @@ type Permissions = {
 }
 
 type AccountOption = { id: string; name: string; account_type: string }
+type ExpenseCategory = { id: string; name: string }
+type DraftExpenseItem = { description: string; quantity: string; rate: string }
 
 const initialPermissions: Permissions = {
   canView: false,
   canCreate: false,
+  canReviewLineManager: false,
   canReview: false,
   canVerify: false,
   canAuthorize: false,
@@ -55,6 +67,8 @@ const initialPermissions: Permissions = {
 }
 
 const statuses: Record<ExpenseRequestStatus, { label: string; color: string }> = {
+  pending_line_manager_review: { label: "Line-manager review", color: "#f59e0b" },
+  pending_administration_officer_initiation: { label: "Awaiting requisition initiation", color: "#f59e0b" },
   pending_general_manager_review: { label: "General Manager review", color: "#f59e0b" },
   pending_finance_verification: { label: "Finance verification", color: "#3b82f6" },
   pending_chairman_authorization: { label: "Chairman authorization", color: "#8b5cf6" },
@@ -86,15 +100,19 @@ function formatDate(value: string) {
 
 export default function ExpenseRequests() {
   const [requests, setRequests] = useState<ExpenseRequestRecord[]>([])
+  const [currentUserId, setCurrentUserId] = useState("")
   const [permissions, setPermissions] = useState(initialPermissions)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
   const [expenseName, setExpenseName] = useState("")
-  const [requestedBy, setRequestedBy] = useState("")
   const [purpose, setPurpose] = useState("")
-  const [amount, setAmount] = useState("")
+  const [expenseCategoryId, setExpenseCategoryId] = useState("")
+  const [categories, setCategories] = useState<ExpenseCategory[]>([])
+  const [items, setItems] = useState<DraftExpenseItem[]>([
+    { description: "", quantity: "1", rate: "" },
+  ])
   const [dueDate, setDueDate] = useState("")
   const [requestComment, setRequestComment] = useState("")
   const [comments, setComments] = useState<Record<string, string>>({})
@@ -114,13 +132,29 @@ export default function ExpenseRequests() {
       })
       const payload = (await response.json()) as {
         requests?: ExpenseRequestRecord[]
+        currentUserId?: string
         permissions?: Permissions
         error?: string
       }
       if (!response.ok)
         throw new Error(payload.error ?? "Unable to load expense requests.")
       setRequests(payload.requests ?? [])
+      setCurrentUserId(payload.currentUserId ?? "")
       setPermissions(payload.permissions ?? initialPermissions)
+      if (payload.permissions?.canCreate) {
+        const categoryResponse = await fetch("/api/settings/expense-categories", {
+          cache: "no-store",
+        })
+        const categoryPayload = (await categoryResponse.json()) as {
+          categories?: ExpenseCategory[]
+          error?: string
+        }
+        if (!categoryResponse.ok)
+          throw new Error(categoryPayload.error ?? "Unable to load expense categories.")
+        setCategories(categoryPayload.categories ?? [])
+      } else {
+        setCategories([])
+      }
     } catch (loadError) {
       console.error("Expense request list failed", loadError)
       setError(
@@ -149,9 +183,13 @@ export default function ExpenseRequests() {
         body: JSON.stringify({
           action: "create",
           expenseName,
-          requestedBy,
           purpose,
-          amount: Number(amount),
+          expenseCategoryId,
+          items: items.map((item) => ({
+            description: item.description.trim(),
+            quantity: Number(item.quantity),
+            rate: Number(item.rate),
+          })),
           dueDate,
           comment: requestComment,
         }),
@@ -160,12 +198,12 @@ export default function ExpenseRequests() {
       if (!response.ok)
         throw new Error(payload.error ?? "Unable to submit the expense request.")
       setExpenseName("")
-      setRequestedBy("")
       setPurpose("")
-      setAmount("")
+      setExpenseCategoryId("")
+      setItems([{ description: "", quantity: "1", rate: "" }])
       setDueDate("")
       setRequestComment("")
-      setNotice("Expense request submitted for General Manager review.")
+      setNotice("Expense request submitted for line-manager review.")
       await loadRequests()
     } catch (submitError) {
       console.error("Expense request submission failed", submitError)
@@ -257,9 +295,33 @@ export default function ExpenseRequests() {
     setComments((current) => ({ ...current, [requestId]: value }))
   }
 
+  function updateItem(index: number, patch: Partial<DraftExpenseItem>) {
+    setItems((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, ...patch } : item,
+      ),
+    )
+  }
+
   function renderActionArea(request: ExpenseRequestRecord) {
     const comment = comments[request.id] ?? ""
+    const canReviewLineManagerRequest =
+      (permissions.canReviewLineManager &&
+        request.line_manager_user_id === currentUserId) ||
+      permissions.canReview
     const action = (() => {
+      if (
+        request.status === "pending_line_manager_review" &&
+        canReviewLineManagerRequest
+      )
+        return {
+          title: request.line_manager_fallback
+            ? "General Manager fallback review"
+            : "Line-manager review",
+          approve: "line_manager_approve",
+          reject: "line_manager_reject",
+          approveLabel: "Approve for requisition initiation",
+        }
       if (request.status === "pending_general_manager_review" && permissions.canReview)
         return {
           title: "General Manager review",
@@ -365,7 +427,7 @@ export default function ExpenseRequests() {
             Expense Requests
           </h1>
           <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
-            Requests move through General Manager review, Finance verification, Chairman authorization, and Finance Manager cash-out.
+            Staff submit requests to their line manager. Approved requests are initiated as requisitions, then proceed through General Manager review, Finance verification, Chairman authorization, and Finance Manager cash-out.
           </p>
         </div>
         <button
@@ -404,12 +466,11 @@ export default function ExpenseRequests() {
               <input required maxLength={200} value={expenseName} onChange={(event) => setExpenseName(event.target.value)} className="w-full rounded border px-3 py-2.5 outline-none" style={fieldStyle} />
             </label>
             <label className="text-sm">
-              <span className="mb-1 block">Requested for / person *</span>
-              <input required maxLength={200} value={requestedBy} onChange={(event) => setRequestedBy(event.target.value)} className="w-full rounded border px-3 py-2.5 outline-none" style={fieldStyle} />
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block">Amount *</span>
-              <input required type="number" min="0.01" max="999999999999.99" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className="w-full rounded border px-3 py-2.5 outline-none" style={fieldStyle} />
+              <span className="mb-1 block">Expense category *</span>
+              <select required value={expenseCategoryId} onChange={(event) => setExpenseCategoryId(event.target.value)} className="w-full rounded border px-3 py-2.5 outline-none" style={fieldStyle}>
+                <option value="">Select a category</option>
+                {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+              </select>
             </label>
             <label className="text-sm">
               <span className="mb-1 block">Due date *</span>
@@ -419,12 +480,76 @@ export default function ExpenseRequests() {
               <span className="mb-1 block">Purpose *</span>
               <textarea required maxLength={2000} rows={3} value={purpose} onChange={(event) => setPurpose(event.target.value)} className="w-full rounded border px-3 py-2.5 outline-none" style={fieldStyle} />
             </label>
+            <div className="space-y-3 sm:col-span-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-600">Items *</span>
+                <button
+                  type="button"
+                  onClick={() => setItems((current) => [...current, { description: "", quantity: "1", rate: "" }])}
+                  className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-xs font-600"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                >
+                  <Plus size={14} aria-hidden="true" /> Add item
+                </button>
+              </div>
+              {items.map((item, index) => (
+                <div key={index} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_110px_150px_auto]">
+                  <input
+                    required
+                    maxLength={200}
+                    aria-label={`Item ${index + 1} description`}
+                    placeholder="Description"
+                    value={item.description}
+                    onChange={(event) => updateItem(index, { description: event.target.value })}
+                    className="w-full rounded border px-3 py-2 outline-none"
+                    style={fieldStyle}
+                  />
+                  <input
+                    required
+                    type="number"
+                    min="0.0001"
+                    step="0.0001"
+                    aria-label={`Item ${index + 1} quantity`}
+                    placeholder="Quantity"
+                    value={item.quantity}
+                    onChange={(event) => updateItem(index, { quantity: event.target.value })}
+                    className="w-full rounded border px-3 py-2 outline-none"
+                    style={fieldStyle}
+                  />
+                  <input
+                    required
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    aria-label={`Item ${index + 1} rate`}
+                    placeholder="Unit rate"
+                    value={item.rate}
+                    onChange={(event) => updateItem(index, { rate: event.target.value })}
+                    className="w-full rounded border px-3 py-2 outline-none"
+                    style={fieldStyle}
+                  />
+                  <button
+                    type="button"
+                    aria-label={`Remove item ${index + 1}`}
+                    disabled={items.length === 1}
+                    onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                    className="rounded border px-2 disabled:opacity-40"
+                    style={{ borderColor: "var(--border)", color: "#ef4444" }}
+                  >
+                    <X size={15} aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+              <div className="text-right text-sm font-700" style={{ color: "var(--foreground)" }}>
+                Request total: {formatAmount(items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.rate || 0), 0))}
+              </div>
+            </div>
             <label className="text-sm sm:col-span-2">
               <span className="mb-1 block">Request comment *</span>
               <textarea required maxLength={2000} rows={2} value={requestComment} onChange={(event) => setRequestComment(event.target.value)} className="w-full rounded border px-3 py-2.5 outline-none" style={fieldStyle} />
             </label>
           </div>
-          <button type="submit" disabled={saving} className="mt-4 inline-flex items-center gap-2 rounded px-4 py-2.5 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "white" }}>
+          <button type="submit" disabled={saving || !expenseCategoryId || items.some((item) => !item.description.trim() || Number(item.quantity) <= 0 || Number(item.rate) < 0)} className="mt-4 inline-flex items-center gap-2 rounded px-4 py-2.5 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "white" }}>
             {saving ? <Loader2 className="animate-spin" size={16} aria-hidden="true" /> : <Plus size={16} aria-hidden="true" />}
             Submit for review
           </button>
@@ -448,7 +573,11 @@ export default function ExpenseRequests() {
           </div>
         ) : (
           requests.map((request) => {
-            const status = statuses[request.status]
+            const status =
+              request.status === "pending_line_manager_review" &&
+              request.line_manager_fallback
+                ? { label: "General Manager fallback review", color: "#f59e0b" }
+                : statuses[request.status]
             return (
               <article key={request.id} className="rounded-lg border p-4 sm:p-6" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -469,10 +598,23 @@ export default function ExpenseRequests() {
                   <div><span style={{ color: "var(--muted-foreground)" }}>Requested for</span><p style={{ color: "var(--foreground)" }}>{request.requested_by_name}</p></div>
                   <div><span style={{ color: "var(--muted-foreground)" }}>Due date</span><p style={{ color: "var(--foreground)" }}>{formatDate(request.due_date)}</p></div>
                   <div><span style={{ color: "var(--muted-foreground)" }}>Submitted</span><p style={{ color: "var(--foreground)" }}>{new Date(request.created_at).toLocaleDateString()}</p></div>
+                  {request.requisition_number && <div><span style={{ color: "var(--muted-foreground)" }}>Requisition</span><p className="font-700" style={{ color: "var(--primary)" }}>{request.requisition_number}</p></div>}
                 </div>
                 <p className="mt-4 whitespace-pre-wrap text-sm" style={{ color: "var(--foreground)" }}>{request.purpose}</p>
+                <div className="mt-3 rounded border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
+                  <p className="font-600" style={{ color: "var(--foreground)" }}>{request.expense_category_name}</p>
+                  <ul className="mt-2 space-y-1">
+                    {(request.line_items ?? []).map((item, index) => (
+                      <li key={`${request.id}-item-${index}`} className="flex flex-wrap justify-between gap-2" style={{ color: "var(--muted-foreground)" }}>
+                        <span>{item.description} ({item.quantity} × {formatAmount(Number(item.rate))})</span>
+                        <span>{formatAmount(Number(item.quantity) * Number(item.rate))}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
                 <div className="mt-4 space-y-2 border-t pt-4 text-sm" style={{ borderColor: "var(--border)" }}>
                   <p><strong style={{ color: "var(--muted-foreground)" }}>Request:</strong> {request.request_comment}</p>
+                  {request.line_manager_comment && <p><strong style={{ color: "var(--muted-foreground)" }}>{request.line_manager_fallback ? "General Manager fallback" : "Line manager"}:</strong> {request.line_manager_comment}</p>}
                   {request.general_manager_comment && <p><strong style={{ color: "var(--muted-foreground)" }}>General Manager:</strong> {request.general_manager_comment}</p>}
                   {request.finance_comment && <p><strong style={{ color: "var(--muted-foreground)" }}>Finance:</strong> {request.finance_comment}</p>}
                   {request.chairman_comment && <p><strong style={{ color: "var(--muted-foreground)" }}>Chairman:</strong> {request.chairman_comment}</p>}

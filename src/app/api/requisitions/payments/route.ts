@@ -115,6 +115,22 @@ export async function POST(request: Request) {
     if (!accountId) return NextResponse.json({ error: "Select a company account to deduct from." }, { status: 400, headers: responseHeaders });
     if (!Number.isFinite(amount) || amount <= 0) return NextResponse.json({ error: "Enter a valid payment amount greater than zero." }, { status: 400, headers: responseHeaders });
 
+    const { data: requisition, error: requisitionError } = await access.supabase
+      .from("company_requisitions")
+      .select("source_expense_request_id")
+      .eq("company_id", access.companyId)
+      .eq("id", requisitionId)
+      .maybeSingle()
+    if (requisitionError) {
+      console.error("Requisition payment target lookup failed", requisitionError)
+      return NextResponse.json({ error: "Unable to verify the requisition payment target." }, { status: 503, headers: responseHeaders })
+    }
+    if (requisition?.source_expense_request_id)
+      return NextResponse.json(
+        { error: "This linked requisition is paid through the Expense Requests workflow." },
+        { status: 409, headers: responseHeaders },
+      )
+
     // Call the security-definer RPC — it handles permission check, account validation,
     // payment_status update, and posts the ledger debit entry
     const { data, error } = await access.supabase.rpc("record_requisition_payment", {

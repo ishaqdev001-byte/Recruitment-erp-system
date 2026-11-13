@@ -249,6 +249,8 @@ export async function GET(request: Request) {
         general_manager_status, general_manager_reviewed_at, general_manager_note,
         finance_status, finance_reviewed_at, finance_note,
         director_status, director_reviewed_at, director_note,
+        source_expense_request_id, source_expense_request_number,
+        requested_by_user_id, requested_by_name, initiated_by_user_id, initiated_at,
         created_by, created_at, updated_at
       `)
       .eq("company_id", access.companyId)
@@ -272,9 +274,36 @@ export async function GET(request: Request) {
       )
     }
 
+    let expenseRequestsToInitiate: Record<string, unknown>[] = []
+    if (canCreate) {
+      let expenseRequestQuery = access.supabase
+        .from("expense_requests")
+        .select(`
+          id, request_number, expense_name, requested_by_name, purpose,
+          amount, due_date, expense_category_name, line_items, created_at
+        `)
+        .eq("company_id", access.companyId)
+        .eq("status", "pending_administration_officer_initiation")
+        .order("created_at", { ascending: true })
+        .limit(200)
+      if (!access.isMainBranch && access.branchId)
+        expenseRequestQuery = expenseRequestQuery.eq("branch_id", access.branchId)
+      const { data: pendingRequests, error: pendingRequestError } =
+        await expenseRequestQuery
+      if (pendingRequestError) {
+        console.error("Expense-request initiation queue failed", pendingRequestError)
+        return NextResponse.json(
+          { error: "Unable to load expense requests awaiting requisition initiation." },
+          { status: 503, headers: responseHeaders },
+        )
+      }
+      expenseRequestsToInitiate = pendingRequests ?? []
+    }
+
     return NextResponse.json(
       {
         requisitions: Array.isArray(requisitions) ? requisitions : [],
+        expenseRequestsToInitiate,
         currentUserId: access.userId,
         permissions: {
           canCreate,

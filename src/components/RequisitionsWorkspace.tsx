@@ -101,9 +101,28 @@ type Requisition = {
   director_status: StageDecision
   director_reviewed_at: string | null
   director_note: string
+  source_expense_request_id?: string | null
+  source_expense_request_number?: string | null
+  requested_by_user_id?: string | null
+  requested_by_name?: string
+  initiated_by_user_id?: string | null
+  initiated_at?: string | null
   created_by: string
   created_at: string
   updated_at: string
+}
+
+type ExpenseRequestToInitiate = {
+  id: string
+  request_number: string
+  expense_name: string
+  requested_by_name: string
+  purpose: string
+  amount: number
+  due_date: string
+  expense_category_name: string
+  line_items: { description: string; quantity: number; rate: number }[]
+  created_at: string
 }
 
 type RequisitionItem = {
@@ -577,6 +596,11 @@ export default function RequisitionsWorkspace() {
     year: "numeric",
   }).format(new Date())
   const [requisitions, setRequisitions] = useState<Requisition[]>([])
+  const [expenseRequestsToInitiate, setExpenseRequestsToInitiate] = useState<
+    ExpenseRequestToInitiate[]
+  >([])
+  const [initiatingRequestId, setInitiatingRequestId] = useState("")
+  const [initiationMessage, setInitiationMessage] = useState("")
   const [permissions, setPermissions] = useState<Permissions>({
     canCreate: false,
     canReview: false,
@@ -664,6 +688,7 @@ export default function RequisitionsWorkspace() {
       })
       const payload = (await res.json()) as {
         requisitions?: Requisition[]
+        expenseRequestsToInitiate?: ExpenseRequestToInitiate[]
         permissions?: Permissions
         currentUserId?: string
         error?: string
@@ -677,6 +702,7 @@ export default function RequisitionsWorkspace() {
         payload.requisitions ??
           [],
       )
+      setExpenseRequestsToInitiate(payload.expenseRequestsToInitiate ?? [])
       if (payload.permissions) setPermissions(payload.permissions)
       if (payload.currentUserId) setCurrentUserId(payload.currentUserId)
     } catch (err) {
@@ -688,6 +714,42 @@ export default function RequisitionsWorkspace() {
       )
     } finally {
       setLoading(false)
+    }
+  }
+
+  const initiateExpenseRequest = async (request: ExpenseRequestToInitiate) => {
+    setInitiatingRequestId(request.id)
+    setInitiationMessage("")
+    setListError("")
+    try {
+      const response = await fetch("/api/finance/expense-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "initiate_requisition",
+          requestId: request.id,
+          comment: "Initiated by the Administration Officer.",
+        }),
+      })
+      const payload = (await response.json()) as {
+        error?: string
+        request?: { requisitionNumber?: string }
+      }
+      if (!response.ok)
+        throw new Error(payload.error ?? "Unable to initiate this requisition.")
+      setInitiationMessage(
+        `${payload.request?.requisitionNumber ?? "Requisition"} was created from ${request.request_number}.`,
+      )
+      await loadList()
+    } catch (error) {
+      console.error("Expense-request requisition initiation failed", error)
+      setListError(
+        error instanceof Error
+          ? error.message
+          : "Unable to initiate this requisition.",
+      )
+    } finally {
+      setInitiatingRequestId("")
     }
   }
 
@@ -1281,6 +1343,7 @@ export default function RequisitionsWorkspace() {
     }
   }
   const getReviewAction = (req: Requisition): string | null => {
+    if (req.source_expense_request_id) return null
     if (
       req.status ===
         "pending" &&
@@ -1303,10 +1366,12 @@ export default function RequisitionsWorkspace() {
   }
 
   const canVerifierEdit = (req: Requisition) =>
+    !req.source_expense_request_id &&
     req.status ===
       "finance_review" &&
     permissions.canVerify
   const canPay = (req: Requisition) =>
+    !req.source_expense_request_id &&
     req.status ===
       "approved" &&
     permissions.canVerify &&
@@ -1503,6 +1568,75 @@ export default function RequisitionsWorkspace() {
         </div>
       )}
 
+      {initiationMessage && (
+        <div
+          role="status"
+          className="mx-6 mt-4 shrink-0 rounded border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-500"
+        >
+          {initiationMessage}
+        </div>
+      )}
+
+      {expenseRequestsToInitiate.length > 0 && (
+        <section
+          aria-labelledby="expense-request-initiation-title"
+          className="mx-6 mt-4 shrink-0 rounded-lg border p-4"
+          style={{ borderColor: "var(--border)", background: "var(--card)" }}
+        >
+          <div className="mb-3">
+            <h2
+              id="expense-request-initiation-title"
+              className="text-sm font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Approved expense requests to initiate
+            </h2>
+            <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+              Initiation creates a linked requisition. Further approvals and payment remain on the Expense Request workflow.
+            </p>
+          </div>
+          <div className="space-y-3">
+            {expenseRequestsToInitiate.map((request) => (
+              <article
+                key={request.id}
+                className="flex flex-wrap items-start justify-between gap-4 rounded border p-3"
+                style={{ borderColor: "var(--border)" }}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="mono text-xs font-700" style={{ color: "var(--primary)" }}>
+                      {request.request_number}
+                    </span>
+                    <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                      {request.expense_category_name}
+                    </span>
+                  </div>
+                  <h3 className="mt-1 text-sm font-700" style={{ color: "var(--foreground)" }}>
+                    {request.expense_name}
+                  </h3>
+                  <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                    Requested by {request.requested_by_name} · Due {fmtDate(request.due_date)} · {fmtAmount(Number(request.amount), "UGX")}
+                  </p>
+                  <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                    {(request.line_items ?? []).map((item) => `${item.description} (${item.quantity} × ${fmtAmount(Number(item.rate), "UGX")})`).join(" · ")}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={Boolean(initiatingRequestId)}
+                  onClick={() => void initiateExpenseRequest(request)}
+                  className="inline-flex items-center gap-2 rounded px-3 py-2 text-xs font-600 disabled:opacity-50"
+                  style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                >
+                  {initiatingRequestId === request.id && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
+                  Initiate requisition
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       {}
       <div className="finance-table-scroll flex-1">
         {loading && (
@@ -1583,6 +1717,11 @@ export default function RequisitionsWorkspace() {
                       style={{ color: "var(--primary)" }}
                     >
                       {req.requisition_number}
+                      {req.source_expense_request_number && (
+                        <span className="mt-1 block text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+                          {req.source_expense_request_number}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 max-w-44">
                       <span
@@ -1591,6 +1730,11 @@ export default function RequisitionsWorkspace() {
                       >
                         {req.title}
                       </span>
+                      {req.requested_by_name && (
+                        <span className="mt-1 block text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+                          Requested by {req.requested_by_name}
+                        </span>
+                      )}
                     </td>
                     <td
                       className="whitespace-nowrap px-4 py-3 text-xs"
@@ -1629,11 +1773,15 @@ export default function RequisitionsWorkspace() {
                         className="rounded px-2 py-0.5 text-xs font-600"
                         style={{ background: cfg.bg, color: cfg.color }}
                       >
-                        {cfg.label}
+                        {req.source_expense_request_id ? `Expense · ${cfg.label}` : cfg.label}
                       </span>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
-                      {req.status === "approved" && (
+                      {req.source_expense_request_id && req.payment_status !== "paid" ? (
+                        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                          Expense Request workflow
+                        </span>
+                      ) : req.status === "approved" && (
                         <span
                           className="rounded px-2 py-0.5 text-xs font-600"
                           style={{
@@ -1661,7 +1809,7 @@ export default function RequisitionsWorkspace() {
                         >
                           <ChevronRight size={12} aria-hidden="true" /> View
                         </button>
-                        {isOwn && req.status === "pending" && (
+                        {isOwn && !req.source_expense_request_id && req.status === "pending" && (
                           <button
                             type="button"
                             onClick={() => void openEditForm(req)}
@@ -1748,6 +1896,11 @@ export default function RequisitionsWorkspace() {
                 >
                   {detailReq.requisition_number}
                 </div>
+                {detailReq.source_expense_request_number && (
+                  <div className="mt-1 mono text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+                    From {detailReq.source_expense_request_number}
+                  </div>
+                )}
                 <h2
                   className="mt-1 text-lg font-700 leading-tight"
                   style={{ color: "var(--foreground)" }}
@@ -1762,7 +1915,9 @@ export default function RequisitionsWorkspace() {
                       color: statusConfig[detailReq.status].color,
                     }}
                   >
-                    {statusConfig[detailReq.status].label}
+                    {detailReq.source_expense_request_id
+                      ? `Expense · ${statusConfig[detailReq.status].label}`
+                      : statusConfig[detailReq.status].label}
                   </span>
                   {detailReq.status === "approved" && (
                     <span
@@ -1819,6 +1974,19 @@ export default function RequisitionsWorkspace() {
                     </span>
                   )}
                 </div>
+                {detailReq.source_expense_request_id && (
+                  <div className="mt-4 rounded border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
+                    <p className="font-600" style={{ color: "var(--foreground)" }}>
+                      Linked Expense Request {detailReq.source_expense_request_number}
+                    </p>
+                    <p className="mt-1" style={{ color: "var(--muted-foreground)" }}>
+                      Requested by {detailReq.requested_by_name || "Staff member"}
+                    </p>
+                    <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                      Initiated by the Administration Officer. Reviews and payment are managed on the linked Expense Request.
+                    </p>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -2146,7 +2314,13 @@ export default function RequisitionsWorkspace() {
                     >
                       Approval Progress
                     </h3>
-                    <ApprovalTimeline req={detailReq} />
+                    {detailReq.source_expense_request_id ? (
+                      <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+                        The linked Expense Request contains the active line-manager, General Manager, Finance, Chairman, and cash-out approvals.
+                      </p>
+                    ) : (
+                      <ApprovalTimeline req={detailReq} />
+                    )}
                   </div>
 
                   {}

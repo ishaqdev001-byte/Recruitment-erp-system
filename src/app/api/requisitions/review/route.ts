@@ -109,11 +109,16 @@ export async function POST(request: Request) {
     // Fetch requisition title before calling RPC (for notifications)
     const { data: req } = await access.supabase
       .from("company_requisitions")
-      .select("title, requisition_number, created_by")
+      .select("title, requisition_number, created_by, source_expense_request_id")
       .eq("id", requisitionId)
       .eq("company_id", access.companyId)
       .maybeSingle();
     if (!req) return NextResponse.json({ error: "Requisition not found." }, { status: 404, headers: responseHeaders });
+    if (req.source_expense_request_id)
+      return NextResponse.json(
+        { error: "This linked requisition follows the Expense Requests approval workflow." },
+        { status: 409, headers: responseHeaders },
+      )
 
     // Call the security-definer RPC
     const { data, error } = await access.supabase.rpc("review_requisition", {

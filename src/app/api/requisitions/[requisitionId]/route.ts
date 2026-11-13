@@ -51,6 +51,8 @@ export async function GET(
         general_manager_status, general_manager_reviewed_at, general_manager_note,
         finance_status, finance_reviewed_at, finance_note,
         director_status, director_reviewed_at, director_note,
+        source_expense_request_id, source_expense_request_number,
+        requested_by_user_id, requested_by_name, initiated_by_user_id, initiated_at,
         created_by, created_at, updated_at
       `)
       .eq("id", requisitionId)

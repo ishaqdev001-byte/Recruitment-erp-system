@@ -106,6 +106,7 @@ import {
 import { canAccessView, isMedicalOnlyUser } from "./lib/permissionToViewMap"
 
 import {
+  isPrimaryAdministratorRole,
   isRecruitmentAgentRestrictedPermission,
   isRecruitmentAgentRole,
   roleAccessSettings,
@@ -650,6 +651,10 @@ function getDefaultViewByPermissions(
 
   roleName?: string,
 ): View {
+  if (isPrimaryAdministratorRole(roleName ?? "")) {
+    return "dashboard"
+  }
+
   if (isMedicalOnlyUser(permissions)) {
     return "medical-management"
   }
@@ -673,6 +678,27 @@ function getDefaultViewByPermissions(
   return "dashboard"
 }
 
+async function loadCompanyPermissionCodes(companyId: string) {
+  const response = await fetch(
+    `/api/workspace/permission-codes?companyId=${encodeURIComponent(companyId)}`,
+    { cache: "no-store" },
+  )
+  const payload = await response.json() as {
+    permissionCodes?: unknown
+    error?: string
+  }
+  if (
+    !response.ok ||
+    !Array.isArray(payload.permissionCodes) ||
+    !payload.permissionCodes.every(
+      (code): code is string => typeof code === "string",
+    )
+  ) {
+    throw new Error(payload.error ?? "Unable to load company permissions.")
+  }
+  return payload.permissionCodes
+}
+
 async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   const supabase = createSupabaseBrowserClient()
 
@@ -681,7 +707,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     .from("company_memberships")
 
     .select(
-      "company_id, company:companies!inner(id, name, slug, status, logo_url, registration_number, country, city, office_address, phone, email, website), role:company_roles!inner(id, name, access_settings)",
+      "company_id, company:companies!inner(id, name, slug, status, logo_url, registration_number, country, city, office_address, phone, email, website, primary_admin_user_id), role:company_roles!inner(id, name, access_settings)",
     )
 
     .eq("user_id", user.id)
@@ -731,6 +757,8 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     email: string
 
     website: string
+
+    primary_admin_user_id: string | null
   } | {
     id: string
 
@@ -755,6 +783,8 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     email: string
 
     website: string
+
+    primary_admin_user_id: string | null
   }[]
 
   const companyRecord = Array.isArray(companyValue)
@@ -774,45 +804,38 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   if (!companyRecord || !roleRecord)
     throw new Error("Your company membership is incomplete.")
 
-  const { data: rolePerms, error: permsError } = await supabase
+  let permissions: string[]
+  if (companyRecord.primary_admin_user_id === user.id) {
+    permissions = await loadCompanyPermissionCodes(companyRecord.id)
+  } else {
+    const { data: rolePerms, error: permsError } = await supabase
+      .from("role_permissions")
+      .select("permission_code")
+      .eq("role_id", roleRecord.id)
+      .eq("company_id", companyRecord.id)
 
-    .from("role_permissions")
+    if (permsError) throw new Error("Unable to load your permissions.")
 
-    .select("permission_code")
-
-    .eq("role_id", roleRecord.id)
-
-    .eq("company_id", companyRecord.id)
-
-  if (permsError) throw new Error("Unable to load your permissions.")
-
-  const permissions = (
-    rolePerms ??
-    []
-  )
-
-    .map((rp) => rp.permission_code)
-
-    .filter(
-      (permission) =>
-        !isRecruitmentAgentRole(roleRecord.name) ||
-        !isRecruitmentAgentRestrictedPermission(permission),
-    )
-
-    .filter(
-      (permission) =>
-        permission !==
-          "agent_finance.view" ||
-        (isRecruitmentAgentRole(roleRecord.name) &&
-          roleAccessSettings(roleRecord.access_settings, roleRecord.name)
-            .agent_visa_finance),
-    )
-
-    .concat(
-      isRecruitmentAgentRole(roleRecord.name)
-        ? ["communications.agent_notes.view"]
-        : [],
-    )
+    permissions = (rolePerms ?? [])
+      .map((rp) => rp.permission_code)
+      .filter(
+        (permission) =>
+          !isRecruitmentAgentRole(roleRecord.name) ||
+          !isRecruitmentAgentRestrictedPermission(permission),
+      )
+      .filter(
+        (permission) =>
+          permission !== "agent_finance.view" ||
+          (isRecruitmentAgentRole(roleRecord.name) &&
+            roleAccessSettings(roleRecord.access_settings, roleRecord.name)
+              .agent_visa_finance),
+      )
+      .concat(
+        isRecruitmentAgentRole(roleRecord.name)
+          ? ["communications.agent_notes.view"]
+          : [],
+      )
+  }
 
   const knownRoles: WorkspaceRole[] = [
     "Chairman",
@@ -885,6 +908,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     "Main Branch"
 
   const isMainBranchUser =
+    companyRecord.primary_admin_user_id === user.id ||
     !branchRecord ||
     Boolean(branchRecord.is_main_branch)
 
@@ -2411,7 +2435,7 @@ export default function App() {
           .from("company_memberships")
 
           .select(
-            "role_id, branch_id, role:company_roles(id, name, access_settings), branch:company_branches(id, name, is_main_branch)",
+            "role_id, branch_id, role:company_roles(id, name, access_settings), branch:company_branches(id, name, is_main_branch), company:companies!inner(primary_admin_user_id)",
           )
 
           .eq("user_id", session.userId)
@@ -2445,38 +2469,42 @@ export default function App() {
         if (!roleRecord)
           throw new Error("The active membership has no assigned role.")
 
-        const { data: rolePerms, error: permsError } = await supabase
+        const companyValue = membership.company as unknown as {
+          primary_admin_user_id: string | null
+        } | { primary_admin_user_id: string | null }[]
+        const companyRecord = Array.isArray(companyValue)
+          ? companyValue[0]
+          : companyValue
+        const isPrimaryAdmin =
+          companyRecord?.primary_admin_user_id === user.id
 
-          .from("role_permissions")
+        let newPermissions: string[]
+        if (isPrimaryAdmin) {
+          newPermissions = await loadCompanyPermissionCodes(session.companyId)
+        } else {
+          const { data: rolePerms, error: permsError } = await supabase
+            .from("role_permissions")
+            .select("permission_code")
+            .eq("role_id", roleRecord.id)
+            .eq("company_id", session.companyId)
 
-          .select("permission_code")
+          if (permsError) throw permsError
+          if (!rolePerms)
+            throw new Error("Unable to load the assigned role permissions.")
 
-          .eq("role_id", roleRecord.id)
-
-          .eq("company_id", session.companyId)
-
-        if (permsError) throw permsError
-
-        if (!rolePerms)
-          throw new Error("Unable to load the assigned role permissions.")
-
-        const roleAccess = roleAccessSettings(
-          roleRecord.access_settings,
-
-          roleRecord.name,
-        )
-
-        const newPermissions = rolePerms
-
-          .map((rp) => rp.permission_code)
-
-          .filter(
-            (permission) =>
-              permission !==
-                "agent_finance.view" ||
-              (isRecruitmentAgentRole(roleRecord.name) &&
-                roleAccess.agent_visa_finance),
+          const roleAccess = roleAccessSettings(
+            roleRecord.access_settings,
+            roleRecord.name,
           )
+          newPermissions = rolePerms
+            .map((rp) => rp.permission_code)
+            .filter(
+              (permission) =>
+                permission !== "agent_finance.view" ||
+                (isRecruitmentAgentRole(roleRecord.name) &&
+                  roleAccess.agent_visa_finance),
+            )
+        }
 
         const branchValue = membership.branch as unknown as {
           id: string
@@ -2501,6 +2529,7 @@ export default function App() {
           "Main Branch"
 
         const nextIsMainBranch =
+          isPrimaryAdmin ||
           !branchRecord ||
           Boolean(branchRecord.is_main_branch)
 
@@ -4012,13 +4041,7 @@ export default function App() {
         )
 
       case "agents":
-        return (
-          <Agents
-            canInviteAgents={
-              session?.permissions.includes("users.edit") ?? false
-            }
-          />
-        )
+        return <Agents />
 
       case "finance":
         return <Finance />

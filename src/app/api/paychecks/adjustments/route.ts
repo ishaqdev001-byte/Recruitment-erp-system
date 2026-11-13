@@ -184,16 +184,32 @@ export async function POST(request: Request) {
     }
     if (existingChecks?.length) return NextResponse.json({ error: "A monthly payslip has already been issued for one or more selected staff. Record benefits and deductions before the monthly payment." }, { status: 409, headers });
 
-    const { data: reference, error: referenceError } = await access.admin.rpc("allocate_company_payroll_reference", { requested_company_id: access.companyId });
-    if (referenceError || typeof reference !== "string") throw referenceError ?? new Error("Payroll reference could not be allocated.");
-    const { data: records, error } = await access.admin.from("company_staff_payroll_adjustments").insert(staffMemberIds.map((staffMemberId) => ({
+    const { data: referenceValues, error: referenceError } = await access.admin.rpc(
+      "allocate_company_payroll_references",
+      {
+        requested_company_id: access.companyId,
+        requested_count: staffMemberIds.length,
+      },
+    );
+    if (referenceError) throw referenceError;
+    if (!Array.isArray(referenceValues)) {
+      throw new Error("Payroll references could not be allocated for every staff member.");
+    }
+
+    const references = referenceValues.filter(
+      (reference): reference is string => typeof reference === "string",
+    );
+    if (references.length !== staffMemberIds.length) {
+      throw new Error("Payroll references could not be allocated for every staff member.");
+    }
+    const { data: records, error } = await access.admin.from("company_staff_payroll_adjustments").insert(staffMemberIds.map((staffMemberId, index) => ({
       company_id: access.companyId,
       staff_member_id: staffMemberId,
       pay_period: payPeriod,
       adjustment_type: adjustmentType,
       amount: Math.round(amount * 100) / 100,
       payment_method: paymentMethod,
-      payment_reference: reference,
+      payment_reference: references[index],
       description,
       created_by: access.userId,
     }))).select("id, staff_member_id, pay_period, adjustment_type, amount, payment_method, payment_reference, description, created_at");
@@ -201,7 +217,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 409, headers });
     }
     if (error) throw error;
-    return NextResponse.json({ reference, records, count: records?.length ?? 0 }, { status: 201, headers });
+    return NextResponse.json({
+      reference: references[0],
+      references,
+      records,
+      count: records?.length ?? 0,
+    }, { status: 201, headers });
   } catch (error) {
     console.error("Payroll adjustment recording failed", error);
     return NextResponse.json({ error: "Unable to record payroll adjustments." }, { status: 503, headers });

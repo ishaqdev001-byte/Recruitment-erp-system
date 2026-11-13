@@ -715,7 +715,11 @@ export default function UsersRoles({
 
   const [userName, setUserName] = useState("")
 
+  const [userPhone, setUserPhone] = useState("")
+
   const [userEmail, setUserEmail] = useState("")
+
+  const [selectedExistingStaffId, setSelectedExistingStaffId] = useState("")
 
   const [userRoleId, setUserRoleId] = useState("")
 
@@ -737,8 +741,9 @@ export default function UsersRoles({
     null,
   )
 
-  const [editingUserStaff, setEditingUserStaff] =
-    useState<StaffRecord | null>(null)
+  const [editingUserStaff, setEditingUserStaff] = useState<StaffRecord | null>(
+    null,
+  )
 
   const [editUserForm, setEditUserForm] =
     useState<UserEditForm>(emptyUserEditForm)
@@ -946,6 +951,11 @@ export default function UsersRoles({
   const submitUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
+    if (userInviteMode === "email-link" && !userPhone.trim()) {
+      setError("Enter a phone number before sending the invitation.")
+      return
+    }
+
     setSaving(true)
 
     setError("")
@@ -955,6 +965,8 @@ export default function UsersRoles({
     try {
       const userDetails = {
         userType,
+        phone: userPhone,
+        existingStaffId: selectedExistingStaffId || undefined,
 
         ...(userType === "staff"
           ? {
@@ -1007,7 +1019,11 @@ export default function UsersRoles({
 
         setUserName("")
 
+        setUserPhone("")
+
         setUserEmail("")
+
+        setSelectedExistingStaffId("")
 
         setUserDefaultPassword("")
 
@@ -1050,7 +1066,11 @@ export default function UsersRoles({
 
         setUserName("")
 
+        setUserPhone("")
+
         setUserEmail("")
+
+        setSelectedExistingStaffId("")
 
         setUserType("member")
 
@@ -1124,9 +1144,7 @@ export default function UsersRoles({
         lineManagerStaffId: staff?.lineManagerStaffId ?? "",
         payType: staff?.payType ?? "no_payroll",
         baseSalary: String(staff?.baseSalary ?? 0),
-        weeklyTransportAllowance: String(
-          staff?.weeklyTransportAllowance ?? 0,
-        ),
+        weeklyTransportAllowance: String(staff?.weeklyTransportAllowance ?? 0),
         transportAccountId: staff?.transportAccountId ?? "",
       })
       setEditingUserType(user)
@@ -1200,10 +1218,12 @@ export default function UsersRoles({
         throw new Error(result.error ?? "Unable to update user details.")
 
       setEditingUserType(null)
-      setNotice(result.emailChangeWarning ??
-        (result.emailChangePending
-          ? `${editUserForm.name} was updated. Confirm the email change using the links sent to the current and new addresses.`
-          : `${editUserForm.name} was updated.`))
+      setNotice(
+        result.emailChangeWarning ??
+          (result.emailChangePending
+            ? `${editUserForm.name} was updated. Confirm the email change using the links sent to the current and new addresses.`
+            : `${editUserForm.name} was updated.`),
+      )
       setReloadKey((key) => key + 1)
     } catch (saveError) {
       setError(
@@ -1612,9 +1632,7 @@ export default function UsersRoles({
     )
     const accountDetails = hasLinkedUser
       ? ` Their membership in this company will also be removed${
-          linkedUser?.email
-            ? ` (${linkedUser.email})`
-            : ""
+          linkedUser?.email ? ` (${linkedUser.email})` : ""
         }. Their login remains, with access to other companies unchanged.`
       : ""
 
@@ -1858,6 +1876,41 @@ export default function UsersRoles({
 
     return matchesType && matchesBranch && matchesSearch
   })
+
+  const selectedExistingStaff = staffMembers.find(
+    (staff) => staff.id === selectedExistingStaffId,
+  )
+  const staffNameMatches =
+    userType === "staff" &&
+    !selectedExistingStaff &&
+    userName.trim().length >= 2
+      ? staffMembers
+          .filter(
+            (staff) =>
+              staff.status === "Active" &&
+              !staff.linkedUserId &&
+              staff.name
+                .toLocaleLowerCase()
+                .includes(userName.trim().toLocaleLowerCase()),
+          )
+          .slice(0, 8)
+      : []
+
+  const selectExistingStaff = (staff: StaffRecord) => {
+    setSelectedExistingStaffId(staff.id)
+    setUserName(staff.name)
+    setUserPhone(staff.phone)
+    setUserBranchId(staff.branchId)
+    setInvitedStaffForm({
+      position: staff.position,
+      dateJoined: staff.dateJoined,
+      payType: staff.payType,
+      baseSalary: String(staff.baseSalary),
+      weeklyTransportAllowance: String(staff.weeklyTransportAllowance),
+      transportAccountId: staff.transportAccountId,
+      lineManagerStaffId: staff.lineManagerStaffId,
+    })
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -3033,6 +3086,11 @@ export default function UsersRoles({
 
               setUserType("member")
 
+              setUserName("")
+              setUserPhone("")
+              setUserEmail("")
+              setSelectedExistingStaffId("")
+
               setInvitedStaffForm(emptyInvitedStaffForm)
             }
           }}
@@ -3061,6 +3119,11 @@ export default function UsersRoles({
                   setUserInviteMode("email-link")
 
                   setUserType("member")
+
+                  setUserName("")
+                  setUserPhone("")
+                  setUserEmail("")
+                  setSelectedExistingStaffId("")
 
                   setInvitedStaffForm(emptyInvitedStaffForm)
                 }}
@@ -3132,10 +3195,85 @@ export default function UsersRoles({
                   required
                   maxLength={200}
                   value={userName}
-                  onChange={(e) => setUserName(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    if (
+                      selectedExistingStaffId &&
+                      value !== selectedExistingStaff?.name
+                    ) {
+                      setSelectedExistingStaffId("")
+                      setUserPhone("")
+                      setInvitedStaffForm(emptyInvitedStaffForm)
+                    }
+                    setUserName(value)
+                  }}
                   className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                   style={fieldStyle}
                 />
+                {staffNameMatches.length > 0 && (
+                  <div
+                    role="listbox"
+                    aria-label="Matching unlinked staff"
+                    className="mt-1 max-h-48 overflow-y-auto rounded border py-1 shadow-lg"
+                    style={{
+                      background: "var(--card)",
+                      borderColor: "var(--border)",
+                    }}
+                  >
+                    {staffNameMatches.map((staff) => (
+                      <button
+                        key={staff.id}
+                        type="button"
+                        role="option"
+                        aria-selected={false}
+                        onClick={() => selectExistingStaff(staff)}
+                        className="block w-full px-3 py-2 text-left hover:bg-black/5"
+                      >
+                        <span
+                          className="block text-sm"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {staff.name}
+                        </span>
+                        <span
+                          className="block text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {staff.staffId} · {staff.position} ·{" "}
+                          {branches.find(
+                            (branch) => branch.id === staff.branchId,
+                          )?.name ?? "Company branch"}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {userType === "staff" && !selectedExistingStaff && (
+                  <span
+                    className="mt-1 block text-xs normal-case tracking-normal"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Select an existing staff match to reuse its saved details,
+                    or continue to create a new staff profile.
+                  </span>
+                )}
+                {userType === "member" && (
+                  <span
+                    className="mt-1 block text-xs normal-case tracking-normal"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Choose Staff as the account type below to search the staff
+                    roster by name.
+                  </span>
+                )}
+                {selectedExistingStaff && (
+                  <span
+                    className="mt-1 block text-xs normal-case tracking-normal"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    This account will be linked to the selected staff record.
+                  </span>
+                )}
               </label>
               <label
                 className="block text-xs font-700 uppercase tracking-wider"
@@ -3147,6 +3285,21 @@ export default function UsersRoles({
                   type="email"
                   value={userEmail}
                   onChange={(e) => setUserEmail(e.target.value)}
+                  className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={fieldStyle}
+                />
+              </label>
+              <label
+                className="block text-xs font-700 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Phone number
+                <input
+                  required={userInviteMode === "email-link"}
+                  type="tel"
+                  maxLength={100}
+                  value={userPhone}
+                  onChange={(event) => setUserPhone(event.target.value)}
                   className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                   style={fieldStyle}
                 />
@@ -3185,6 +3338,10 @@ export default function UsersRoles({
                   onChange={(event) => {
                     const value = event.target.value as typeof userType
 
+                    if (value !== "staff") {
+                      setSelectedExistingStaffId("")
+                      setInvitedStaffForm(emptyInvitedStaffForm)
+                    }
                     setUserType(value)
                   }}
                   className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
@@ -3202,6 +3359,7 @@ export default function UsersRoles({
                 <select
                   required
                   value={userBranchId}
+                  disabled={Boolean(selectedExistingStaff)}
                   onChange={(e) => {
                     setUserBranchId(e.target.value)
 
@@ -3238,6 +3396,7 @@ export default function UsersRoles({
                       required
                       maxLength={150}
                       value={invitedStaffForm.position}
+                      disabled={Boolean(selectedExistingStaff)}
                       onChange={(event) =>
                         setInvitedStaffForm((current) => ({
                           ...current,
@@ -3257,6 +3416,7 @@ export default function UsersRoles({
                     Line manager
                     <select
                       value={invitedStaffForm.lineManagerStaffId}
+                      disabled={Boolean(selectedExistingStaff)}
                       onChange={(event) =>
                         setInvitedStaffForm((current) => ({
                           ...current,
@@ -3269,8 +3429,11 @@ export default function UsersRoles({
                     >
                       <option value="">No line manager</option>
                       {staffMembers
-
-                        .filter((manager) => manager.status === "Active")
+                        .filter(
+                          (manager) =>
+                            manager.status === "Active" ||
+                            manager.id === invitedStaffForm.lineManagerStaffId,
+                        )
 
                         .map((manager) => (
                           <option key={manager.id} value={manager.id}>
@@ -3289,6 +3452,7 @@ export default function UsersRoles({
                       required
                       type="date"
                       value={invitedStaffForm.dateJoined}
+                      disabled={Boolean(selectedExistingStaff)}
                       onChange={(event) =>
                         setInvitedStaffForm((current) => ({
                           ...current,
@@ -3307,6 +3471,7 @@ export default function UsersRoles({
                     Pay arrangement
                     <select
                       value={invitedStaffForm.payType}
+                      disabled={Boolean(selectedExistingStaff)}
                       onChange={(event) => {
                         const payType = event.target.value as StaffPayType
 
@@ -3353,6 +3518,7 @@ export default function UsersRoles({
                           step="0.01"
                           type="number"
                           value={invitedStaffForm.baseSalary}
+                          disabled={Boolean(selectedExistingStaff)}
                           onChange={(event) =>
                             setInvitedStaffForm((current) => ({
                               ...current,
@@ -3374,6 +3540,7 @@ export default function UsersRoles({
                           step="0.01"
                           type="number"
                           value={invitedStaffForm.weeklyTransportAllowance}
+                          disabled={Boolean(selectedExistingStaff)}
                           onChange={(event) =>
                             setInvitedStaffForm((current) => ({
                               ...current,
@@ -3400,6 +3567,7 @@ export default function UsersRoles({
                             <select
                               required
                               value={invitedStaffForm.transportAccountId}
+                              disabled={Boolean(selectedExistingStaff)}
                               onChange={(event) =>
                                 setInvitedStaffForm((current) => ({
                                   ...current,
@@ -3660,13 +3828,11 @@ export default function UsersRoles({
                   >
                     <option value="">Select role</option>
                     {data.roles
-                      .filter(
-                        (role) => !isPrimaryAdministratorRole(role.name),
-                      )
+                      .filter((role) => !isPrimaryAdministratorRole(role.name))
                       .map((role) => (
-                      <option key={role.id} value={role.id}>
-                        {role.name}
-                      </option>
+                        <option key={role.id} value={role.id}>
+                          {role.name}
+                        </option>
                       ))}
                   </select>
                 </label>
@@ -3730,7 +3896,8 @@ export default function UsersRoles({
                     onChange={(event) =>
                       setEditUserForm((form) => ({
                         ...form,
-                        userType: event.target.value as UserEditForm["userType"],
+                        userType: event.target
+                          .value as UserEditForm["userType"],
                       }))
                     }
                     className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"

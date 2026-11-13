@@ -200,10 +200,14 @@ export default function Paychecks() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ staffMemberIds: selectedStaffIds, payPeriod: adjustmentPayPeriod, adjustmentType, amount: adjustmentAmount, paymentMethod: adjustmentPaymentMethod, description: adjustmentDescription }),
       });
-      const result = await response.json() as { reference?: string; count?: number; error?: string };
+      const result = await response.json() as { reference?: string; references?: string[]; count?: number; error?: string };
       if (!response.ok) throw new Error(result.error ?? "Unable to save this payroll adjustment.");
       setAdjustmentType(null);
-      setNotice(`${adjustmentType === "benefit" ? "Benefit" : "Deduction"} recorded for ${result.count} staff member${result.count === 1 ? "" : "s"}. Reference ${result.reference}.`);
+      const references = result.references ?? (result.reference ? [result.reference] : []);
+      const referenceRange = references.length > 1
+        ? `${references[0]}–${references[references.length - 1]}`
+        : references[0] ?? "generated automatically";
+      setNotice(`${adjustmentType === "benefit" ? "Benefit" : "Deduction"} recorded for ${result.count} staff member${result.count === 1 ? "" : "s"}. Reference${references.length === 1 ? "" : "s"} ${referenceRange}.`);
       setReloadKey((key) => key + 1);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save this payroll adjustment.");
@@ -305,17 +309,17 @@ export default function Paychecks() {
 
       {adjustmentType && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !adjustmentSaving) setAdjustmentType(null); }}>
         <form onSubmit={recordAdjustment} className="max-h-[92dvh] w-full max-w-2xl overflow-y-auto rounded border p-5 sm:p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-          <div className="mb-5 flex items-start justify-between gap-4"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>{adjustmentType === "benefit" ? "Record other benefits / income" : "Record deductions"}</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>One amount and payment reference will be recorded for each selected staff member.</p></div><button type="button" disabled={adjustmentSaving} onClick={() => setAdjustmentType(null)} aria-label="Close adjustment form" className="px-2 text-lg" style={{ color: "var(--muted-foreground)" }}>×</button></div>
+          <div className="mb-5 flex items-start justify-between gap-4"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>{adjustmentType === "benefit" ? "Record other benefits / income" : "Record deductions"}</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>One amount is recorded per staff member. A unique sequential reference is generated automatically for each one.</p></div><button type="button" disabled={adjustmentSaving} onClick={() => setAdjustmentType(null)} aria-label="Close adjustment form" className="px-2 text-lg" style={{ color: "var(--muted-foreground)" }}>×</button></div>
           <fieldset>
             <div className="mb-2 flex items-center justify-between gap-3"><legend className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Staff members</legend><div className="flex gap-2"><button type="button" onClick={() => setSelectedStaffIds(payrollStaff.map((member) => member.id))} className="text-xs font-600" style={{ color: "var(--primary)" }}>Select all</button><button type="button" onClick={() => setSelectedStaffIds([])} className="text-xs" style={{ color: "var(--muted-foreground)" }}>Clear</button></div></div>
-            <SearchableMultiSelect ariaLabel="Search staff members" values={selectedStaffIds} onChange={setSelectedStaffIds} options={staffOptions} placeholder="Type a name or staff ID" className="w-full" />
+            <SearchableMultiSelect ariaLabel="Search staff members" values={selectedStaffIds} onChange={setSelectedStaffIds} options={staffOptions} placeholder="Type a name or staff ID" hideOptionsUntilSearch inlineOptions className="w-full" />
             <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{selectedStaffIds.length} selected</p>
           </fieldset>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment month<input required type="month" value={adjustmentPayPeriod.slice(0, 7)} onChange={(event) => setAdjustmentPayPeriod(`${event.target.value}-01`)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Amount per staff member (UGX)<input required type="number" min="0.01" step="0.01" value={adjustmentAmount} onChange={(event) => setAdjustmentAmount(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment method<select value={adjustmentPaymentMethod} onChange={(event) => setAdjustmentPaymentMethod(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>{payMethods.map((method) => <option key={method}>{method}</option>)}</select></label>
-            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment reference<input readOnly value={referencePreview || "Generated on save"} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none opacity-80" style={fieldStyle} /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Next payment reference<input readOnly value={referencePreview || "Generated on save"} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none opacity-80" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider sm:col-span-2" style={{ color: "var(--muted-foreground)" }}>Description<input required maxLength={200} value={adjustmentDescription} onChange={(event) => setAdjustmentDescription(event.target.value)} placeholder={adjustmentType === "benefit" ? "e.g. Transport allowance" : "e.g. Salary advance recovery"} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
           </div>
           <p className="mt-3 text-xs" style={{ color: "var(--muted-foreground)" }}>This adjustment must be recorded before the monthly payment so it can appear on the employee’s payslip.</p>

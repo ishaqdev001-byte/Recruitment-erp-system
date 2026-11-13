@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   Edit2,
   Eye,
-  Plus,
   Search,
   UserRound,
   Users,
@@ -24,7 +23,6 @@ type AgentRecord = {
   status: string
 }
 
-type RoleRecord = { id: string; name: string }
 type BranchRecord = {
   id: string
   name: string
@@ -54,7 +52,6 @@ type AgentCandidateRecord = {
 }
 type AgentPayload = {
   users: AgentRecord[]
-  roles: RoleRecord[]
   branches?: BranchRecord[]
   canEditAgentDetails?: boolean
   error?: string
@@ -114,19 +111,13 @@ function candidateMetrics(
   return { assigned, deployed, withdrawn, cancelled, stages }
 }
 
-export default function Agents({
-  canInviteAgents,
-}: {
-  canInviteAgents: boolean
-}) {
+export default function Agents() {
   const [agents, setAgents] = useState<AgentRecord[]>([])
-  const [roles, setRoles] = useState<RoleRecord[]>([])
   const [branches, setBranches] = useState<BranchRecord[]>([])
   const [candidates, setCandidates] = useState<CandidateRecord[]>([])
   const [agentCandidates, setAgentCandidates] =
     useState<AgentCandidateRecord[]>([])
   const [search, setSearch] = useState("")
-  const [showNew, setShowNew] = useState(false)
   const [editingAgent, setEditingAgent] = useState<AgentRecord | null>(null)
   const [canEditAgentDetails, setCanEditAgentDetails] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
@@ -164,10 +155,9 @@ export default function Agents({
         if (cancelled) return
         setAgents(
           usersPayload.users.filter((user) =>
-            user.role.toLocaleLowerCase().includes("agent"),
+            normalized(user.role) === "recruitment agent",
           ),
         )
-        setRoles(usersPayload.roles)
         setBranches(usersPayload.branches ?? [])
         setCanEditAgentDetails(usersPayload.canEditAgentDetails === true)
         setCandidates(candidatesPayload.candidates ?? [])
@@ -233,49 +223,6 @@ export default function Agents({
   const selectedMetrics = selectedAgent
     ? candidateMetrics(selectedAgent, candidates, agents)
     : null
-  const recruitmentAgentRole = roles.find(
-    (role) => role.name === "Recruitment Agent",
-  )
-
-  const addAgent = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!recruitmentAgentRole) {
-      setError(
-        "Recruitment Agent role is missing. Apply the latest Supabase migration, then reload this page.",
-      )
-      return
-    }
-    const formData = new FormData(event.currentTarget)
-    setSaving(true)
-    setError("")
-    try {
-      const response = await fetch("/api/workspace/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "invite-user",
-          name: String(formData.get("name") ?? "").trim(),
-          phone: String(formData.get("phone") ?? "").trim(),
-          email: String(formData.get("email") ?? "").trim(),
-          branch: String(formData.get("branch") ?? "").trim(),
-          roleId: recruitmentAgentRole.id,
-        }),
-      })
-      const payload = (await response.json()) as { error?: string }
-      if (!response.ok)
-        throw new Error(payload.error ?? "Unable to invite this agent.")
-      setShowNew(false)
-      setReloadKey((key) => key + 1)
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Unable to invite this agent.",
-      )
-    } finally {
-      setSaving(false)
-    }
-  }
 
   const saveAgentDetails = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -747,30 +694,6 @@ export default function Agents({
               : `${agents.length} agents in this company`}
           </p>
         </div>
-        {canInviteAgents && (
-          <button
-            type="button"
-            onClick={() => {
-              if (!recruitmentAgentRole) {
-                setError(
-                  "Recruitment Agent role is missing. Apply the latest Supabase migration, then reload this page.",
-                )
-                return
-              }
-              setError("")
-              setShowNew(true)
-            }}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50"
-            style={{
-              background: "var(--primary)",
-              color: "var(--primary-foreground)",
-            }}
-          >
-            <Plus size={16} aria-hidden="true" />
-            Add agent
-          </button>
-        )}
       </header>
 
       <div
@@ -1040,97 +963,6 @@ export default function Agents({
           </div>
         </div>
       </div>
-
-      {showNew && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <form
-            onSubmit={addAgent}
-            className="max-h-[90dvh] w-full max-w-md overflow-y-auto border p-6"
-            style={{ background: "var(--card)", borderColor: "var(--border)" }}
-          >
-            <h2
-              className="mb-5 text-lg font-700"
-              style={{ color: "var(--foreground)" }}
-            >
-              Add agent
-            </h2>
-            <div className="space-y-4">
-              {[
-                {
-                  name: "name",
-                  label: "Full name",
-                  type: "text",
-                  required: true,
-                },
-                {
-                  name: "phone",
-                  label: "Phone number",
-                  type: "tel",
-                  required: true,
-                },
-                {
-                  name: "email",
-                  label: "Email address",
-                  type: "email",
-                  required: true,
-                },
-                {
-                  name: "branch",
-                  label: "Registered branch",
-                  type: "text",
-                  required: true,
-                },
-              ].map((field) => (
-                <label
-                  key={field.name}
-                  className="block text-xs font-700 uppercase tracking-wider"
-                  style={{ color: "var(--muted-foreground)" }}
-                >
-                  {field.label}
-                  <input
-                    required={field.required}
-                    maxLength={field.name === "phone" ? 100 : 200}
-                    name={field.name}
-                    type={field.type}
-                    className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
-                    style={fieldStyle}
-                  />
-                </label>
-              ))}
-            </div>
-            <p
-              className="mt-4 text-xs"
-              style={{ color: "var(--muted-foreground)" }}
-            >
-              An invitation will be sent to the agent’s email address.
-            </p>
-            <div className="mt-6 flex gap-3">
-              <button
-                type="submit"
-                disabled={saving}
-                className="flex-1 py-2 text-sm font-600 disabled:opacity-50"
-                style={{
-                  background: "var(--primary)",
-                  color: "var(--primary-foreground)",
-                }}
-              >
-                {saving ? "Sending invite…" : "Send invitation"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowNew(false)}
-                className="flex-1 border py-2 text-sm"
-                style={{
-                  borderColor: "var(--border)",
-                  color: "var(--muted-foreground)",
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
 
       {editingAgent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">

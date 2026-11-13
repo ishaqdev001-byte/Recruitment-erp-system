@@ -148,6 +148,8 @@ export function SearchableMultiSelect({
   options,
   placeholder = "Type to search...",
   disabled = false,
+  hideOptionsUntilSearch = false,
+  inlineOptions = false,
   className = "",
   style,
   ariaLabel,
@@ -157,6 +159,8 @@ export function SearchableMultiSelect({
   options: SearchOption[];
   placeholder?: string;
   disabled?: boolean;
+  hideOptionsUntilSearch?: boolean;
+  inlineOptions?: boolean;
   className?: string;
   style?: CSSProperties;
   ariaLabel?: string;
@@ -169,6 +173,7 @@ export function SearchableMultiSelect({
   const listboxId = useId();
   const visibleOptions = useMemo(() => filteredOptions(options, query, values), [options, query, values]);
   const chosen = options.filter((option) => values.includes(option.value));
+  const showOptions = open && !disabled && (!hideOptionsUntilSearch || Boolean(query.trim()));
 
   useEffect(() => {
     if (!open) return;
@@ -194,7 +199,7 @@ export function SearchableMultiSelect({
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setActiveIndex((index) => Math.max(index - 1, 0));
-    } else if (event.key === "Enter" && open && visibleOptions[activeIndex]) {
+    } else if (event.key === "Enter" && showOptions && visibleOptions[activeIndex]) {
       event.preventDefault();
       toggle(visibleOptions[activeIndex]);
     } else if (event.key === "Escape") setOpen(false);
@@ -209,10 +214,10 @@ export function SearchableMultiSelect({
           ref={inputRef}
           role="combobox"
           aria-label={ariaLabel}
-          aria-expanded={open}
+          aria-expanded={showOptions}
           aria-autocomplete="list"
           aria-controls={listboxId}
-          aria-activedescendant={open && visibleOptions[activeIndex] ? `${listboxId}-option-${visibleOptions[activeIndex].value}` : undefined}
+          aria-activedescendant={showOptions && visibleOptions[activeIndex] ? `${listboxId}-option-${visibleOptions[activeIndex].value}` : undefined}
           disabled={disabled}
           autoComplete="off"
           value={query}
@@ -224,7 +229,7 @@ export function SearchableMultiSelect({
           style={{ color: "var(--foreground)" }}
         />
       </div>
-      {open && !disabled && <div id={listboxId} role="listbox" aria-multiselectable="true" className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded border py-1 shadow-xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+      {showOptions && <div id={listboxId} role="listbox" aria-multiselectable="true" className={`${inlineOptions ? "relative mt-2" : "absolute z-50 mt-1"} max-h-60 w-full overflow-y-auto rounded border py-1 shadow-xl`} style={{ background: "var(--card)", borderColor: "var(--border)" }}>
         {visibleOptions.map((option, index) => <button
           key={option.value}
           id={`${listboxId}-option-${option.value}`}

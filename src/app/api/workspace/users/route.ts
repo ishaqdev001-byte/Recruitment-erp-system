@@ -36,17 +36,29 @@ type UserTypeSelection = {
   staffInput: null
 } | {
   userType: "staff"
-  staffInput: StaffInput
+  staffInput: StaffInput | null
+}
+
+type ExistingStaffRecord = {
+  id: string
+  name: string
+  phone: string | null
+  branch_id: string
+  status: string
+  linked_user_id: string | null
 }
 
 function parseUserTypeSelection(
   body: Record<string, unknown>,
   name: string,
   branchId: string,
+  existingStaffId = "",
 ): UserTypeSelection | null {
   const requestedType = body.userType ?? "member"
   if (requestedType === "member")
     return { userType: "member", staffInput: null }
+  if (requestedType === "staff" && existingStaffId)
+    return { userType: "staff", staffInput: null }
   if (
     requestedType !== "staff" ||
     !body.staff ||
@@ -148,13 +160,115 @@ async function insertInvitedStaffRecord(
   return staff.id
 }
 
+async function getUnlinkedStaffRecord(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  companyId: string,
+  staffId: string,
+) {
+  const { data, error } = await admin
+    .from("company_staff_members")
+    .select("id, name, phone, branch_id, status, linked_user_id")
+    .eq("company_id", companyId)
+    .eq("id", staffId)
+    .eq("status", "Active")
+    .is("linked_user_id", null)
+    .maybeSingle()
+  if (error) throw error
+  return data as ExistingStaffRecord | null
+}
+
+async function linkInvitedStaffRecord(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  companyId: string,
+  staffId: string,
+  userId: string,
+  updatedBy: string,
+  phone: string,
+) {
+  const { data, error } = await admin
+    .from("company_staff_members")
+    .update({
+      linked_user_id: userId,
+      updated_by: updatedBy,
+      ...(phone ? { phone } : {}),
+    })
+    .eq("company_id", companyId)
+    .eq("id", staffId)
+    .eq("status", "Active")
+    .is("linked_user_id", null)
+    .select("id")
+    .maybeSingle()
+  if (error) throw error
+  if (!data) {
+    throw new Error(
+      "This staff record was already linked or is no longer active. Refresh the staff list and try again.",
+    )
+  }
+}
+
+async function createOrLinkInvitedStaffRecord(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  companyId: string,
+  createdBy: string,
+  userId: string,
+  staffInput: StaffInput | null,
+  existingStaffId: string,
+  phone: string,
+) {
+  if (existingStaffId) {
+    await linkInvitedStaffRecord(
+      admin,
+      companyId,
+      existingStaffId,
+      userId,
+      createdBy,
+      phone,
+    )
+    return
+  }
+  if (staffInput) {
+    await insertInvitedStaffRecord(
+      admin,
+      companyId,
+      createdBy,
+      userId,
+      staffInput,
+      phone,
+    )
+  }
+}
+
+async function removeInvitedStaffRecord(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  companyId: string,
+  userId: string,
+  existingStaffId: string,
+) {
+  if (existingStaffId) {
+    const { error } = await admin
+      .from("company_staff_members")
+      .update({ linked_user_id: null })
+      .eq("company_id", companyId)
+      .eq("id", existingStaffId)
+      .eq("linked_user_id", userId)
+    if (error) throw error
+    return
+  }
+  const { error } = await admin
+    .from("company_staff_members")
+    .delete()
+    .eq("company_id", companyId)
+    .eq("linked_user_id", userId)
+  if (error) throw error
+}
+
 function escapeEmailHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => {
     const entities: Record<string, string> = {
       "&": "&amp;",
       "<": "&lt;",
       ">": "&gt;",
-      "\"": "&quot;",
+      '"': "&quot;",
       "'": "&#39;",
     }
     return entities[character] ?? character
@@ -662,8 +776,10 @@ export async function POST(request: Request) {
       const userType = body.userType
       const requestedStatus = body.status
       const staffBody =
-        body.staff && typeof body.staff === "object" && !Array.isArray(body.staff)
-          ? (body.staff as Record<string, unknown>)
+        body.staff &&
+        typeof body.staff === "object" &&
+        !Array.isArray(body.staff)
+          ? body.staff as Record<string, unknown>
           : null
 
       if (
@@ -782,7 +898,9 @@ export async function POST(request: Request) {
       ])
 
       if (roleError || branchError || authError || profileError || staffError) {
-        throw roleError ?? branchError ?? authError ?? profileError ?? staffError
+        throw (
+          roleError ?? branchError ?? authError ?? profileError ?? staffError
+        )
       }
       if (!targetRole || isPrimaryAdministratorRole(targetRole.name)) {
         return NextResponse.json(
@@ -804,7 +922,10 @@ export async function POST(request: Request) {
       }
       if ((linkedStaff ?? []).length > 1) {
         return NextResponse.json(
-          { error: "This user has multiple linked staff records. Contact support." },
+          {
+            error:
+              "This user has multiple linked staff records. Contact support.",
+          },
           { status: 409, headers: responseHeaders },
         )
       }
@@ -925,9 +1046,10 @@ export async function POST(request: Request) {
         }
 
         const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim()
-        const redirectTo = siteUrl && company.slug
-          ? new URL(`/${company.slug}/login`, siteUrl).toString()
-          : undefined
+        const redirectTo =
+          siteUrl && company.slug
+            ? new URL(`/${company.slug}/login`, siteUrl).toString()
+            : undefined
         const options = redirectTo ? { redirectTo } : undefined
         const [currentLinkResult, newLinkResult] = await Promise.all([
           admin.auth.admin.generateLink({
@@ -945,7 +1067,10 @@ export async function POST(request: Request) {
         ])
         if (currentLinkResult.error || newLinkResult.error) {
           const linkError = currentLinkResult.error ?? newLinkResult.error
-          console.error("Email-change verification link generation failed", linkError)
+          console.error(
+            "Email-change verification link generation failed",
+            linkError,
+          )
           return NextResponse.json(
             {
               error:
@@ -976,8 +1101,9 @@ export async function POST(request: Request) {
 
       const rollback = async () => {
         const failures: string[] = []
-        const actions: Array<[string, () => Promise<{ error: unknown } | { error: null }>]>
-          = []
+        const actions: Array<[string, () => Promise<{ error: unknown } | {
+          error: null
+        }>]> = []
 
         if (staffUpdated && createdStaffId) {
           actions.push([
@@ -1006,7 +1132,8 @@ export async function POST(request: Request) {
                   date_joined: currentStaff.date_joined,
                   pay_type: currentStaff.pay_type,
                   base_salary: currentStaff.base_salary,
-                  weekly_transport_allowance: currentStaff.weekly_transport_allowance,
+                  weekly_transport_allowance:
+                    currentStaff.weekly_transport_allowance,
                   transport_account_id: currentStaff.transport_account_id,
                   updated_by: currentStaff.updated_by,
                 })
@@ -1055,7 +1182,10 @@ export async function POST(request: Request) {
               }
             } catch (rollbackError) {
               failures.push(label)
-              console.error(`User edit rollback failed for ${label}`, rollbackError)
+              console.error(
+                `User edit rollback failed for ${label}`,
+                rollbackError,
+              )
             }
           }),
         )
@@ -1065,10 +1195,9 @@ export async function POST(request: Request) {
       try {
         const { error: profileUpdateError } = await admin
           .from("profiles")
-          .upsert(
-            { id: userId, display_name: name, phone },
-            { onConflict: "id" },
-          )
+          .upsert({ id: userId, display_name: name, phone }, {
+            onConflict: "id",
+          })
         if (profileUpdateError) throw profileUpdateError
         profileUpdated = true
 
@@ -1096,7 +1225,8 @@ export async function POST(request: Request) {
               .select("id")
               .maybeSingle()
             if (staffUpdateError) throw staffUpdateError
-            if (!updatedStaff) throw new Error("The linked staff record was not found.")
+            if (!updatedStaff)
+              throw new Error("The linked staff record was not found.")
           } else {
             createdStaffId = await insertInvitedStaffRecord(
               admin,
@@ -1121,14 +1251,13 @@ export async function POST(request: Request) {
             .select("id")
             .maybeSingle()
           if (staffUpdateError) throw staffUpdateError
-          if (!updatedStaff) throw new Error("The linked staff record was not found.")
+          if (!updatedStaff)
+            throw new Error("The linked staff record was not found.")
           staffUpdated = true
         }
 
         const nextMembershipStatus =
-          requestedStatus === "invited"
-            ? membership.status
-            : requestedStatus
+          requestedStatus === "invited" ? membership.status : requestedStatus
         const { data: updatedMembership, error: membershipUpdateError } =
           await admin
             .from("company_memberships")
@@ -1142,7 +1271,8 @@ export async function POST(request: Request) {
             .select("user_id")
             .maybeSingle()
         if (membershipUpdateError) throw membershipUpdateError
-        if (!updatedMembership) throw new Error("The company membership was not found.")
+        if (!updatedMembership)
+          throw new Error("The company membership was not found.")
         membershipUpdated = true
 
         const { error: metadataError } = await admin.auth.admin.updateUserById(
@@ -1168,7 +1298,10 @@ export async function POST(request: Request) {
           )
         }
         return NextResponse.json(
-          { error: "Unable to update user details. No profile, staff, or access changes were retained." },
+          {
+            error:
+              "Unable to update user details. No profile, staff, or access changes were retained.",
+          },
           { status: 500, headers: responseHeaders },
         )
       }
@@ -1196,13 +1329,20 @@ export async function POST(request: Request) {
         })
         try {
           const deliveries = await Promise.allSettled([
-            emailTransport.sendMail(emailMessage(currentEmailChangeLink, currentEmail)),
+            emailTransport.sendMail(
+              emailMessage(currentEmailChangeLink, currentEmail),
+            ),
             emailTransport.sendMail(emailMessage(newEmailChangeLink, email)),
           ])
           if (deliveries.some((delivery) => delivery.status === "rejected"))
-            throw new Error("One or more verification messages were not delivered.")
+            throw new Error(
+              "One or more verification messages were not delivered.",
+            )
         } catch (emailError) {
-          console.error("Company user email-change verification delivery failed", emailError)
+          console.error(
+            "Company user email-change verification delivery failed",
+            emailError,
+          )
           emailChangeWarning =
             "The account was updated, but email verification could not be fully delivered. The login email remains unchanged; retry the email change."
         } finally {
@@ -1523,18 +1663,25 @@ export async function POST(request: Request) {
       if (linkedStaffError) throw linkedStaffError
       if ((linkedStaff ?? []).length > 1)
         return NextResponse.json(
-          { error: "This user has multiple linked staff records. Contact support." },
+          {
+            error:
+              "This user has multiple linked staff records. Contact support.",
+          },
           { status: 409, headers: responseHeaders },
         )
 
       const currentlyStaff = Boolean(linkedStaff?.length)
       if ((userType === "staff") === currentlyStaff)
-        return NextResponse.json({ success: true }, { headers: responseHeaders })
+        return NextResponse.json({ success: true }, {
+          headers: responseHeaders,
+        })
 
       if (userType === "member") {
         const staffId = linkedStaff?.[0]?.id
         if (!staffId)
-          return NextResponse.json({ success: true }, { headers: responseHeaders })
+          return NextResponse.json({ success: true }, {
+            headers: responseHeaders,
+          })
 
         const { count, error: reportsError } = await admin
           .from("company_staff_members")
@@ -1565,12 +1712,16 @@ export async function POST(request: Request) {
             { status: 500, headers: responseHeaders },
           )
         }
-        return NextResponse.json({ success: true }, { headers: responseHeaders })
+        return NextResponse.json({ success: true }, {
+          headers: responseHeaders,
+        })
       }
 
       const staffBody =
-        body.staff && typeof body.staff === "object" && !Array.isArray(body.staff)
-          ? (body.staff as Record<string, unknown>)
+        body.staff &&
+        typeof body.staff === "object" &&
+        !Array.isArray(body.staff)
+          ? body.staff as Record<string, unknown>
           : null
       if (!staffBody)
         return NextResponse.json(
@@ -2673,12 +2824,20 @@ export async function POST(request: Request) {
       const roleId = typeof body.roleId === "string" ? body.roleId : ""
 
       const branchId = typeof body.branchId === "string" ? body.branchId : ""
-      const userTypeSelection = parseUserTypeSelection(body, name, branchId)
+      const existingStaffId =
+        typeof body.existingStaffId === "string" ? body.existingStaffId : ""
+      const userTypeSelection = parseUserTypeSelection(
+        body,
+        name,
+        branchId,
+        existingStaffId,
+      )
 
       if (
         !name ||
         name.length > 200 ||
         !/^\S+@\S+\.\S+$/.test(email) ||
+        !phone ||
         !roleId ||
         !branchId ||
         phone.length > 100 ||
@@ -2688,18 +2847,52 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error:
-              "Enter valid account details and complete all required staff information.",
+              "Enter a valid name, email, phone number, role, branch, and complete staff information.",
           },
 
           { status: 400, headers: responseHeaders },
         )
       }
 
+      if (
+        existingStaffId &&
+        (userTypeSelection.userType !== "staff" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            existingStaffId,
+          ))
+      ) {
+        return NextResponse.json(
+          { error: "Select a valid staff record for a Staff account." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const existingStaff = existingStaffId
+        ? await getUnlinkedStaffRecord(admin, access.companyId, existingStaffId)
+        : null
+      if (
+        existingStaffId &&
+        (!existingStaff ||
+          existingStaff.name.trim().toLocaleLowerCase() !==
+            name.toLocaleLowerCase() ||
+          existingStaff.branch_id !== branchId)
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "That staff record is no longer available or its details changed. Refresh the staff list and try again.",
+          },
+          { status: 409, headers: responseHeaders },
+        )
+      }
+      const accountName = existingStaff?.name ?? name
+      const accountPhone = phone || existingStaff?.phone || ""
+
       const { data: targetBranch, error: targetBranchError } = await admin
 
         .from("company_branches")
 
-        .select("id, status")
+        .select("id, name, status")
 
         .eq("id", branchId)
 
@@ -2727,6 +2920,7 @@ export async function POST(request: Request) {
           { status: 403, headers: responseHeaders },
         )
       }
+      const branchName = targetBranch.name
 
       const { data: role, error: roleError } = await admin
 
@@ -2758,7 +2952,7 @@ export async function POST(request: Request) {
         )
       }
 
-      if (userTypeSelection.staffInput) {
+      if (userTypeSelection.staffInput && !existingStaff) {
         const staffValidationError = await validateStaffInvitation(
           admin,
           access.companyId,
@@ -2807,7 +3001,7 @@ export async function POST(request: Request) {
       const { data: inviteData, error: inviteError } =
         await admin.auth.admin.inviteUserByEmail(email, {
           data: {
-            full_name: name,
+            full_name: accountName,
 
             company_name: company.name,
 
@@ -2853,7 +3047,12 @@ export async function POST(request: Request) {
 
         .from("profiles")
 
-        .upsert({ id: userId, display_name: name, phone, branch })
+        .upsert({
+          id: userId,
+          display_name: accountName,
+          phone: accountPhone,
+          branch: branchName,
+        })
 
       if (profileError) {
         console.error(
@@ -2925,14 +3124,16 @@ export async function POST(request: Request) {
         )
       }
 
-      if (userTypeSelection.staffInput) {
+      if (userTypeSelection.userType === "staff") {
         try {
-          await insertInvitedStaffRecord(
+          await createOrLinkInvitedStaffRecord(
             admin,
             access.companyId,
             access.userId,
             userId,
             userTypeSelection.staffInput,
+            existingStaffId,
+            accountPhone,
           )
         } catch (staffError) {
           console.error("Invited staff record creation failed", staffError)
@@ -2968,17 +3169,20 @@ export async function POST(request: Request) {
         })
 
       if (invitationError) {
-        if (userTypeSelection.staffInput) {
-          const { error: staffCleanupError } = await admin
-            .from("company_staff_members")
-            .delete()
-            .eq("company_id", access.companyId)
-            .eq("linked_user_id", userId)
-          if (staffCleanupError)
+        if (userTypeSelection.userType === "staff") {
+          try {
+            await removeInvitedStaffRecord(
+              admin,
+              access.companyId,
+              userId,
+              existingStaffId,
+            )
+          } catch (staffCleanupError) {
             console.error(
               "Invited staff record cleanup failed",
               staffCleanupError,
             )
+          }
         }
         const { error: cleanupError } =
           await admin.auth.admin.deleteUser(userId)
@@ -3000,13 +3204,13 @@ export async function POST(request: Request) {
           user: {
             id: userId,
 
-            name,
+            name: accountName,
 
             email,
 
-            phone,
+            phone: accountPhone,
 
-            branch,
+            branch: branchName,
 
             roleId,
 
@@ -3039,7 +3243,14 @@ export async function POST(request: Request) {
       const roleId = typeof body.roleId === "string" ? body.roleId : ""
 
       const branchId = typeof body.branchId === "string" ? body.branchId : ""
-      const userTypeSelection = parseUserTypeSelection(body, name, branchId)
+      const existingStaffId =
+        typeof body.existingStaffId === "string" ? body.existingStaffId : ""
+      const userTypeSelection = parseUserTypeSelection(
+        body,
+        name,
+        branchId,
+        existingStaffId,
+      )
 
       const password = typeof body.password === "string" ? body.password : ""
 
@@ -3060,11 +3271,45 @@ export async function POST(request: Request) {
         )
       }
 
+      if (
+        existingStaffId &&
+        (userTypeSelection.userType !== "staff" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            existingStaffId,
+          ))
+      ) {
+        return NextResponse.json(
+          { error: "Select a valid staff record for a Staff account." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const existingStaff = existingStaffId
+        ? await getUnlinkedStaffRecord(admin, access.companyId, existingStaffId)
+        : null
+      if (
+        existingStaffId &&
+        (!existingStaff ||
+          existingStaff.name.trim().toLocaleLowerCase() !==
+            name.toLocaleLowerCase() ||
+          existingStaff.branch_id !== branchId)
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "That staff record is no longer available or its details changed. Refresh the staff list and try again.",
+          },
+          { status: 409, headers: responseHeaders },
+        )
+      }
+      const accountName = existingStaff?.name ?? name
+      const accountPhone = phone || existingStaff?.phone || ""
+
       const { data: targetBranch, error: targetBranchError } = await admin
 
         .from("company_branches")
 
-        .select("id, status")
+        .select("id, name, status")
 
         .eq("id", branchId)
 
@@ -3092,6 +3337,7 @@ export async function POST(request: Request) {
           { status: 403, headers: responseHeaders },
         )
       }
+      const branchName = targetBranch.name
 
       if (password.length < 8) {
         return NextResponse.json(
@@ -3131,7 +3377,7 @@ export async function POST(request: Request) {
         )
       }
 
-      if (userTypeSelection.staffInput) {
+      if (userTypeSelection.staffInput && !existingStaff) {
         const staffValidationError = await validateStaffInvitation(
           admin,
           access.companyId,
@@ -3174,7 +3420,7 @@ export async function POST(request: Request) {
 
           email_confirm: true,
 
-          user_metadata: { full_name: name },
+          user_metadata: { full_name: accountName },
         })
 
       if (createError || !createdUser.user) {
@@ -3194,11 +3440,11 @@ export async function POST(request: Request) {
       const { error: profileError } = await admin.from("profiles").upsert({
         id: userId,
 
-        display_name: name,
+        display_name: accountName,
 
-        phone,
+        phone: accountPhone,
 
-        branch,
+        branch: branchName,
 
         must_change_password: true,
       })
@@ -3244,14 +3490,16 @@ export async function POST(request: Request) {
         )
       }
 
-      if (userTypeSelection.staffInput) {
+      if (userTypeSelection.userType === "staff") {
         try {
-          await insertInvitedStaffRecord(
+          await createOrLinkInvitedStaffRecord(
             admin,
             access.companyId,
             access.userId,
             userId,
             userTypeSelection.staffInput,
+            existingStaffId,
+            accountPhone,
           )
         } catch (staffError) {
           console.error("New staff account record creation failed", staffError)
@@ -3277,13 +3525,13 @@ export async function POST(request: Request) {
           user: {
             id: userId,
 
-            name,
+            name: accountName,
 
             email,
 
-            phone,
+            phone: accountPhone,
 
-            branch,
+            branch: branchName,
 
             roleId,
 

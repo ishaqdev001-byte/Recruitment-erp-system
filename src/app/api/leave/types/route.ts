@@ -30,7 +30,7 @@ export async function GET() {
 
     const { data, error } = await access.supabase
       .from("company_leave_types")
-      .select("id, name, days_per_year, description, is_active, created_at")
+      .select("id, name, days_per_year, description, is_paid, is_active, created_at")
       .eq("company_id", access.companyId)
       .order("name");
     if (error) {
@@ -70,6 +70,7 @@ export async function POST(request: Request) {
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const daysPerYear = typeof body.daysPerYear === "number" ? Math.round(body.daysPerYear) : (typeof body.daysPerYear === "string" ? parseInt(body.daysPerYear, 10) : NaN);
     const description = typeof body.description === "string" ? body.description.trim() : "";
+    const isPaid = typeof body.isPaid === "boolean" ? body.isPaid : !/unpaid/i.test(name);
 
     if (!name || name.length > 100) return NextResponse.json({ error: "Enter a leave type name (up to 100 characters)." }, { status: 400, headers });
     if (!Number.isInteger(daysPerYear) || daysPerYear < 1 || daysPerYear > 365) return NextResponse.json({ error: "Days per year must be between 1 and 365." }, { status: 400, headers });
@@ -83,9 +84,10 @@ export async function POST(request: Request) {
       name,
       days_per_year: daysPerYear,
       description,
+      is_paid: isPaid,
       created_by: access.userId,
       updated_by: access.userId,
-    }).select("id, name, days_per_year, description, is_active, created_at").single();
+    }).select("id, name, days_per_year, description, is_paid, is_active, created_at").single();
 
     if (error) {
       if (error.code === "23505") return NextResponse.json({ error: `A leave type named "${name}" already exists.` }, { status: 409, headers });
@@ -135,6 +137,9 @@ export async function PATCH(request: Request) {
       if (description.length > 1000) return NextResponse.json({ error: "Description must be 1,000 characters or fewer." }, { status: 400, headers });
       updates.description = description;
     }
+    if (typeof body.isPaid === "boolean") {
+      updates.is_paid = body.isPaid;
+    }
     if (typeof body.isActive === "boolean") {
       updates.is_active = body.isActive;
     }
@@ -144,7 +149,7 @@ export async function PATCH(request: Request) {
 
     const { data, error } = await admin.from("company_leave_types").update(updates)
       .eq("id", id).eq("company_id", access.companyId)
-      .select("id, name, days_per_year, description, is_active, created_at").single();
+      .select("id, name, days_per_year, description, is_paid, is_active, created_at").single();
 
     if (error) {
       if (error.code === "23505") return NextResponse.json({ error: "A leave type with that name already exists." }, { status: 409, headers });

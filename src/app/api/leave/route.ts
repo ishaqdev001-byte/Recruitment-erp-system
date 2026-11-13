@@ -130,7 +130,7 @@ export async function GET() {
 
     const select = [
       "id", "employee_id", "leave_type", "leave_type_id", "start_date", "end_date",
-      "days_count", "reason", "status",
+      "days_count", "is_paid", "reason", "status",
       "supervisor_status", "supervisor_note", "supervisor_id", "supervisor_reviewed_at",
       "manager_status", "manager_note", "manager_id", "manager_reviewed_at",
       "final_status", "final_note", "final_reviewer_id", "final_reviewed_at",
@@ -281,7 +281,7 @@ export async function POST(request: Request) {
         reason,
         status: "pending",
       })
-      .select("id, employee_id, leave_type, leave_type_id, start_date, end_date, days_count, reason, status, supervisor_status, manager_status, final_status, created_at")
+      .select("id, employee_id, leave_type, leave_type_id, start_date, end_date, days_count, is_paid, reason, status, supervisor_status, manager_status, final_status, created_at")
       .single();
 
     if (error || !req) {

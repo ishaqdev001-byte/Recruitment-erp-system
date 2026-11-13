@@ -8,6 +8,7 @@ type LeaveType = {
   name: string;
   days_per_year: number;
   description: string;
+  is_paid: boolean;
   is_active: boolean;
   created_at: string;
 };
@@ -17,8 +18,8 @@ type LeaveTypesPayload = {
   canManageTypes: boolean;
 };
 
-type LeaveTypeForm = { name: string; daysPerYear: string; description: string };
-const emptyForm = (): LeaveTypeForm => ({ name: "", daysPerYear: "", description: "" });
+type LeaveTypeForm = { name: string; daysPerYear: string; description: string; isPaid: boolean };
+const emptyForm = (): LeaveTypeForm => ({ name: "", daysPerYear: "", description: "", isPaid: true });
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 
 export default function LeaveTypes() {
@@ -58,7 +59,7 @@ export default function LeaveTypes() {
 
   const openEdit = (lt: LeaveType) => {
     setEditing(lt);
-    setForm({ name: lt.name, daysPerYear: String(lt.days_per_year), description: lt.description });
+    setForm({ name: lt.name, daysPerYear: String(lt.days_per_year), description: lt.description, isPaid: lt.is_paid });
     setError("");
     setNotice("");
     setShowForm(true);
@@ -81,6 +82,7 @@ export default function LeaveTypes() {
         name: form.name.trim(),
         daysPerYear: parseInt(form.daysPerYear, 10),
         description: form.description.trim(),
+        isPaid: form.isPaid,
       };
       let response: Response;
       if (editing) {
@@ -200,7 +202,7 @@ export default function LeaveTypes() {
               <div className="app-table-scroll"><table className="w-full min-w-160 text-sm">
                 <thead>
                   <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
-                    {["Leave type", "Days per year", "Description", canManage ? "Actions" : ""].filter(Boolean).map((h) => (
+                    {["Leave type", "Pay status", "Days per year", "Description", canManage ? "Actions" : ""].filter(Boolean).map((h) => (
                       <th key={h} className="whitespace-nowrap px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
                     ))}
                   </tr>
@@ -213,6 +215,9 @@ export default function LeaveTypes() {
                           <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#10b981" }} />
                           {lt.name}
                         </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs font-600" style={{ color: lt.is_paid ? "#168358" : "#b7791f" }}>
+                        {lt.is_paid ? "Paid" : "Unpaid"}
                       </td>
                       <td className="px-4 py-3 mono font-600" style={{ color: "var(--primary)" }}>
                         {lt.days_per_year} <span className="text-xs font-400" style={{ color: "var(--muted-foreground)" }}>days / year</span>
@@ -261,7 +266,7 @@ export default function LeaveTypes() {
               <div className="app-table-scroll"><table className="w-full min-w-160 text-sm">
                 <thead>
                   <tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>
-                    {["Leave type", "Days per year", "Description", canManage ? "Actions" : ""].filter(Boolean).map((h) => (
+                    {["Leave type", "Pay status", "Days per year", "Description", canManage ? "Actions" : ""].filter(Boolean).map((h) => (
                       <th key={h} className="whitespace-nowrap px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
                     ))}
                   </tr>
@@ -274,6 +279,9 @@ export default function LeaveTypes() {
                           <span className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--muted-foreground)" }} />
                           {lt.name}
                         </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs font-600" style={{ color: lt.is_paid ? "#168358" : "#b7791f" }}>
+                        {lt.is_paid ? "Paid" : "Unpaid"}
                       </td>
                       <td className="px-4 py-3 mono font-600" style={{ color: "var(--muted-foreground)" }}>
                         {lt.days_per_year} <span className="text-xs font-400">days / year</span>
@@ -352,11 +360,32 @@ export default function LeaveTypes() {
                   type="text"
                   maxLength={100}
                   value={form.name}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  onChange={(event) => setForm((current) => ({
+                    ...current,
+                    name: event.target.value,
+                    ...(event.target.value.toLowerCase().includes("unpaid") && current.isPaid
+                      ? { isPaid: false }
+                      : {}),
+                  }))}
                   placeholder="e.g. Annual Leave"
                   className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                   style={fieldStyle}
                 />
+              </label>
+
+              <label className="flex items-start gap-3 text-sm" style={{ color: "var(--foreground)" }}>
+                <input
+                  type="checkbox"
+                  checked={form.isPaid}
+                  onChange={(event) => setForm((current) => ({ ...current, isPaid: event.target.checked }))}
+                  className="mt-0.5"
+                />
+                <span>
+                  Paid leave
+                  <span className="mt-1 block text-xs font-normal" style={{ color: "var(--muted-foreground)" }}>
+                    Uncheck this for unpaid leave. Approved unpaid leave affects payroll.
+                  </span>
+                </span>
               </label>
 
               <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>

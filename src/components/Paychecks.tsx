@@ -34,6 +34,8 @@ type PaycheckRecord = {
   payment_reference: string;
   employee: StaffOption;
   payslipUrl: string;
+  isUnpaidLeave?: boolean;
+  unpaidLeaveDays?: number;
 };
 type PayrollAdjustment = {
   id: string;
@@ -46,6 +48,7 @@ type PayrollAdjustment = {
   description: string;
   paycheck_id: string | null;
   employee: StaffOption;
+  blockedByUnpaidLeave?: boolean;
 };
 type PayrollPayload = { paychecks?: PaycheckRecord[]; staff?: StaffOption[]; accounts?: AccountOption[]; company?: { name: string; logo_url: string | null }; permissions?: { canRecord?: boolean }; error?: string };
 type AdjustmentsPayload = { adjustments?: PayrollAdjustment[]; referencePreview?: string; error?: string };
@@ -119,7 +122,7 @@ export default function Paychecks() {
   }, [reloadKey]);
 
   const filteredPaychecks = useMemo(() => {
-    return paychecks.filter((paycheck) => matchesSearch(search, paycheck.employee.name, paycheck.employee.staff_id, paycheck.employee.position, paycheck.pay_period, paycheck.payment_reference));
+    return paychecks.filter((paycheck) => matchesSearch(search, paycheck.employee.name, paycheck.employee.staff_id, paycheck.employee.position, paycheck.pay_period, paycheck.payment_reference, paycheck.isUnpaidLeave ? "unpaid leave" : "paid"));
   }, [paychecks, search]);
   const payrollStaff = staff.filter((member) => member.pay_type === "payroll");
   const configuredPayrollStaff = payrollStaff.filter((member) => Number(member.base_salary) > 0);
@@ -127,7 +130,7 @@ export default function Paychecks() {
   const paycheckStaffOptions = configuredPayrollStaff.map((member) => ({ value: member.id, label: member.name, description: `${member.staff_id} · ${member.position}`, searchText: `${member.staff_id} ${member.position}` }));
   const selectedStaff = staff.find((member) => member.id === staffMemberId) ?? null;
 
-  const monthToDate = paychecks.filter((paycheck) => paycheck.pay_period === currentMonth());
+  const monthToDate = paychecks.filter((paycheck) => paycheck.pay_period === currentMonth() && !paycheck.isUnpaidLeave);
   const monthPaid = monthToDate.reduce((sum, paycheck) => sum + Number(paycheck.net_amount), 0);
   const selectedAdjustments = adjustments.filter((adjustment) => adjustment.staff_member_id === staffMemberId && adjustment.pay_period === payPeriod && !adjustment.paycheck_id);
   const monthBenefits = selectedAdjustments.filter((adjustment) => adjustment.adjustment_type === "benefit").reduce((sum, item) => sum + Number(item.amount), 0);
@@ -226,7 +229,7 @@ export default function Paychecks() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
         <label className="flex w-full max-w-md items-center gap-2 rounded border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search paychecks" placeholder="Search staff member, ID, period, or reference" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
-        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{filteredPaychecks.length} payslips</span>
+        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{filteredPaychecks.length} payroll records</span>
       </div>
 
       {error && <div role="alert" className="mx-6 mt-4 rounded border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
@@ -235,10 +238,10 @@ export default function Paychecks() {
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="finance-table-scroll rounded border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-225 text-sm">
-            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Pay period", "Staff member", "Gross pay", "Benefits", "Deductions", "Net paid", "Payment date", "Payslip"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Pay period", "Staff member", "Gross pay", "Benefits", "Deductions", "Net pay", "Payment date", "Status", "Payslip"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={8} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading payroll…</td></tr>}
-              {!loading && !filteredPaychecks.length && <tr><td colSpan={8} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{paychecks.length ? "No payments match this search." : "No monthly payments recorded."}</td></tr>}
+              {loading && <tr><td colSpan={9} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading payroll…</td></tr>}
+              {!loading && !filteredPaychecks.length && <tr><td colSpan={9} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{paychecks.length ? "No payments match this search." : "No monthly payments recorded."}</td></tr>}
               {!loading && filteredPaychecks.map((paycheck) => <tr key={paycheck.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>{new Date(`${paycheck.pay_period}T00:00:00`).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</td>
                 <td className="whitespace-nowrap px-3 py-3"><span className="block font-600" style={{ color: "var(--foreground)" }}>{paycheck.employee.name}</span><span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{paycheck.employee.staff_id} · {paycheck.employee.position}</span></td>
@@ -246,8 +249,11 @@ export default function Paychecks() {
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "#17845b" }}><span>{formatMoney(Number(paycheck.benefits_total))}</span>{paycheck.benefits.filter((benefit) => benefit.description.startsWith("Weekly transport allowance")).map((benefit) => <span key={benefit.description} className="mt-0.5 block font-normal" title={benefit.description}>Transport: {formatMoney(Number(benefit.amount))}</span>)}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "#c2413a" }}>{formatMoney(Number(paycheck.deductions_total))}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "var(--primary)" }}>{formatMoney(Number(paycheck.net_amount))}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{new Date(`${paycheck.payment_date}T00:00:00`).toLocaleDateString("en-GB")}</td>
-                <td className="px-3 py-3"><a href={paycheck.payslipUrl} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Download size={13} aria-hidden="true" />PDF</a></td>
+                <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{paycheck.payment_date ? new Date(`${paycheck.payment_date}T00:00:00`).toLocaleDateString("en-GB") : "—"}</td>
+                <td className="whitespace-nowrap px-3 py-3 text-xs font-600" style={{ color: paycheck.isUnpaidLeave ? "#b7791f" : "#168358" }}>
+                  {paycheck.isUnpaidLeave ? `Unpaid leave (${paycheck.unpaidLeaveDays} days)` : "Paid"}
+                </td>
+                <td className="px-3 py-3">{paycheck.payslipUrl ? <a href={paycheck.payslipUrl} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Download size={13} aria-hidden="true" />PDF</a> : <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>—</span>}</td>
               </tr>)}
             </tbody>
           </table>
@@ -266,7 +272,9 @@ export default function Paychecks() {
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{formatMoney(Number(adjustment.amount))}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{adjustment.payment_method}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--primary)" }}>{adjustment.payment_reference}</td>
-                <td className="px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{adjustment.paycheck_id ? "Included" : "Pending monthly payslip"}</td>
+                <td className="px-3 py-3 text-xs" style={{ color: adjustment.blockedByUnpaidLeave ? "#b7791f" : "var(--muted-foreground)" }}>
+                  {adjustment.blockedByUnpaidLeave ? "Not payable — unpaid leave" : adjustment.paycheck_id ? "Included" : "Pending monthly payslip"}
+                </td>
               </tr>)}
             </tbody>
           </table>

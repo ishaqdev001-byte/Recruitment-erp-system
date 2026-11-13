@@ -344,6 +344,8 @@ export async function GET() {
 
         branchSelectionRequired: canChooseStaffBranch,
 
+        canDeleteStaff: access.isPrimaryAdmin,
+
         settings: {
           prefix: settings.staff_id_prefix,
           nextSequence: settings.next_sequence,
@@ -361,6 +363,83 @@ export async function GET() {
           "Staff records are unavailable. Apply the company staff and accounts migrations and try again.",
       },
       { status: 503, headers },
+    )
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const access = await getStaffAccess()
+
+    if ("error" in access)
+      return NextResponse.json({ error: access.error }, {
+        status: access.status,
+        headers,
+      })
+
+    if (!access.isPrimaryAdmin)
+      return NextResponse.json(
+        { error: "Only the Chairman can delete staff records." },
+        { status: 403, headers },
+      )
+
+    const body = (await request.json().catch(() => null)) as
+      | { id?: unknown }
+      | null
+    const id = typeof body?.id === "string" ? body.id : ""
+
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+      return NextResponse.json(
+        { error: "Select a valid staff record to delete." },
+        { status: 400, headers },
+      )
+
+    const { data: linkedUserId, error } = await access.admin.rpc(
+      "delete_company_staff_member_and_membership",
+      {
+        requested_company_id: access.companyId,
+        requested_staff_member_id: id,
+      },
+    )
+
+    if (error?.code === "P0002")
+      return NextResponse.json(
+        { error: "Staff member not found." },
+        { status: 404, headers },
+      )
+
+    if (error?.code === "42501")
+      return NextResponse.json(
+        { error: "The Chairman staff record cannot be deleted." },
+        { status: 403, headers },
+      )
+
+    if (error?.code === "P0001")
+      return NextResponse.json(
+        { error: error.message },
+        { status: 409, headers },
+      )
+
+    if (error) {
+      console.error("Company staff deletion failed", error)
+      return NextResponse.json(
+        { error: "Unable to delete this staff record." },
+        { status: 500, headers },
+      )
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        removedCompanyMembership: Boolean(linkedUserId),
+      },
+      { headers },
+    )
+  } catch (error) {
+    console.error("Company staff deletion failed", error)
+    return NextResponse.json(
+      { error: "Unable to delete this staff record." },
+      { status: 500, headers },
     )
   }
 }

@@ -28,6 +28,7 @@ type LeaveRequest = {
   start_date: string;
   end_date: string;
   days_count: number;
+  is_paid: boolean;
   reason: string;
   status: LeaveStatus;
   // Stage 1 – Supervisor
@@ -541,7 +542,10 @@ export default function LeaveManagement() {
                           onClick={() => setExpandedRow(isExpanded ? null : req.id)}
                         >
                           <td className="whitespace-nowrap px-3 py-3 text-xs font-600" style={{ color: "var(--foreground)" }}>{req.employee_name}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{req.leave_type_name || req.leave_type}</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>
+                            {req.leave_type_name || req.leave_type}
+                            {!req.is_paid && <span className="ml-2 font-600" style={{ color: "#b7791f" }}>Unpaid</span>}
+                          </td>
                           <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{dateLabel(req.start_date)} – {dateLabel(req.end_date)}</td>
                           <td className="px-3 py-3 mono text-xs font-600" style={{ color: "var(--foreground)" }}>{req.days_count ?? dayCount(req.start_date, req.end_date)}</td>
                           <td className="whitespace-nowrap px-3 py-3">

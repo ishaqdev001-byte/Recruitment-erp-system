@@ -1,6 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  leaveCoversDate,
+  leaveOverlapsPayPeriod,
+  loadApprovedUnpaidLeaves,
+  unpaidLeaveBlocksPayPeriod,
+} from "@/lib/server/unpaid-leave";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
@@ -77,7 +83,7 @@ export async function GET() {
     }
 
     let staffQuery = access.admin.from("company_staff_members")
-      .select("id, name, staff_id")
+      .select("id, name, staff_id, linked_user_id")
       .eq("company_id", access.companyId);
     if (!access.isMainBranch) staffQuery = staffQuery.eq("branch_id", access.branchId!);
     const { data: staff, error: staffError } = await staffQuery.order("name");
@@ -90,8 +96,33 @@ export async function GET() {
       : { data: [], error: null };
     if (error) throw error;
     const staffById = new Map((staff ?? []).map((member) => [member.id, member]));
+    const unpaidLeaves = await loadApprovedUnpaidLeaves(
+      access.admin,
+      access.companyId,
+      (staff ?? []).map((member) => member.linked_user_id).filter((id): id is string => Boolean(id)),
+    );
+    const unpaidLeavesByUser = new Map<string, typeof unpaidLeaves>();
+    for (const leave of unpaidLeaves) {
+      const current = unpaidLeavesByUser.get(leave.employeeId) ?? [];
+      current.push(leave);
+      unpaidLeavesByUser.set(leave.employeeId, current);
+    }
     return NextResponse.json({
-      adjustments: (adjustments ?? []).map((adjustment) => ({ ...adjustment, employee: staffById.get(adjustment.staff_member_id) ?? { name: "Staff member", staff_id: "" } })),
+      adjustments: (adjustments ?? []).map((adjustment) => {
+        const employee = staffById.get(adjustment.staff_member_id);
+        const employeeLeaves = employee?.linked_user_id
+          ? unpaidLeavesByUser.get(employee.linked_user_id) ?? []
+          : [];
+        return {
+          ...adjustment,
+          blockedByUnpaidLeave: !adjustment.paycheck_id
+            && adjustment.adjustment_type === "benefit"
+            && employeeLeaves.some((leave) => unpaidLeaveBlocksPayPeriod(leave, adjustment.pay_period)),
+          employee: employee
+            ? { id: employee.id, name: employee.name, staff_id: employee.staff_id }
+            : { name: "Staff member", staff_id: "" },
+        };
+      }),
       referencePreview: `${settings.reference_prefix}-${String(settings.next_sequence).padStart(6, "0")}`,
     }, { headers });
   } catch (error) {
@@ -121,7 +152,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Select staff members and enter a valid month, amount, payment method, and description." }, { status: 400, headers });
     }
 
-    let selectedStaffQuery = access.admin.from("company_staff_members").select("id, name, pay_type")
+    let selectedStaffQuery = access.admin.from("company_staff_members").select("id, name, pay_type, linked_user_id")
       .eq("company_id", access.companyId).in("id", staffMemberIds);
     if (!access.isMainBranch) selectedStaffQuery = selectedStaffQuery.eq("branch_id", access.branchId!);
     const [{ data: selectedStaff, error: staffError }, { data: existingChecks, error: checksError }] = await Promise.all([
@@ -132,6 +163,24 @@ export async function POST(request: Request) {
     if (!selectedStaff || selectedStaff.length !== staffMemberIds.length) return NextResponse.json({ error: "One or more selected staff members are not in this company." }, { status: 400, headers });
     if (selectedStaff.some((member) => member.pay_type !== "payroll")) {
       return NextResponse.json({ error: "Benefits and deductions can only be recorded for staff members on payroll." }, { status: 400, headers });
+    }
+    if (adjustmentType === "benefit") {
+      const unpaidLeaves = await loadApprovedUnpaidLeaves(
+        access.admin,
+        access.companyId,
+        selectedStaff.map((member) => member.linked_user_id).filter((id): id is string => Boolean(id)),
+      );
+      const today = new Date().toISOString().slice(0, 10);
+      const blockedEmployees = selectedStaff.filter((member) => {
+        if (!member.linked_user_id) return false;
+        return unpaidLeaves.some((leave) =>
+          leave.employeeId === member.linked_user_id
+          && (leaveCoversDate(leave, today) || unpaidLeaveBlocksPayPeriod(leave, payPeriod)),
+        );
+      });
+      if (blockedEmployees.length) {
+        return NextResponse.json({ error: "Benefits cannot be recorded during unpaid leave or for a payroll month with more than six days of approved unpaid leave." }, { status: 409, headers });
+      }
     }
     if (existingChecks?.length) return NextResponse.json({ error: "A monthly payslip has already been issued for one or more selected staff. Record benefits and deductions before the monthly payment." }, { status: 409, headers });
 
@@ -148,6 +197,9 @@ export async function POST(request: Request) {
       description,
       created_by: access.userId,
     }))).select("id, staff_member_id, pay_period, adjustment_type, amount, payment_method, payment_reference, description, created_at");
+    if (error?.code === "P0001" && /unpaid leave/i.test(error.message ?? "")) {
+      return NextResponse.json({ error: error.message }, { status: 409, headers });
+    }
     if (error) throw error;
     return NextResponse.json({ reference, records, count: records?.length ?? 0 }, { status: 201, headers });
   } catch (error) {

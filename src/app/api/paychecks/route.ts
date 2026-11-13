@@ -4,6 +4,12 @@ import { NextResponse } from "next/server";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { deleteCompanyDriveFile, uploadCompanyDriveFile } from "@/lib/storage/interserver";
+import {
+  getUnpaidLeavePayPeriods,
+  leaveCoversDate,
+  loadApprovedUnpaidLeaves,
+  unpaidLeaveBlocksPayPeriod,
+} from "@/lib/server/unpaid-leave";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
@@ -187,7 +193,7 @@ export async function GET() {
       .select("id, staff_member_id, pay_period, base_salary, earnings, benefits, deductions, gross_amount, benefits_total, deductions_total, net_amount, payment_date, payment_method, payment_reference, created_at")
       .eq("company_id", access.companyId).order("pay_period", { ascending: false }).order("payment_date", { ascending: false });
     const staffQuery = access.admin.from("company_staff_members")
-      .select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined")
+      .select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined, linked_user_id")
       .eq("company_id", access.companyId).order("name");
     const accountsQuery = access.admin.from("company_accounts")
       .select("id, name, account_type, account_number")
@@ -203,18 +209,71 @@ export async function GET() {
       accountsQuery,
     ]);
     if (paychecksError || staffError || accountsError) throw paychecksError ?? staffError ?? accountsError;
+    const unpaidLeaves = await loadApprovedUnpaidLeaves(
+      access.admin,
+      access.companyId,
+      (staff ?? []).map((member) => member.linked_user_id).filter((id): id is string => Boolean(id)),
+    );
     const [{ data: company, error: companyError }, { data: allowed, error: createPermissionError }] = await Promise.all([
       access.admin.from("companies").select("name, logo_url").eq("id", access.companyId).maybeSingle(),
       (await createSupabaseServerClient()).rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "finance.create" }),
     ]);
     if (companyError || !company || createPermissionError) throw companyError ?? createPermissionError;
-    const staffById = new Map((staff ?? []).map((member) => [member.id, member]));
-    const rows = (paychecks ?? []).map((paycheck) => ({
+    const staffById = new Map((staff ?? []).map((member) => {
+      const { linked_user_id: _linkedUserId, ...publicMember } = member;
+      return [member.id, publicMember] as const;
+    }));
+    const paidRows = (paychecks ?? []).map((paycheck) => ({
       ...paycheck,
+      isUnpaidLeave: false,
+      status: "paid",
       employee: staffById.get(paycheck.staff_member_id) ?? { name: "Staff member", staff_id: "", position: "" },
       payslipUrl: `/api/paychecks/${paycheck.id}/payslip`,
     }));
-    return NextResponse.json({ paychecks: rows, staff: staff ?? [], accounts: accounts ?? [], company, permissions: { canRecord: Boolean(allowed) } }, { headers });
+    const existingPayrollPeriods = new Set(
+      (paychecks ?? []).map((paycheck) => `${paycheck.staff_member_id}:${paycheck.pay_period}`),
+    );
+    const unpaidLeaveRows: Array<(typeof paidRows)[number] & { unpaidLeaveDays?: number }> = [];
+    for (const member of staff ?? []) {
+      if (member.pay_type !== "payroll" || !member.linked_user_id) continue;
+      const employeeLeaves = unpaidLeaves.filter((leave) => leave.employeeId === member.linked_user_id && leave.days > 6);
+      for (const leave of employeeLeaves) {
+        for (const period of getUnpaidLeavePayPeriods(leave)) {
+          const payrollKey = `${member.id}:${period}`;
+          if (existingPayrollPeriods.has(payrollKey) || !unpaidLeaveBlocksPayPeriod(leave, period)) continue;
+          existingPayrollPeriods.add(payrollKey);
+          unpaidLeaveRows.push({
+            id: `unpaid-leave:${member.id}:${period}`,
+            staff_member_id: member.id,
+            pay_period: period,
+            base_salary: 0,
+            earnings: [],
+            benefits: [],
+            deductions: [],
+            gross_amount: 0,
+            benefits_total: 0,
+            deductions_total: 0,
+            net_amount: 0,
+            payment_date: "",
+            payment_method: "",
+            payment_reference: "UNPAID-LEAVE",
+            created_at: "",
+            isUnpaidLeave: true,
+            status: "unpaid_leave",
+            unpaidLeaveDays: leave.days,
+            employee: staffById.get(member.id) ?? { name: member.name, staff_id: member.staff_id, position: member.position },
+            payslipUrl: "",
+          });
+        }
+      }
+    }
+    const rows = [...paidRows, ...unpaidLeaveRows].sort((a, b) =>
+      b.pay_period.localeCompare(a.pay_period)
+      || b.payment_date.localeCompare(a.payment_date)
+      || a.employee.name.localeCompare(b.employee.name),
+    );
+    const publicStaff = [...staffById.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return NextResponse.json({ paychecks: rows, staff: publicStaff, accounts: accounts ?? [], company, permissions: { canRecord: Boolean(allowed) } }, { headers });
   } catch (error) {
     console.error("Paycheck list request failed", error);
     return NextResponse.json({ error: "Payroll data is unavailable. Apply the staff payroll migration and try again." }, { status: 503, headers });
@@ -242,7 +301,7 @@ export async function POST(request: Request) {
       || !earnings || !submittedBenefits || !submittedDeductions) {
       return NextResponse.json({ error: "Enter a valid employee, month, salary, payment method, and payroll items." }, { status: 400, headers });
     }
-    let employeeQuery = access.admin.from("company_staff_members").select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined").eq("id", staffMemberId).eq("company_id", access.companyId);
+    let employeeQuery = access.admin.from("company_staff_members").select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined, linked_user_id").eq("id", staffMemberId).eq("company_id", access.companyId);
     let accountQuery = access.admin.from("company_accounts").select("id").eq("id", accountId).eq("company_id", access.companyId).eq("status", "active");
     if (!access.isMainBranch) {
       employeeQuery = employeeQuery.eq("branch_id", access.branchId!);
@@ -258,6 +317,18 @@ export async function POST(request: Request) {
     if (employeeError || companyError || !employee || !company) throw employeeError ?? companyError ?? new Error("Employee or company was not found.");
     if (employee.pay_type !== "payroll" || Number(employee.base_salary) <= 0) {
       return NextResponse.json({ error: "Only payroll staff with a configured base salary can receive a monthly paycheck." }, { status: 400, headers });
+    }
+    const employeeLeaves = await loadApprovedUnpaidLeaves(
+      access.admin,
+      access.companyId,
+      employee.linked_user_id ? [employee.linked_user_id] : [],
+    );
+    if (employeeLeaves.some((leave) => unpaidLeaveBlocksPayPeriod(leave, payPeriod))) {
+      return NextResponse.json({ error: "No payment is due for a month with more than six days of approved unpaid leave." }, { status: 409, headers });
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    if (employeeLeaves.some((leave) => leaveCoversDate(leave, paymentDate) || leaveCoversDate(leave, today))) {
+      return NextResponse.json({ error: "Payroll payments are blocked during approved unpaid leave." }, { status: 409, headers });
     }
     if (Number(employee.weekly_transport_allowance) > 0 && employee.transport_account_id !== account.id) {
       return NextResponse.json({ error: "Use the funding account selected for this staff member's transport allowance." }, { status: 400, headers });
@@ -364,6 +435,10 @@ export async function POST(request: Request) {
       try { await deleteCompanyDriveFile(payslipPath); } catch (cleanupError) { console.error("Payslip cleanup failed", cleanupError); }
     }
     console.error("Paycheck recording failed", error);
+    const databaseError = error as { code?: string; message?: string };
+    if (databaseError.code === "P0001" && /unpaid leave/i.test(databaseError.message ?? "")) {
+      return NextResponse.json({ error: databaseError.message }, { status: 409, headers });
+    }
     return NextResponse.json({ error: "Unable to record this paycheck and generate its payslip." }, { status: 503, headers });
   }
 }

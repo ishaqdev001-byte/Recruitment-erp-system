@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { NextResponse } from "next/server"
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { parseStaffInput, type StaffInput } from "@/lib/server/staff-input"
 
 import {
   isPrimaryAdministratorRole,
@@ -26,6 +27,116 @@ function createAdminClient() {
   return createClient(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
+}
+
+type UserTypeSelection = {
+  userType: "member"
+  staffInput: null
+} | {
+  userType: "staff"
+  staffInput: StaffInput
+}
+
+function parseUserTypeSelection(
+  body: Record<string, unknown>,
+  name: string,
+  branchId: string,
+): UserTypeSelection | null {
+  const requestedType = body.userType ?? "member"
+  if (requestedType === "member")
+    return { userType: "member", staffInput: null }
+  if (
+    requestedType !== "staff" ||
+    !body.staff ||
+    typeof body.staff !== "object" ||
+    Array.isArray(body.staff)
+  ) {
+    return null
+  }
+  const staffInput = parseStaffInput({
+    ...body.staff as Record<string, unknown>,
+    name,
+    status: "Active",
+    branchId,
+    linkedUserId: null,
+  })
+  return staffInput ? { userType: "staff", staffInput } : null
+}
+
+async function validateStaffInvitation(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  companyId: string,
+  staffInput: StaffInput,
+  canChooseAnyAccount: boolean,
+  currentBranchId: string | null,
+) {
+  if (staffInput.lineManagerStaffId) {
+    let managerQuery = admin
+      .from("company_staff_members")
+      .select("id")
+      .eq("id", staffInput.lineManagerStaffId)
+      .eq("company_id", companyId)
+      .eq("status", "Active")
+    if (!canChooseAnyAccount && currentBranchId)
+      managerQuery = managerQuery.eq("branch_id", currentBranchId)
+    const { data: manager, error } = await managerQuery.maybeSingle()
+    if (error) throw error
+    if (!manager)
+      return "Choose an active line manager from your authorized staff list."
+  }
+
+  if (staffInput.transportAccountId) {
+    let accountQuery = admin
+      .from("company_accounts")
+      .select("id")
+      .eq("id", staffInput.transportAccountId)
+      .eq("company_id", companyId)
+      .eq("status", "active")
+    if (!canChooseAnyAccount && currentBranchId)
+      accountQuery = accountQuery.eq("branch_id", currentBranchId)
+    const { data: account, error } = await accountQuery.maybeSingle()
+    if (error) throw error
+    if (!account)
+      return "Choose an active funding account from your company branch."
+  }
+  return null
+}
+
+async function insertInvitedStaffRecord(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  companyId: string,
+  createdBy: string,
+  userId: string,
+  staffInput: StaffInput,
+) {
+  const { data: allocation, error: allocationError } = await admin.rpc(
+    "allocate_company_staff_sequence",
+    { requested_company_id: companyId },
+  )
+  if (allocationError) throw allocationError
+  const sequence = (Array.isArray(allocation) ? allocation[0] : allocation) as {
+    staff_id_prefix: string
+    sequence_number: number | string
+  } | null
+  if (!sequence) throw new Error("Staff ID sequence is not configured.")
+
+  const { error } = await admin.from("company_staff_members").insert({
+    company_id: companyId,
+    branch_id: staffInput.branchId,
+    staff_id: `${sequence.staff_id_prefix}-${String(sequence.sequence_number).padStart(4, "0")}`,
+    linked_user_id: userId,
+    line_manager_staff_id: staffInput.lineManagerStaffId,
+    name: staffInput.name,
+    position: staffInput.position,
+    status: "Active",
+    date_joined: staffInput.dateJoined,
+    pay_type: staffInput.payType,
+    base_salary: staffInput.baseSalary,
+    weekly_transport_allowance: staffInput.weeklyTransportAllowance,
+    transport_account_id: staffInput.transportAccountId,
+    created_by: createdBy,
+  })
+  if (error) throw error
 }
 
 function parseRequestedPermissions(value: unknown): string[] | null {
@@ -72,39 +183,69 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
       status: 403 as const,
     }
 
-  const { data: isMainBranch, error: branchError } = await supabase.rpc(
-    "current_user_is_main_branch_user",
-
-    {
-      requested_company_id: membership.company_id,
-    },
-  )
-
-  if (branchError)
+  const admin = createAdminClient()
+  if (!admin)
     return {
-      error: "Unable to verify your company branch.",
+      error:
+        "Set SUPABASE_SERVICE_ROLE_KEY in the server environment to manage company users.",
 
       status: 503 as const,
     }
 
-  if (!isMainBranch && !membership.branch_id)
+  const { data: company, error: companyError } = await admin
+    .from("companies")
+    .select("primary_admin_user_id")
+    .eq("id", membership.company_id)
+    .maybeSingle()
+
+  if (companyError || !company)
+    return {
+      error: "Unable to verify company ownership.",
+
+      status: 503 as const,
+    }
+
+  const isPrimaryAdmin = company.primary_admin_user_id === user.id
+
+  let isMainBranch = isPrimaryAdmin
+  if (!isPrimaryAdmin) {
+    const { data, error: branchError } = await supabase.rpc(
+      "current_user_is_main_branch_user",
+      { requested_company_id: membership.company_id },
+    )
+    if (branchError)
+      return {
+        error: "Unable to verify your company branch.",
+        status: 503 as const,
+      }
+    isMainBranch = Boolean(data)
+  }
+
+  if (!isMainBranch && !membership.branch_id && !isPrimaryAdmin)
     return {
       error: "Your account must be assigned to a branch.",
 
       status: 403 as const,
     }
 
-  const { data: allowed, error: permissionError } = await supabase.rpc(
-    "current_user_has_company_permission",
+  let allowed = isPrimaryAdmin
+  if (!allowed) {
+    const { data, error: permissionError } = await supabase.rpc(
+      "current_user_has_company_permission",
+      {
+        requested_company_id: membership.company_id,
+        requested_permission: permission,
+      },
+    )
+    if (permissionError)
+      return {
+        error: "You do not have permission to manage company users.",
+        status: 403 as const,
+      }
+    allowed = Boolean(data)
+  }
 
-    {
-      requested_company_id: membership.company_id,
-
-      requested_permission: permission,
-    },
-  )
-
-  if (permissionError || !allowed)
+  if (!allowed)
     return {
       error: "You do not have permission to manage company users.",
 
@@ -113,12 +254,13 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
 
   // Also check if this user can manage roles (roles.manage permission)
 
-  const { data: canManageRoles, error: rolePermissionError } =
-    await supabase.rpc("current_user_has_company_permission", {
-      requested_company_id: membership.company_id,
+  const { data: canManageRoles, error: rolePermissionError } = isPrimaryAdmin
+    ? { data: true, error: null }
+    : await supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
 
-      requested_permission: "roles.manage",
-    })
+        requested_permission: "roles.manage",
+      })
 
   if (rolePermissionError)
     return {
@@ -136,9 +278,11 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
 
     branchId: membership.branch_id,
 
-    isMainBranch: Boolean(isMainBranch),
+    isMainBranch,
 
-    canManageRoles: Boolean(canManageRoles) && Boolean(isMainBranch),
+    isPrimaryAdmin,
+
+    canManageRoles: Boolean(canManageRoles) && (isMainBranch || isPrimaryAdmin),
   }
 }
 
@@ -175,7 +319,7 @@ export async function GET() {
 
       .order("created_at")
 
-    if (!access.isMainBranch && access.branchId)
+    if (!access.isMainBranch && !access.isPrimaryAdmin && access.branchId)
       membershipsQuery = membershipsQuery.eq("branch_id", access.branchId)
 
     let branchesQuery = admin
@@ -188,7 +332,7 @@ export async function GET() {
 
       .eq("status", "active")
 
-    if (!access.isMainBranch && access.branchId)
+    if (!access.isMainBranch && !access.isPrimaryAdmin && access.branchId)
       branchesQuery = branchesQuery.eq("id", access.branchId)
 
     const [
@@ -254,6 +398,25 @@ export async function GET() {
         { status: 500, headers: responseHeaders },
       )
     }
+
+    const { data: staffLinks, error: staffLinksError } = await admin
+      .from("company_staff_members")
+      .select("linked_user_id")
+      .eq("company_id", access.companyId)
+      .not("linked_user_id", "is", null)
+    if (staffLinksError) {
+      console.error("Workspace staff links query failed", staffLinksError)
+      return NextResponse.json(
+        { error: "Unable to load company user types." },
+        { status: 500, headers: responseHeaders },
+      )
+    }
+
+    const staffUserIds = new Set(
+      (staffLinks ?? [])
+        .map((staff) => staff.linked_user_id)
+        .filter((userId): userId is string => Boolean(userId)),
+    )
 
     const userIds = (membershipsResult.data ?? []).map(
       (membership) => membership.user_id,
@@ -344,9 +507,7 @@ export async function GET() {
     const visibleRolePermissions = (rolePermissions ?? []).filter(
       (rolePermission) =>
         !recruitmentAgentRoleIds.has(rolePermission.role_id) ||
-        !isRecruitmentAgentRestrictedPermission(
-          rolePermission.permission_code,
-        ),
+        !isRecruitmentAgentRestrictedPermission(rolePermission.permission_code),
     )
 
     const users = (membershipsResult.data ?? []).map((membership) => {
@@ -390,6 +551,8 @@ export async function GET() {
 
         isPrimaryAdmin:
           membership.user_id === companyResult.data.primary_admin_user_id,
+
+        userType: staffUserIds.has(membership.user_id) ? "staff" : "member",
       }
     })
 
@@ -1711,6 +1874,7 @@ export async function POST(request: Request) {
       const roleId = typeof body.roleId === "string" ? body.roleId : ""
 
       const branchId = typeof body.branchId === "string" ? body.branchId : ""
+      const userTypeSelection = parseUserTypeSelection(body, name, branchId)
 
       if (
         !name ||
@@ -1719,10 +1883,14 @@ export async function POST(request: Request) {
         !roleId ||
         !branchId ||
         phone.length > 100 ||
-        branch.length > 200
+        branch.length > 200 ||
+        !userTypeSelection
       ) {
         return NextResponse.json(
-          { error: "Enter a valid name, email, role, phone, and branch." },
+          {
+            error:
+              "Enter valid account details and complete all required staff information.",
+          },
 
           { status: 400, headers: responseHeaders },
         )
@@ -1732,7 +1900,7 @@ export async function POST(request: Request) {
 
         .from("company_branches")
 
-        .select("id")
+        .select("id, status")
 
         .eq("id", branchId)
 
@@ -1749,7 +1917,10 @@ export async function POST(request: Request) {
 
       if (
         !targetBranch ||
-        (!access.isMainBranch && branchId !== access.branchId)
+        targetBranch.status !== "active" ||
+        (!access.isMainBranch &&
+          !access.isPrimaryAdmin &&
+          branchId !== access.branchId)
       ) {
         return NextResponse.json(
           { error: "Select a branch you are authorized to assign." },
@@ -1786,6 +1957,21 @@ export async function POST(request: Request) {
 
           { status: 400, headers: responseHeaders },
         )
+      }
+
+      if (userTypeSelection.staffInput) {
+        const staffValidationError = await validateStaffInvitation(
+          admin,
+          access.companyId,
+          userTypeSelection.staffInput,
+          access.isMainBranch || access.isPrimaryAdmin,
+          access.branchId,
+        )
+        if (staffValidationError)
+          return NextResponse.json({ error: staffValidationError }, {
+            status: 400,
+            headers: responseHeaders,
+          })
       }
 
       const { data: company, error: companyError } = await admin
@@ -1940,6 +2126,34 @@ export async function POST(request: Request) {
         )
       }
 
+      if (userTypeSelection.staffInput) {
+        try {
+          await insertInvitedStaffRecord(
+            admin,
+            access.companyId,
+            access.userId,
+            userId,
+            userTypeSelection.staffInput,
+          )
+        } catch (staffError) {
+          console.error("Invited staff record creation failed", staffError)
+          const { error: cleanupError } =
+            await admin.auth.admin.deleteUser(userId)
+          if (cleanupError)
+            console.error(
+              "Failed to remove account after staff setup failed",
+              cleanupError,
+            )
+          return NextResponse.json(
+            {
+              error:
+                "The invitation could not be completed because the staff record was not created. The invitation account was removed; please try again.",
+            },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+      }
+
       const { error: invitationError } = await admin
 
         .from("workspace_invitations")
@@ -1955,7 +2169,22 @@ export async function POST(request: Request) {
         })
 
       if (invitationError) {
-        await admin.auth.admin.deleteUser(userId)
+        if (userTypeSelection.staffInput) {
+          const { error: staffCleanupError } = await admin
+            .from("company_staff_members")
+            .delete()
+            .eq("company_id", access.companyId)
+            .eq("linked_user_id", userId)
+          if (staffCleanupError)
+            console.error(
+              "Invited staff record cleanup failed",
+              staffCleanupError,
+            )
+        }
+        const { error: cleanupError } =
+          await admin.auth.admin.deleteUser(userId)
+        if (cleanupError)
+          console.error("Invited account cleanup failed", cleanupError)
 
         return NextResponse.json(
           {
@@ -1983,6 +2212,8 @@ export async function POST(request: Request) {
             roleId,
 
             status: "invited",
+
+            userType: userTypeSelection.userType,
           },
         },
 
@@ -2009,6 +2240,7 @@ export async function POST(request: Request) {
       const roleId = typeof body.roleId === "string" ? body.roleId : ""
 
       const branchId = typeof body.branchId === "string" ? body.branchId : ""
+      const userTypeSelection = parseUserTypeSelection(body, name, branchId)
 
       const password = typeof body.password === "string" ? body.password : ""
 
@@ -2019,7 +2251,8 @@ export async function POST(request: Request) {
         !roleId ||
         !branchId ||
         phone.length > 100 ||
-        branch.length > 200
+        branch.length > 200 ||
+        !userTypeSelection
       ) {
         return NextResponse.json(
           { error: "Enter a valid name, email, role, phone, and branch." },
@@ -2032,7 +2265,7 @@ export async function POST(request: Request) {
 
         .from("company_branches")
 
-        .select("id")
+        .select("id, status")
 
         .eq("id", branchId)
 
@@ -2049,7 +2282,10 @@ export async function POST(request: Request) {
 
       if (
         !targetBranch ||
-        (!access.isMainBranch && branchId !== access.branchId)
+        targetBranch.status !== "active" ||
+        (!access.isMainBranch &&
+          !access.isPrimaryAdmin &&
+          branchId !== access.branchId)
       ) {
         return NextResponse.json(
           { error: "Select a branch you are authorized to assign." },
@@ -2094,6 +2330,21 @@ export async function POST(request: Request) {
 
           { status: 400, headers: responseHeaders },
         )
+      }
+
+      if (userTypeSelection.staffInput) {
+        const staffValidationError = await validateStaffInvitation(
+          admin,
+          access.companyId,
+          userTypeSelection.staffInput,
+          access.isMainBranch || access.isPrimaryAdmin,
+          access.branchId,
+        )
+        if (staffValidationError)
+          return NextResponse.json({ error: staffValidationError }, {
+            status: 400,
+            headers: responseHeaders,
+          })
       }
 
       // Check for an existing user with this email
@@ -2194,6 +2445,34 @@ export async function POST(request: Request) {
         )
       }
 
+      if (userTypeSelection.staffInput) {
+        try {
+          await insertInvitedStaffRecord(
+            admin,
+            access.companyId,
+            access.userId,
+            userId,
+            userTypeSelection.staffInput,
+          )
+        } catch (staffError) {
+          console.error("New staff account record creation failed", staffError)
+          const { error: cleanupError } =
+            await admin.auth.admin.deleteUser(userId)
+          if (cleanupError)
+            console.error(
+              "Failed to remove account after staff setup failed",
+              cleanupError,
+            )
+          return NextResponse.json(
+            {
+              error:
+                "The user account was created but the staff record could not be saved. The account was removed; please try again.",
+            },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+      }
+
       return NextResponse.json(
         {
           user: {
@@ -2210,6 +2489,8 @@ export async function POST(request: Request) {
             roleId,
 
             status: "active",
+
+            userType: userTypeSelection.userType,
           },
         },
 

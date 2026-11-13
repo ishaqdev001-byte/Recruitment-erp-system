@@ -1,11 +1,17 @@
 "use client"
+
 // Reload staff list so the updated IDs are visible immediately
+
 /* Role list */ /* Permission detail panel */
+
 // Group permissions by prefix (e.g. "candidates", "finance")
+
 /* Mode toggle */ /* Header */ /* Scrollable body */ /* Footer */ /* Role list */ /* Permission matrix */ /* New user modal */ /* New role modal */
 
 import { useEffect, useState, type FormEvent } from "react"
+
 import { SearchableSelect } from "./SearchableSelect"
+
 import {
   DEFAULT_ROLE_ACCESS_SETTINGS,
   isPrimaryAdministratorRole,
@@ -14,185 +20,326 @@ import {
   roleAccessSettings,
   type RoleAccessSettings,
 } from "@/lib/role-access-settings"
+
 import { clearClientApiCache } from "@/lib/client-api-cache"
 
 type UserRecord = {
   id: string
+
   name: string
+
   email: string
+
   roleId: string
+
   role: string
+
   status: string
+
   isPrimaryAdmin: boolean
+
   branchId: string | null
+
   branch: string
+
+  userType: "staff" | "member"
 }
+
 type RoleRecord = {
   id: string
+
   name: string
+
   description: string
+
   is_system_default: boolean
+
   created_at: string
+
   access_settings?: RoleAccessSettings
 }
+
 type PermissionRecord = { code: string; description: string }
+
 type RolePermissionRecord = { role_id: string; permission_code: string }
+
 type StaffPayType = "payroll" | "project" | "no_payroll"
+
 type StaffAccount = {
   id: string
+
   name: string
+
   account_type: string
+
   account_number: string
 }
+
 type StaffRecord = {
   id: string
+
   staffId: string
+
   name: string
+
   position: string
+
   phone: string
+
   status: "Active" | "On Leave" | "Inactive"
+
   dateJoined: string
+
+  branchId: string
+
   linkedUserId: string
+
+  lineManagerStaffId: string
+
   payType: StaffPayType
+
   baseSalary: number
+
   weeklyTransportAllowance: number
+
   transportAccountId: string
 }
+
 type StaffIdSettings = {
   prefix: string
+
   nextSequence: number
+
   canChangeSequence: boolean
 }
+
 type WorkspaceData = {
   users: UserRecord[]
+
   roles: RoleRecord[]
+
   permissions: PermissionRecord[]
+
   rolePermissions: RolePermissionRecord[]
+
   canManageRoles: boolean
+
   branches?: BranchOption[]
 }
+
 type BranchOption = {
   id: string
+
   name: string
+
   code: string
+
   isMainBranch: boolean
 }
 
 const fieldStyle = {
   background: "var(--secondary)",
+
   borderColor: "var(--border)",
+
   color: "var(--foreground)",
 }
 
 const permissionModuleLabels: Record<string, string> = {
   ai: "AI Tools",
+
   approvals: "Approvals",
+
   attendance: "Attendance",
+
   branches: "Branches",
+
   candidate_documents: "Candidate Attachments",
+
   candidate_inquiries: "Candidate Inquiries",
+
   candidate_profiles: "Candidate Profiles",
+
   candidates: "Candidate Pipeline",
+
   company_accounts: "Finance Accounts",
+
   communications: "Communications",
+
   documents: "Documents",
+
   drive: "Company Drive",
+
   expense_requests: "Expense Requests",
+
   employers: "Contractors",
+
   finance: "Finance",
+
   human_resources: "Human Resources",
+
   invoices: "Invoices",
+
   leave: "Leave",
+
   medical: "Medical Examinations",
+
   medical_documents: "Medical Documents",
+
   passport: "Passport Information",
+
   passport_custody: "Passport Custody",
+
   projects: "Projects",
+
   requisitions: "Requisitions",
+
   reports: "Reports & Analytics",
+
   roles: "Role Management",
+
   settings: "Settings",
+
   suppliers: "Partners",
+
   tasks: "Tasks",
+
   users: "Users",
 }
 
 const permissionActionLabels: Record<string, string> = {
   approve: "Approve",
+
   authorize: "Authorize",
+
   clock: "Record attendance",
+
   connect: "Connect",
+
   create: "Create",
+
   delete: "Delete",
+
   download: "Download",
+
   edit: "Edit",
+
   finalize: "Finalize",
+
   manage: "Manage",
+
   read: "Read",
+
   register: "Register",
+
   review: "Review",
+
   send: "Send",
+
   status: "Change status",
+
   types: "Manage types",
+
   update: "Update",
+
   verify: "Verify",
+
   cashout: "Cash out",
+
   view: "View",
+
   upload: "Upload",
 }
 
 const permissionCodeLabels: Record<string, string> = {
   "candidates.project_submit": "Submit candidates to projects",
+
   "candidates.stage": "Update candidate stages",
+
   "attendance.view_reports": "View weekly and monthly reports",
 }
 
 const permissionModuleOrder = [
   "candidates",
+
   "candidate_inquiries",
+
   "candidate_profiles",
+
   "candidate_documents",
+
   "documents",
+
   "drive",
+
   "projects",
+
   "employers",
+
   "suppliers",
+
   "passport",
+
   "passport_custody",
+
   "medical",
+
   "medical_documents",
+
   "finance",
+
   "company_accounts",
+
   "invoices",
+
   "users",
+
   "roles",
+
   "branches",
+
   "approvals",
+
   "requisitions",
+
   "expense_requests",
+
   "tasks",
+
   "communications",
+
   "attendance",
+
   "leave",
+
   "human_resources",
+
   "reports",
+
   "settings",
+
   "ai",
 ]
 
 function permissionActionLabel(permissionCode: string): string {
   const explicitLabel = permissionCodeLabels[permissionCode]
+
   if (explicitLabel) return explicitLabel
 
   const actionParts = permissionCode.split(".").slice(1)
+
   const action = actionParts.pop() ?? permissionCode
+
   const subject = actionParts
+
     .map((part) =>
       part.toLowerCase() === "whatsapp"
         ? "WhatsApp"
         : part.charAt(0).toUpperCase() + part.slice(1),
     )
+
     .join(" ")
+
   const label =
     permissionActionLabels[action] ??
     action.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
@@ -202,32 +349,43 @@ function permissionActionLabel(permissionCode: string): string {
 
 function RolePermissionsEditor({
   permissions,
+
   selectedPermissions,
+
   onChange,
 }: {
   permissions: PermissionRecord[]
+
   selectedPermissions: string[]
+
   onChange: (permissions: string[]) => void
 }) {
   const groupedPermissions = new Map<string, PermissionRecord[]>()
+
   const selectedPermissionCodes = new Set(selectedPermissions)
+
   for (const permission of permissions) {
-    const module =
-      permission.code.split(".")[0] ??
-      "other"
-    const group =
-      groupedPermissions.get(module) ??
-      []
+    const module = permission.code.split(".")[0] ?? "other"
+
+    const group = groupedPermissions.get(module) ?? []
+
     group.push(permission)
+
     groupedPermissions.set(module, group)
   }
+
   const sortedModules = [...groupedPermissions.entries()].sort(
     ([left], [right]) => {
       const leftOrder = permissionModuleOrder.indexOf(left)
+
       const rightOrder = permissionModuleOrder.indexOf(right)
+
       if (leftOrder < 0 && rightOrder < 0) return left.localeCompare(right)
+
       if (leftOrder < 0) return 1
+
       if (rightOrder < 0) return -1
+
       return leftOrder - rightOrder
     },
   )
@@ -265,255 +423,355 @@ function RolePermissionsEditor({
           </button>
         </div>
       </div>
-      {sortedModules.map(
-        ([module, modulePermissions]) => {
-          const moduleCodes = modulePermissions.map(
-            (permission) => permission.code,
-          )
-          const allSelected = moduleCodes.every((code) =>
-            selectedPermissionCodes.has(code),
-          )
-          return (
-            <section
-              key={module}
-              className="mb-3 rounded border p-3 last:mb-0"
-              style={{ borderColor: "var(--border)" }}
-            >
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <div>
-                  <h3
-                    className="text-sm font-700"
-                    style={{ color: "var(--foreground)" }}
-                  >
-                    {permissionModuleLabels[module] ??
-                      module.replace(/_/g, " ")}
-                  </h3>
-                  <p
-                    className="mt-0.5 text-[11px]"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    {modulePermissions.filter((permission) =>
-                      selectedPermissionCodes.has(permission.code),
-                    ).length}{" "}
-                    of {modulePermissions.length} actions enabled
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="shrink-0 rounded border px-2 py-1 text-[11px] font-600"
-                  style={{
-                    color: "var(--primary)",
-                    borderColor: "var(--border)",
-                  }}
-                  onClick={() =>
-                    onChange(
-                      allSelected
-                        ? selectedPermissions.filter(
-                            (code) => !moduleCodes.includes(code),
-                          )
-                        : [
-                            ...new Set([
-                              ...selectedPermissions,
-                              ...moduleCodes,
-                            ]),
-                          ],
-                    )
-                  }
+      {sortedModules.map(([module, modulePermissions]) => {
+        const moduleCodes = modulePermissions.map(
+          (permission) => permission.code,
+        )
+
+        const allSelected = moduleCodes.every((code) =>
+          selectedPermissionCodes.has(code),
+        )
+
+        return (
+          <section
+            key={module}
+            className="mb-3 rounded border p-3 last:mb-0"
+            style={{ borderColor: "var(--border)" }}
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <h3
+                  className="text-sm font-700"
+                  style={{ color: "var(--foreground)" }}
                 >
-                  {allSelected ? "Clear module" : "Select module"}
-                </button>
+                  {permissionModuleLabels[module] ?? module.replace(/_/g, " ")}
+                </h3>
+                <p
+                  className="mt-0.5 text-[11px]"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  {
+                    modulePermissions.filter((permission) =>
+                      selectedPermissionCodes.has(permission.code),
+                    ).length
+                  }{" "}
+                  of {modulePermissions.length} actions enabled
+                </p>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {modulePermissions.map((permission) => {
-                  const checked = selectedPermissionCodes.has(permission.code)
-                  return (
-                    <label
-                      key={permission.code}
-                      className="flex cursor-pointer items-start gap-2.5 rounded border p-2.5 text-xs"
-                      aria-label={`${permissionActionLabel(permission.code)}: ${permission.description}`}
-                      style={{
-                        borderColor: checked
-                          ? "var(--primary)"
-                          : "var(--border)",
-                        color: "var(--foreground)",
-                        background: checked
-                          ? "color-mix(in srgb, var(--primary) 8%, transparent)"
-                          : "transparent",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(event) =>
-                          onChange(
-                            event.target.checked
-                              ? [
-                                  ...new Set([
-                                    ...selectedPermissions,
-                                    permission.code,
-                                  ]),
-                                ]
-                              : selectedPermissions.filter(
-                                  (code) =>
-                                    code !==
-                                    permission.code,
-                                ),
-                          )
-                        }
-                        className="mt-0.5 shrink-0"
-                      />
-                      <span>
-                        <span className="block font-600">
-                          {permissionActionLabel(permission.code)}
-                        </span>
-                        <span style={{ color: "var(--muted-foreground)" }}>
-                          {permission.description}
-                        </span>
-                      </span>
-                    </label>
+              <button
+                type="button"
+                className="shrink-0 rounded border px-2 py-1 text-[11px] font-600"
+                style={{
+                  color: "var(--primary)",
+
+                  borderColor: "var(--border)",
+                }}
+                onClick={() =>
+                  onChange(
+                    allSelected
+                      ? selectedPermissions.filter(
+                          (code) => !moduleCodes.includes(code),
+                        )
+                      : [
+                          ...new Set([
+                            ...selectedPermissions,
+
+                            ...moduleCodes,
+                          ]),
+                        ],
                   )
-                })}
-              </div>
-            </section>
-          )
-        },
-      )}
+                }
+              >
+                {allSelected ? "Clear module" : "Select module"}
+              </button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {modulePermissions.map((permission) => {
+                const checked = selectedPermissionCodes.has(permission.code)
+
+                return (
+                  <label
+                    key={permission.code}
+                    className="flex cursor-pointer items-start gap-2.5 rounded border p-2.5 text-xs"
+                    aria-label={`${permissionActionLabel(permission.code)}: ${permission.description}`}
+                    style={{
+                      borderColor: checked ? "var(--primary)" : "var(--border)",
+
+                      color: "var(--foreground)",
+
+                      background: checked
+                        ? "color-mix(in srgb, var(--primary) 8%, transparent)"
+                        : "transparent",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) =>
+                        onChange(
+                          event.target.checked
+                            ? [
+                                ...new Set([
+                                  ...selectedPermissions,
+
+                                  permission.code,
+                                ]),
+                              ]
+                            : selectedPermissions.filter(
+                                (code) => code !== permission.code,
+                              ),
+                        )
+                      }
+                      className="mt-0.5 shrink-0"
+                    />
+                    <span>
+                      <span className="block font-600">
+                        {permissionActionLabel(permission.code)}
+                      </span>
+                      <span style={{ color: "var(--muted-foreground)" }}>
+                        {permission.description}
+                      </span>
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          </section>
+        )
+      })}
     </fieldset>
   )
 }
 
 function matchesSelectedPermissions(
   savedPermissions: string[] | undefined,
+
   selectedPermissions: string[],
 ): boolean {
   if (!Array.isArray(savedPermissions)) return false
+
   const saved = new Set(savedPermissions)
+
   const selected = new Set(selectedPermissions)
+
   return (
-    saved.size ===
-      selected.size &&
+    saved.size === selected.size &&
     [...selected].every((permission) => saved.has(permission))
   )
 }
 
 const emptyStaffForm = {
   name: "",
+
   position: "",
+
   status: "Active" as StaffRecord["status"],
+
   dateJoined: "",
+
+  branchId: "",
+
   linkedUserId: "",
+
+  lineManagerStaffId: "",
+
   payType: "payroll" as StaffPayType,
+
   baseSalary: "",
+
   weeklyTransportAllowance: "0",
+
   transportAccountId: "",
+}
+
+const emptyInvitedStaffForm = {
+  position: "",
+
+  dateJoined: new Date().toISOString().slice(0, 10),
+
+  payType: "payroll" as StaffPayType,
+
+  baseSalary: "",
+
+  weeklyTransportAllowance: "0",
+
+  transportAccountId: "",
+
+  lineManagerStaffId: "",
 }
 
 export default function UsersRoles({
   companyId,
+
   currentUserId,
 }: {
   companyId: string
+
   currentUserId: string
 }) {
   const [tab, setTab] = useState<"users" | "roles" | "staff">("users")
+
   const [data, setData] = useState<WorkspaceData>({
     users: [],
+
     roles: [],
+
     permissions: [],
+
     rolePermissions: [],
+
     canManageRoles: false,
   })
+
   const [selectedRoleId, setSelectedRoleId] = useState("")
+
   const [showNewUser, setShowNewUser] = useState(false)
+
   const [showNewRole, setShowNewRole] = useState(false)
+
   const [editingRole, setEditingRole] = useState<RoleRecord | null>(null)
+
   const [showEditRole, setShowEditRole] = useState(false)
+
   const [roleEditName, setRoleEditName] = useState("")
+
   const [roleEditDescription, setRoleEditDescription] = useState("")
+
   const [roleEditPermissions, setRoleEditPermissions] = useState<string[]>([])
+
   const [roleEditAccessSettings, setRoleEditAccessSettings] =
     useState<RoleAccessSettings>(DEFAULT_ROLE_ACCESS_SETTINGS)
+
   const [showStaffForm, setShowStaffForm] = useState(false)
+
   const [editingStaffId, setEditingStaffId] = useState("")
+
   const [staffMembers, setStaffMembers] = useState<StaffRecord[]>([])
+
   const [staffAccounts, setStaffAccounts] = useState<StaffAccount[]>([])
+
+  const [staffBranches, setStaffBranches] = useState<BranchOption[]>([])
+
+  const [staffBranchSelectionRequired, setStaffBranchSelectionRequired] =
+    useState(false)
+
   const [staffLoading, setStaffLoading] = useState(false)
+
   const [staffForm, setStaffForm] = useState(emptyStaffForm)
+
   const [staffIdSettings, setStaffIdSettings] =
     useState<StaffIdSettings | null>(null)
+
   const [staffIdPrefix, setStaffIdPrefix] = useState("")
+
   const [staffNextSequence, setStaffNextSequence] = useState(1)
+
   const [editingStaffNumber, setEditingStaffNumber] =
     useState<StaffRecord | null>(null)
+
   const [staffIdNumber, setStaffIdNumber] = useState("")
+
   const [userName, setUserName] = useState("")
+
   const [userEmail, setUserEmail] = useState("")
+
   const [userRoleId, setUserRoleId] = useState("")
+
   const [userBranchId, setUserBranchId] = useState("")
+
   const [userInviteMode, setUserInviteMode] =
     useState<"email-link" | "default-password">("email-link")
+
+  const [userType, setUserType] = useState<"member" | "staff">("member")
+
+  const [userTypeFilter, setUserTypeFilter] =
+    useState<"all" | "staff" | "member">("all")
+
+  const [userSearch, setUserSearch] = useState("")
+
+  const [invitedStaffForm, setInvitedStaffForm] = useState(
+    emptyInvitedStaffForm,
+  )
+
   const [userDefaultPassword, setUserDefaultPassword] = useState("")
+
   const [userShowPassword, setUserShowPassword] = useState(false)
+
   const [roleName, setRoleName] = useState("")
+
   const [roleDescription, setRoleDescription] = useState("")
+
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([])
+
   const [loading, setLoading] = useState(true)
+
   const [saving, setSaving] = useState(false)
+
   const [userActionPending, setUserActionPending] = useState("")
+
   const [error, setError] = useState("")
+
   const [notice, setNotice] = useState("")
+
   const [reloadKey, setReloadKey] = useState(0)
+
   const [branches, setBranches] = useState<BranchOption[]>([])
 
   useEffect(() => {
     let cancelled = false
+
     const load = async () => {
       setLoading(true)
+
       setError("")
+
       console.log(
         "[useEffect] Loading workspace users and roles, reloadKey:",
+
         reloadKey,
       )
+
       try {
         const response = await fetch("/api/workspace/users", {
           cache: "no-store",
         })
+
         const result = (await response.json()) as WorkspaceData & {
           error?: string
         }
+
         if (!response.ok)
-          throw new Error(
-            result.error ??
-              "Unable to load users and roles.",
-          )
+          throw new Error(result.error ?? "Unable to load users and roles.")
+
         if (!cancelled) {
           console.log("[useEffect] Received data from API:", {
             rolesCount: result.roles?.length,
+
             rolePermissionsCount: result.rolePermissions?.length,
+
             rolePermissions: result.rolePermissions,
           })
+
           setData({
-            users:
-              result.users ??
-              [],
-            roles:
-              result.roles ??
-              [],
-            permissions:
-              result.permissions ??
-              [],
-            rolePermissions:
-              result.rolePermissions ??
-              [],
+            users: result.users ?? [],
+
+            roles: result.roles ?? [],
+
+            permissions: result.permissions ?? [],
+
+            rolePermissions: result.rolePermissions ?? [],
+
             canManageRoles: Boolean(result.canManageRoles),
           })
+
           setSelectedRoleId((current) => current || result.roles[0]?.id || "")
+
           setUserRoleId((current) => {
-            const currentRole = result.roles.find(
-              (role) => role.id === current,
-            )
+            const currentRole = result.roles.find((role) => role.id === current)
+
             if (currentRole && !isPrimaryAdministratorRole(currentRole.name))
               return current
+
             return (
               result.roles.find(
                 (role) => !isPrimaryAdministratorRole(role.name),
@@ -521,11 +779,12 @@ export default function UsersRoles({
             )
           })
         }
+
         if (!cancelled) {
-          const availableBranches =
-            result.branches ??
-            []
+          const availableBranches = result.branches ?? []
+
           setBranches(availableBranches)
+
           setUserBranchId(
             (current) =>
               current ||
@@ -537,9 +796,9 @@ export default function UsersRoles({
       } catch (loadError) {
         if (!cancelled) {
           console.error("[useEffect] Load error:", loadError)
+
           setError(
-            loadError instanceof
-              Error
+            loadError instanceof Error
               ? loadError.message
               : "Unable to load users and roles.",
           )
@@ -548,56 +807,67 @@ export default function UsersRoles({
         if (!cancelled) setLoading(false)
       }
     }
+
     void load()
+
     return () => {
       cancelled = true
     }
   }, [companyId, reloadKey])
 
   useEffect(() => {
-    if (
-      tab !==
-      "staff"
-    )
-      return
+    if (tab !== "staff" && !(showNewUser && userType === "staff")) return
+
     let cancelled = false
+
     const loadStaff = async () => {
       setStaffLoading(true)
+
       try {
         const response = await fetch("/api/workspace/staff", {
           cache: "no-store",
         })
+
         const result = (await response.json()) as {
           staff?: StaffRecord[]
+
           accounts?: StaffAccount[]
+
+          branches?: BranchOption[]
+
+          branchSelectionRequired?: boolean
+
           settings?: StaffIdSettings
+
           error?: string
         }
+
         if (!response.ok)
-          throw new Error(
-            result.error ??
-              "Unable to load staff records.",
-          )
+          throw new Error(result.error ?? "Unable to load staff records.")
+
         if (!cancelled) {
-          setStaffMembers(
-            result.staff ??
-              [],
+          setStaffMembers(result.staff ?? [])
+
+          setStaffAccounts(result.accounts ?? [])
+
+          setStaffBranches(result.branches ?? [])
+
+          setStaffBranchSelectionRequired(
+            Boolean(result.branchSelectionRequired),
           )
-          setStaffAccounts(
-            result.accounts ??
-              [],
-          )
+
           if (result.settings) {
             setStaffIdSettings(result.settings)
+
             setStaffIdPrefix(result.settings.prefix)
+
             setStaffNextSequence(result.settings.nextSequence)
           }
         }
       } catch (loadError) {
         if (!cancelled)
           setError(
-            loadError instanceof
-              Error
+            loadError instanceof Error
               ? loadError.message
               : "Unable to load staff records.",
           )
@@ -605,92 +875,136 @@ export default function UsersRoles({
         if (!cancelled) setStaffLoading(false)
       }
     }
+
     void loadStaff()
+
     return () => {
       cancelled = true
     }
-  }, [companyId, reloadKey, tab])
+  }, [companyId, reloadKey, showNewUser, tab, userType])
 
   const submitUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
     setSaving(true)
+
     setError("")
+
     setNotice("")
+
     try {
-      if (
-        userInviteMode ===
-        "default-password"
-      ) {
-        if (
-          userDefaultPassword.length <
-          8
-        ) {
+      const userDetails = {
+        userType,
+
+        ...(userType === "staff"
+          ? {
+              staff: {
+                ...invitedStaffForm,
+
+                branchId: userBranchId,
+              },
+            }
+          : {}),
+      }
+
+      if (userInviteMode === "default-password") {
+        if (userDefaultPassword.length < 8) {
           setError("The default password must be at least 8 characters.")
+
           setSaving(false)
+
           return
         }
+
         const response = await fetch("/api/workspace/users", {
           method: "POST",
+
           headers: { "Content-Type": "application/json" },
+
           body: JSON.stringify({
             action: "create-user-with-password",
+
             name: userName,
+
             email: userEmail,
+
             roleId: userRoleId,
+
             branchId: userBranchId,
+
             password: userDefaultPassword,
+
+            ...userDetails,
           }),
         })
+
         const result = (await response.json()) as { error?: string }
+
         if (!response.ok)
-          throw new Error(
-            result.error ??
-              "Unable to create user.",
-          )
+          throw new Error(result.error ?? "Unable to create user.")
+
         setShowNewUser(false)
+
         setUserName("")
+
         setUserEmail("")
+
         setUserDefaultPassword("")
+
         setUserInviteMode("email-link")
+
+        setUserType("member")
+
+        setInvitedStaffForm(emptyInvitedStaffForm)
+
         setNotice(
           "User created. They will be asked to set a new password when they first log in.",
         )
       } else {
         const response = await fetch("/api/workspace/users", {
           method: "POST",
+
           headers: { "Content-Type": "application/json" },
+
           body: JSON.stringify({
             action: "invite-user",
+
             name: userName,
+
             email: userEmail,
+
             roleId: userRoleId,
+
             branchId: userBranchId,
+
+            ...userDetails,
           }),
         })
+
         const result = (await response.json()) as { error?: string }
+
         if (!response.ok)
-          throw new Error(
-            result.error ??
-              "Unable to invite user.",
-          )
+          throw new Error(result.error ?? "Unable to invite user.")
+
         setShowNewUser(false)
+
         setUserName("")
+
         setUserEmail("")
+
+        setUserType("member")
+
+        setInvitedStaffForm(emptyInvitedStaffForm)
+
         setNotice(
           "Invitation sent. The user can set their password from the email link.",
         )
       }
-      setReloadKey(
-        (key) =>
-          key +
-          1,
-      )
+
+      setReloadKey((key) => key + 1)
     } catch (saveError) {
       setError(
-        saveError instanceof
-          Error
-          ? saveError.message
-          : "Unable to save user.",
+        saveError instanceof Error ? saveError.message : "Unable to save user.",
       )
     } finally {
       setSaving(false)
@@ -699,29 +1013,39 @@ export default function UsersRoles({
 
   const submitRole = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
     setSaving(true)
+
     setError("")
+
     setNotice("")
+
     try {
       const response = await fetch("/api/workspace/users", {
         method: "POST",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({
           action: "create-role",
+
           name: roleName,
+
           description: roleDescription,
+
           permissions: selectedPermissions,
         }),
       })
+
       const result = (await response.json()) as {
         permissions?: string[]
+
         error?: string
       }
+
       if (!response.ok)
-        throw new Error(
-          result.error ??
-            "Unable to create role.",
-        )
+        throw new Error(result.error ?? "Unable to create role.")
+
       if (
         !matchesSelectedPermissions(result.permissions, selectedPermissions)
       ) {
@@ -729,21 +1053,23 @@ export default function UsersRoles({
           "The saved permissions did not match your selection. Reopen the role and verify its permissions.",
         )
       }
+
       setShowNewRole(false)
+
       clearClientApiCache()
+
       setRoleName("")
+
       setRoleDescription("")
+
       setSelectedPermissions([])
+
       setNotice("Role created with the selected permissions.")
-      setReloadKey(
-        (key) =>
-          key +
-          1,
-      )
+
+      setReloadKey((key) => key + 1)
     } catch (saveError) {
       setError(
-        saveError instanceof
-          Error
+        saveError instanceof Error
           ? saveError.message
           : "Unable to create role.",
       )
@@ -754,64 +1080,89 @@ export default function UsersRoles({
 
   const openNewRole = () => {
     setRoleName("")
+
     setRoleDescription("")
+
     setSelectedPermissions([])
+
     setError("")
+
     setShowNewRole(true)
   }
 
   const openEditRole = (role: RoleRecord) => {
     const permsForRole = data.rolePermissions
-      .filter(
-        (rp) =>
-          rp.role_id ===
-          role.id,
-      )
+
+      .filter((rp) => rp.role_id === role.id)
+
       .map((rp) => rp.permission_code)
+
       .filter(
         (permission) =>
           permission !== "agent_finance.view" ||
           isRecruitmentAgentRole(role.name),
       )
+
     setEditingRole(role)
+
     setRoleEditName(role.name)
+
     setRoleEditDescription(role.description)
+
     setRoleEditPermissions(permsForRole)
-    setRoleEditAccessSettings(roleAccessSettings(role.access_settings, role.name))
+
+    setRoleEditAccessSettings(
+      roleAccessSettings(role.access_settings, role.name),
+    )
+
     setError("")
+
     setShowEditRole(true)
   }
 
   const submitEditRole = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
     if (!editingRole) return
+
     setSaving(true)
+
     setError("")
+
     setNotice("")
+
     try {
       const response = await fetch("/api/workspace/users", {
         method: "POST",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({
           action: "update-role",
+
           roleId: editingRole.id,
+
           name: roleEditName,
+
           description: roleEditDescription,
+
           permissions: roleEditPermissions,
+
           accessSettings: roleEditAccessSettings,
         }),
       })
 
       const result = (await response.json()) as {
         role?: RoleRecord
+
         permissions?: string[]
+
         error?: string
       }
+
       if (!response.ok)
-        throw new Error(
-          result.error ??
-            "Unable to update role.",
-        )
+        throw new Error(result.error ?? "Unable to update role.")
+
       if (
         !matchesSelectedPermissions(result.permissions, roleEditPermissions)
       ) {
@@ -821,23 +1172,21 @@ export default function UsersRoles({
       }
 
       setShowEditRole(false)
+
       setEditingRole(null)
+
       clearClientApiCache()
+
       setNotice(
         `"${
-          result.role?.name ??
-          roleEditName
+          result.role?.name ?? roleEditName
         }" updated. Active workspaces will refresh their permissions automatically.`,
       )
-      setReloadKey(
-        (key) =>
-          key +
-          1,
-      )
+
+      setReloadKey((key) => key + 1)
     } catch (saveError) {
       setError(
-        saveError instanceof
-          Error
+        saveError instanceof Error
           ? saveError.message
           : "Unable to update role.",
       )
@@ -853,120 +1202,112 @@ export default function UsersRoles({
       )
     )
       return
+
     setError("")
+
     setNotice("")
+
     try {
       const response = await fetch("/api/workspace/users", {
         method: "POST",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({ action: "delete-role", roleId: role.id }),
       })
-      const result = (await response.json()) as { ok?: boolean; error?: string }
+
+      const result = (await response.json()) as {
+        ok?: boolean
+        error?: string
+      }
+
       if (!response.ok)
-        throw new Error(
-          result.error ??
-            "Unable to delete role.",
-        )
-      if (
-        selectedRoleId ===
-        role.id
-      )
-        setSelectedRoleId("")
+        throw new Error(result.error ?? "Unable to delete role.")
+
+      if (selectedRoleId === role.id) setSelectedRoleId("")
+
       clearClientApiCache()
+
       setNotice(`"${role.name}" deleted.`)
-      setReloadKey(
-        (key) =>
-          key +
-          1,
-      )
+
+      setReloadKey((key) => key + 1)
     } catch (err) {
-      setError(
-        err instanceof
-          Error
-          ? err.message
-          : "Unable to delete role.",
-      )
+      setError(err instanceof Error ? err.message : "Unable to delete role.")
     }
   }
 
   const manageUser = async (
     user: UserRecord,
-    action:
-      | "change-role"
-      | "set-status"
-      | "resend-invite"
-      | "revoke-invite"
-      | "delete-user",
+
+    action: "change-role" | "set-status" | "resend-invite" | "revoke-invite" | "delete-user",
+
     roleId?: string,
   ) => {
     const prompts: Partial<Record<typeof action, string>> = {
       "set-status":
-        user.status ===
-        "disabled"
+        user.status === "disabled"
           ? `Activate ${user.name}'s company access?`
           : `Deactivate ${user.name}'s company access?`,
+
       "resend-invite": `Send a fresh invitation link to ${user.email}? The new link will be valid for one hour.`,
+
       "revoke-invite": `Revoke the pending invitation for ${user.name}?`,
+
       "delete-user": `Remove ${user.name} from this company? If they have no other company memberships, their account will be deactivated and removed while keeping historical finance records intact.`,
     }
+
     const prompt = prompts[action]
+
     if (prompt && !window.confirm(prompt)) return
 
     setUserActionPending(user.id)
+
     setError("")
+
     setNotice("")
+
     try {
       const response = await fetch("/api/workspace/users", {
         method: "POST",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({
           action,
+
           userId: user.id,
-          ...(action ===
-          "change-role"
-            ? { roleId }
-            : {}),
-          ...(action ===
-          "set-status"
+
+          ...(action === "change-role" ? { roleId } : {}),
+
+          ...(action === "set-status"
             ? {
-                status:
-                  user.status ===
-                  "disabled"
-                    ? "active"
-                    : "disabled",
+                status: user.status === "disabled" ? "active" : "disabled",
               }
             : {}),
         }),
       })
+
       const result = (await response.json()) as { error?: string }
+
       if (!response.ok)
-        throw new Error(
-          result.error ??
-            "Unable to update this user.",
-        )
+        throw new Error(result.error ?? "Unable to update this user.")
+
       setNotice(
-        action ===
-          "change-role"
+        action === "change-role"
           ? `Role updated for ${user.name}.`
           : action === "resend-invite"
             ? `A fresh invitation link was sent to ${user.email}.`
-            : action ===
-              "set-status"
-            ? `Access updated for ${user.name}.`
-            : action ===
-                "revoke-invite"
-              ? `Invitation revoked for ${user.name}.`
-              : `${user.name} removed from this company.`,
+            : action === "set-status"
+              ? `Access updated for ${user.name}.`
+              : action === "revoke-invite"
+                ? `Invitation revoked for ${user.name}.`
+                : `${user.name} removed from this company.`,
       )
-      setReloadKey(
-        (key) =>
-          key +
-          1,
-      )
+
+      setReloadKey((key) => key + 1)
     } catch (actionError) {
       setError(
-        actionError instanceof
-          Error
+        actionError instanceof Error
           ? actionError.message
           : "Unable to update this user.",
       )
@@ -977,61 +1318,79 @@ export default function UsersRoles({
 
   const openNewStaff = () => {
     setEditingStaffId("")
+
     setStaffForm(emptyStaffForm)
+
     setShowStaffForm(true)
   }
 
   const openEditStaff = (member: StaffRecord) => {
     setEditingStaffId(member.id)
+
     setStaffForm({
       name: member.name,
+
       position: member.position,
+
       status: member.status,
+
       dateJoined: member.dateJoined,
+
+      branchId: member.branchId,
+
       linkedUserId: member.linkedUserId,
+
+      lineManagerStaffId: member.lineManagerStaffId,
+
       payType: member.payType,
+
       baseSalary: String(member.baseSalary),
+
       weeklyTransportAllowance: String(member.weeklyTransportAllowance),
+
       transportAccountId: member.transportAccountId,
     })
+
     setShowStaffForm(true)
   }
 
   const submitStaff = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
     setSaving(true)
+
     setError("")
+
     setNotice("")
+
     try {
       const response = await fetch("/api/workspace/staff", {
         method: editingStaffId ? "PATCH" : "POST",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({
           ...staffForm,
-          id:
-            editingStaffId ||
-            undefined,
+
+          id: editingStaffId || undefined,
         }),
       })
+
       const result = (await response.json()) as { error?: string }
+
       if (!response.ok)
-        throw new Error(
-          result.error ??
-            "Unable to save staff record.",
-        )
+        throw new Error(result.error ?? "Unable to save staff record.")
+
       setShowStaffForm(false)
+
       setNotice(
         editingStaffId ? "Staff record updated." : "Staff member added.",
       )
-      setReloadKey(
-        (key) =>
-          key +
-          1,
-      )
+
+      setReloadKey((key) => key + 1)
     } catch (saveError) {
       setError(
-        saveError instanceof
-          Error
+        saveError instanceof Error
           ? saveError.message
           : "Unable to save staff record.",
       )
@@ -1042,48 +1401,55 @@ export default function UsersRoles({
 
   const submitStaffIdSettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
     setSaving(true)
+
     setError("")
+
     setNotice("")
+
     try {
       const response = await fetch("/api/workspace/staff", {
         method: "PATCH",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({
           action: "configure-ids",
+
           prefix: staffIdPrefix,
+
           nextSequence: staffNextSequence,
         }),
       })
+
       const result = (await response.json()) as {
         settings?: StaffIdSettings
+
         message?: string
+
         restamped?: number
+
         error?: string
       }
+
       if (!response.ok)
-        throw new Error(
-          result.error ??
-            "Unable to update staff ID settings.",
-        )
+        throw new Error(result.error ?? "Unable to update staff ID settings.")
+
       if (result.settings) {
         setStaffIdSettings(result.settings)
+
         setStaffIdPrefix(result.settings.prefix)
+
         setStaffNextSequence(result.settings.nextSequence)
       }
-      setReloadKey(
-        (key) =>
-          key +
-          1,
-      )
-      setNotice(
-        result.message ??
-          "Staff ID settings updated.",
-      )
+
+      setReloadKey((key) => key + 1)
+
+      setNotice(result.message ?? "Staff ID settings updated.")
     } catch (saveError) {
       setError(
-        saveError instanceof
-          Error
+        saveError instanceof Error
           ? saveError.message
           : "Unable to update staff ID settings.",
       )
@@ -1094,42 +1460,61 @@ export default function UsersRoles({
 
   const openEditStaffId = (member: StaffRecord) => {
     const prefix = staffIdSettings?.prefix
-    const number = prefix && member.staffId.startsWith(`${prefix}-`)
-      ? member.staffId.slice(prefix.length + 1)
-      : ""
+
+    const number =
+      prefix && member.staffId.startsWith(`${prefix}-`)
+        ? member.staffId.slice(prefix.length + 1)
+        : ""
+
     setEditingStaffNumber(member)
+
     setStaffIdNumber(number)
+
     setError("")
+
     setNotice("")
   }
 
-  const submitIndividualStaffId = async (
-    event: FormEvent<HTMLFormElement>,
-  ) => {
+  const submitIndividualStaffId = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
     if (!editingStaffNumber || !staffIdSettings) return
+
     setSaving(true)
+
     setError("")
+
     setNotice("")
+
     try {
       const response = await fetch("/api/workspace/staff", {
         method: "PATCH",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({
           action: "update-individual-id",
+
           id: editingStaffNumber.id,
+
           prefix: staffIdSettings.prefix,
+
           sequence: Number(staffIdNumber),
         }),
       })
+
       const result = (await response.json()) as {
         staffId?: string
+
         error?: string
       }
+
       if (!response.ok)
         throw new Error(result.error ?? "Unable to update staff ID.")
+
       if (!result.staffId)
         throw new Error("The updated staff ID was not returned.")
+
       const updatedStaffId = result.staffId
 
       setStaffMembers((current) =>
@@ -1139,8 +1524,11 @@ export default function UsersRoles({
             : member,
         ),
       )
+
       setEditingStaffNumber(null)
+
       setReloadKey((key) => key + 1)
+
       setNotice(`Staff ID updated to ${updatedStaffId}.`)
     } catch (saveError) {
       setError(
@@ -1153,44 +1541,50 @@ export default function UsersRoles({
     }
   }
 
-  const selectedRole = data.roles.find(
-    (role) =>
-      role.id ===
-      selectedRoleId,
-  )
+  const selectedRole = data.roles.find((role) => role.id === selectedRoleId)
+
   const permissionsForRole = new Set(
     data.rolePermissions
-      .filter(
-        (permission) =>
-          permission.role_id ===
-          selectedRoleId,
-      )
+
+      .filter((permission) => permission.role_id === selectedRoleId)
+
       .map((permission) => permission.permission_code),
   )
+
   const canManageStaff = data.users.some(
     (user) =>
-      user.id ===
-        currentUserId &&
+      user.id === currentUserId &&
       (user.isPrimaryAdmin ||
-        user.role ===
-          "Chairman" ||
-        user.role ===
-          "CEO" ||
-        user.role ===
-          "General Manager"),
+        user.role === "Chairman" ||
+        user.role === "CEO" ||
+        user.role === "General Manager"),
   )
+
   const canManageRoles =
     data.users.some(
       (user) =>
-        user.id ===
-          currentUserId &&
+        user.id === currentUserId &&
         (user.isPrimaryAdmin ||
-          user.role ===
-            "Chairman" ||
-          user.role ===
-            "CEO"),
-    ) ||
-    data.canManageRoles
+          user.role === "Chairman" ||
+          user.role === "CEO"),
+    ) || data.canManageRoles
+
+  const searchTerm = userSearch.trim().toLocaleLowerCase()
+
+  const visibleUsers = data.users.filter((user) => {
+    const matchesType =
+      userTypeFilter === "all" || user.userType === userTypeFilter
+
+    const matchesSearch =
+      !searchTerm ||
+      `${user.name} ${user.email} ${user.role} ${user.branch}`
+
+        .toLocaleLowerCase()
+
+        .includes(searchTerm)
+
+    return matchesType && matchesSearch
+  })
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -1212,8 +1606,7 @@ export default function UsersRoles({
             Manage company access, permissions, and staff records
           </p>
         </div>
-        {tab ===
-        "users" ? (
+        {tab === "users" ? (
           <button
             type="button"
             onClick={() => setShowNewUser(true)}
@@ -1221,13 +1614,13 @@ export default function UsersRoles({
             className="rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
             style={{
               background: "var(--primary)",
+
               color: "var(--primary-foreground)",
             }}
           >
             Invite user
           </button>
-        ) : tab ===
-          "roles" ? (
+        ) : tab === "roles" ? (
           canManageRoles ? (
             <button
               type="button"
@@ -1235,6 +1628,7 @@ export default function UsersRoles({
               className="rounded px-4 py-2 text-sm font-600"
               style={{
                 background: "var(--primary)",
+
                 color: "var(--primary-foreground)",
               }}
             >
@@ -1248,6 +1642,7 @@ export default function UsersRoles({
             className="rounded px-4 py-2 text-sm font-600"
             style={{
               background: "var(--primary)",
+
               color: "var(--primary-foreground)",
             }}
           >
@@ -1261,12 +1656,9 @@ export default function UsersRoles({
         style={{ borderColor: "var(--border)", background: "var(--card)" }}
       >
         {(["users", "roles", "staff"] as const)
-          .filter(
-            (item) =>
-              item !==
-                "staff" ||
-              canManageStaff,
-          )
+
+          .filter((item) => item !== "staff" || canManageStaff)
+
           .map((item) => (
             <button
               key={item}
@@ -1275,13 +1667,10 @@ export default function UsersRoles({
               className="px-5 py-3 text-sm font-600 capitalize"
               style={{
                 color:
-                  tab ===
-                  item
-                    ? "var(--primary)"
-                    : "var(--muted-foreground)",
+                  tab === item ? "var(--primary)" : "var(--muted-foreground)",
+
                 borderBottom:
-                  tab ===
-                  item
+                  tab === item
                     ? "2px solid var(--primary)"
                     : "2px solid transparent",
               }}
@@ -1317,17 +1706,54 @@ export default function UsersRoles({
           </p>
         ) : null}
 
-        {!loading &&
-          tab ===
-            "users" && (
-            <div
-              className="overflow-x-auto rounded border"
-              style={{
-                background: "var(--card)",
-                borderColor: "var(--border)",
-              }}
+        {!loading && tab === "users" && (
+          <div className="flex flex-wrap gap-3 px-6 pt-4">
+            <label
+              className="min-w-52 flex-1 text-xs font-600"
+              style={{ color: "var(--muted-foreground)" }}
             >
-              <div className="app-table-scroll"><table className="w-full min-w-155 text-sm">
+              Search users
+              <input
+                type="search"
+                value={userSearch}
+                onChange={(event) => setUserSearch(event.target.value)}
+                placeholder="Name, email, role, or branch"
+                className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                style={fieldStyle}
+              />
+            </label>
+            <label
+              className="w-44 text-xs font-600"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              User type
+              <select
+                value={userTypeFilter}
+                onChange={(event) =>
+                  setUserTypeFilter(event.target.value as typeof userTypeFilter)
+                }
+                className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                style={fieldStyle}
+              >
+                <option value="all">All users</option>
+                <option value="staff">Staff</option>
+                <option value="member">Members</option>
+              </select>
+            </label>
+          </div>
+        )}
+
+        {!loading && tab === "users" && (
+          <div
+            className="overflow-x-auto rounded border"
+            style={{
+              background: "var(--card)",
+
+              borderColor: "var(--border)",
+            }}
+          >
+            <div className="app-table-scroll">
+              <table className="w-full min-w-155 text-sm">
                 <thead>
                   <tr
                     className="border-b"
@@ -1335,10 +1761,17 @@ export default function UsersRoles({
                   >
                     {[
                       "Name",
+
                       "Email",
+
                       "Role",
+
+                      "Type",
+
                       "Branch",
+
                       "Status",
+
                       "Actions",
                     ].map((heading) => (
                       <th
@@ -1352,7 +1785,7 @@ export default function UsersRoles({
                   </tr>
                 </thead>
                 <tbody>
-                  {data.users.map((user) => (
+                  {visibleUsers.map((user) => (
                     <tr
                       key={user.id}
                       className="border-b last:border-0"
@@ -1383,15 +1816,15 @@ export default function UsersRoles({
                             aria-label={`Role for ${user.name}`}
                             value={user.roleId}
                             disabled={
-                              user.id ===
-                                currentUserId ||
-                              userActionPending ===
-                                user.id
+                              user.id === currentUserId ||
+                              userActionPending === user.id
                             }
                             onChange={(event) =>
                               void manageUser(
                                 user,
+
                                 "change-role",
+
                                 event.target.value,
                               )
                             }
@@ -1399,10 +1832,12 @@ export default function UsersRoles({
                             style={fieldStyle}
                           >
                             {data.roles
+
                               .filter(
                                 (role) =>
                                   !isPrimaryAdministratorRole(role.name),
                               )
+
                               .map((role) => (
                                 <option key={role.id} value={role.id}>
                                   {role.name}
@@ -1410,6 +1845,21 @@ export default function UsersRoles({
                               ))}
                           </select>
                         )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className="rounded px-2 py-1 text-xs font-600 capitalize"
+                          style={{
+                            color:
+                              user.userType === "staff"
+                                ? "var(--primary)"
+                                : "var(--muted-foreground)",
+
+                            background: "var(--secondary)",
+                          }}
+                        >
+                          {user.userType}
+                        </span>
                       </td>
                       <td className="px-4 py-3">
                         {user.isPrimaryAdmin ? (
@@ -1422,53 +1872,49 @@ export default function UsersRoles({
                         ) : (
                           <select
                             aria-label={`Branch for ${user.name}`}
-                            value={
-                              user.branchId ??
-                              ""
-                            }
+                            value={user.branchId ?? ""}
                             disabled={
-                              user.id ===
-                                currentUserId ||
-                              userActionPending ===
-                                user.id ||
-                              branches.length ===
-                                0
+                              user.id === currentUserId ||
+                              userActionPending === user.id ||
+                              branches.length === 0
                             }
                             onChange={async (event) => {
                               setUserActionPending(user.id)
+
                               setError("")
+
                               try {
                                 const res = await fetch("/api/branches", {
                                   method: "POST",
+
                                   headers: {
                                     "Content-Type": "application/json",
                                   },
+
                                   body: JSON.stringify({
                                     action: "set-member-branch",
+
                                     userId: user.id,
-                                    branchId:
-                                      event.target.value ||
-                                      null,
+
+                                    branchId: event.target.value || null,
                                   }),
                                 })
+
                                 const result = (await res.json()) as {
                                   error?: string
                                 }
+
                                 if (!res.ok)
                                   throw new Error(
-                                    result.error ??
-                                      "Unable to assign branch.",
+                                    result.error ?? "Unable to assign branch.",
                                   )
+
                                 setNotice(`Branch updated for ${user.name}.`)
-                                setReloadKey(
-                                  (key) =>
-                                    key +
-                                    1,
-                                )
+
+                                setReloadKey((key) => key + 1)
                               } catch (err) {
                                 setError(
-                                  err instanceof
-                                    Error
+                                  err instanceof Error
                                     ? err.message
                                     : "Unable to assign branch.",
                                 )
@@ -1493,28 +1939,23 @@ export default function UsersRoles({
                           className="rounded px-2 py-1 text-xs font-600"
                           style={{
                             color:
-                              user.status ===
-                              "active"
+                              user.status === "active"
                                 ? "#10b981"
-                                : user.status ===
-                                    "disabled"
+                                : user.status === "disabled"
                                   ? "#ef4444"
                                   : "#f59e0b",
+
                             background:
-                              user.status ===
-                              "active"
+                              user.status === "active"
                                 ? "#10b98120"
-                                : user.status ===
-                                    "disabled"
+                                : user.status === "disabled"
                                   ? "#ef444420"
                                   : "#f59e0b20",
                           }}
                         >
-                          {user.status ===
-                          "active"
+                          {user.status === "active"
                             ? "Active"
-                            : user.status ===
-                                "disabled"
+                            : user.status === "disabled"
                               ? "Deactivated"
                               : "Invited"}
                         </span>
@@ -1528,29 +1969,25 @@ export default function UsersRoles({
                             >
                               Protected company user
                             </span>
-                          ) : user.id ===
-                            currentUserId ? (
+                          ) : user.id === currentUserId ? (
                             <span
                               className="text-xs"
                               style={{ color: "var(--muted-foreground)" }}
                             >
                               Current user
                             </span>
-                          ) : user.status ===
-                            "invited" ? (
+                          ) : user.status === "invited" ? (
                             <>
                               <button
                                 type="button"
-                                disabled={
-                                  userActionPending ===
-                                  user.id
-                                }
+                                disabled={userActionPending === user.id}
                                 onClick={() =>
                                   void manageUser(user, "resend-invite")
                                 }
                                 className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                                 style={{
                                   borderColor: "var(--border)",
+
                                   color: "var(--primary)",
                                 }}
                               >
@@ -1558,16 +1995,14 @@ export default function UsersRoles({
                               </button>
                               <button
                                 type="button"
-                                disabled={
-                                  userActionPending ===
-                                  user.id
-                                }
+                                disabled={userActionPending === user.id}
                                 onClick={() =>
                                   void manageUser(user, "revoke-invite")
                                 }
                                 className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                                 style={{
                                   borderColor: "var(--border)",
+
                                   color: "var(--muted-foreground)",
                                 }}
                               >
@@ -1577,44 +2012,36 @@ export default function UsersRoles({
                           ) : (
                             <button
                               type="button"
-                              disabled={
-                                userActionPending ===
-                                user.id
-                              }
+                              disabled={userActionPending === user.id}
                               onClick={() =>
                                 void manageUser(user, "set-status")
                               }
                               className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                               style={{
                                 borderColor: "var(--border)",
+
                                 color:
-                                  user.status ===
-                                  "disabled"
+                                  user.status === "disabled"
                                     ? "#10b981"
                                     : "#f59e0b",
                               }}
                             >
-                              {user.status ===
-                              "disabled"
+                              {user.status === "disabled"
                                 ? "Activate"
                                 : "Deactivate"}
                             </button>
                           )}
-                          {!user.isPrimaryAdmin &&
-                          user.id !==
-                            currentUserId ? (
+                          {!user.isPrimaryAdmin && user.id !== currentUserId ? (
                             <button
                               type="button"
-                              disabled={
-                                userActionPending ===
-                                user.id
-                              }
+                              disabled={userActionPending === user.id}
                               onClick={() =>
                                 void manageUser(user, "delete-user")
                               }
                               className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                               style={{
                                 borderColor: "#ef444440",
+
                                 color: "#ef4444",
                               }}
                             >
@@ -1625,6 +2052,17 @@ export default function UsersRoles({
                       </td>
                     </tr>
                   ))}
+                  {!visibleUsers.length && (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="px-4 py-8 text-center text-sm"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        No users match the selected type or search.
+                      </td>
+                    </tr>
+                  )}
                   {!data.users.length && (
                     <tr>
                       <td
@@ -1637,247 +2075,248 @@ export default function UsersRoles({
                     </tr>
                   )}
                 </tbody>
-              </table></div>
+              </table>
             </div>
-          )}
+          </div>
+        )}
 
-        {!loading &&
-          tab ===
-            "roles" && (
-            <div className="grid gap-5 lg:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.25fr)]">
-              {}
-              <div className="space-y-2">
-                <h2
-                  className="mb-3 text-xs font-700 uppercase tracking-wider"
-                  style={{ color: "var(--muted-foreground)" }}
-                >
-                  Company roles
-                </h2>
-                {data.roles.map((role) => {
-                  const isPrimaryAdmin = isPrimaryAdministratorRole(role.name)
-                  const memberCount = data.users.filter(
-                    (u) =>
-                      u.roleId ===
-                      role.id,
-                  ).length
-                  return (
-                    <div
-                      key={role.id}
-                      className="rounded border"
-                      style={{
-                        background:
-                          selectedRoleId ===
-                          role.id
-                            ? "var(--secondary)"
-                            : "var(--card)",
-                        borderColor:
-                          selectedRoleId ===
-                          role.id
-                            ? "var(--primary)"
-                            : "var(--border)",
-                      }}
+        {!loading && tab === "roles" && (
+          <div className="grid gap-5 lg:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.25fr)]">
+            {}
+            <div className="space-y-2">
+              <h2
+                className="mb-3 text-xs font-700 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Company roles
+              </h2>
+              {data.roles.map((role) => {
+                const isPrimaryAdmin = isPrimaryAdministratorRole(role.name)
+
+                const memberCount = data.users.filter(
+                  (u) => u.roleId === role.id,
+                ).length
+
+                return (
+                  <div
+                    key={role.id}
+                    className="rounded border"
+                    style={{
+                      background:
+                        selectedRoleId === role.id
+                          ? "var(--secondary)"
+                          : "var(--card)",
+
+                      borderColor:
+                        selectedRoleId === role.id
+                          ? "var(--primary)"
+                          : "var(--border)",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRoleId(role.id)}
+                      className="w-full px-3 py-3 text-left"
                     >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedRoleId(role.id)}
-                        className="w-full px-3 py-3 text-left"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span
-                            className="text-sm font-600"
-                            style={{ color: "var(--foreground)" }}
-                          >
-                            {role.name}
-                          </span>
-                          <div className="flex shrink-0 items-center gap-1.5">
-                            {role.is_system_default && (
-                              <span
-                                className="rounded px-1.5 py-0.5 text-[10px] font-600 uppercase tracking-wide"
-                                style={{
-                                  background: "var(--border)",
-                                  color: "var(--muted-foreground)",
-                                }}
-                              >
-                                Default
-                              </span>
-                            )}
-                            {memberCount >
-                              0 && (
-                              <span
-                                className="rounded px-1.5 py-0.5 text-[10px] font-600"
-                                style={{
-                                  background: "var(--secondary)",
-                                  color: "var(--muted-foreground)",
-                                }}
-                              >
-                                {memberCount} user
-                                {memberCount !==
-                                1
-                                  ? "s"
-                                  : ""}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        {role.description ? (
-                          <span
-                            className="mt-1 block text-xs"
-                            style={{ color: "var(--muted-foreground)" }}
-                          >
-                            {role.description}
-                          </span>
-                        ) : null}
-                      </button>
-                      {canManageRoles && (
-                        <div
-                          className="flex gap-1.5 border-t px-3 py-2"
-                          style={{ borderColor: "var(--border)" }}
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className="text-sm font-600"
+                          style={{ color: "var(--foreground)" }}
                         >
-                          <button
-                            type="button"
-                            onClick={() => openEditRole(role)}
-                            className="rounded border px-2.5 py-1 text-xs font-600"
-                            style={{
-                              borderColor: "var(--border)",
-                              color: "var(--foreground)",
-                            }}
-                          >
-                            Edit
-                          </button>
-                          {!isPrimaryAdmin && (
-                            <button
-                              type="button"
-                              onClick={() => void deleteRole(role)}
-                              className="rounded border px-2.5 py-1 text-xs font-600"
+                          {role.name}
+                        </span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {role.is_system_default && (
+                            <span
+                              className="rounded px-1.5 py-0.5 text-[10px] font-600 uppercase tracking-wide"
                               style={{
-                                borderColor: "#ef444440",
-                                color: "#ef4444",
+                                background: "var(--border)",
+
+                                color: "var(--muted-foreground)",
                               }}
                             >
-                              Delete
-                            </button>
+                              Default
+                            </span>
+                          )}
+                          {memberCount > 0 && (
+                            <span
+                              className="rounded px-1.5 py-0.5 text-[10px] font-600"
+                              style={{
+                                background: "var(--secondary)",
+
+                                color: "var(--muted-foreground)",
+                              }}
+                            >
+                              {memberCount} user
+                              {memberCount !== 1 ? "s" : ""}
+                            </span>
                           )}
                         </div>
-                      )}
-                    </div>
-                  )
-                })}
-                {!data.roles.length && (
-                  <p
-                    className="text-sm"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    No roles are configured.
-                  </p>
-                )}
-              </div>
-
-              {}
-              <div
-                className="rounded border"
-                style={{
-                  background: "var(--card)",
-                  borderColor: "var(--border)",
-                }}
-              >
-                {selectedRole ? (
-                  <>
-                    <div
-                      className="border-b px-4 py-3"
-                      style={{ borderColor: "var(--border)" }}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <h2
-                            className="text-sm font-700"
-                            style={{ color: "var(--foreground)" }}
-                          >
-                            {selectedRole.name}
-                          </h2>
-                          <p
-                            className="mt-0.5 text-xs"
-                            style={{ color: "var(--muted-foreground)" }}
-                          >
-                            {selectedRole.description ||
-                              "No description."}
-                          </p>
-                        </div>
+                      </div>
+                      {role.description ? (
                         <span
-                          className="shrink-0 text-xs"
+                          className="mt-1 block text-xs"
                           style={{ color: "var(--muted-foreground)" }}
                         >
-                          {permissionsForRole.size} permission
-                          {permissionsForRole.size !==
-                          1
-                            ? "s"
-                            : ""}
+                          {role.description}
                         </span>
-                      </div>
-                    </div>
-                    {permissionsForRole.size ===
-                    0 ? (
-                      <p
-                        className="px-4 py-6 text-sm"
-                        style={{ color: "var(--muted-foreground)" }}
-                      >
-                        No permissions assigned to this role.
-                      </p>
-                    ) : (
+                      ) : null}
+                    </button>
+                    {canManageRoles && (
                       <div
-                        className="divide-y"
+                        className="flex gap-1.5 border-t px-3 py-2"
                         style={{ borderColor: "var(--border)" }}
                       >
-                        {(() => {
-                          const grouped = new Map<string, PermissionRecord[]>()
-                          data.permissions
-                            .filter((p) => permissionsForRole.has(p.code))
-                            .forEach((p) => {
-                              const group = p.code.split(".")[0] ?? "other"
-                              if (!grouped.has(group)) grouped.set(group, [])
-                              grouped.get(group)!.push(p)
-                            })
-                          return Array.from(grouped.entries()).map(
-                            ([group, perms]) => (
-                              <div key={group} className="px-4 py-3">
-                                <div
-                                  className="mb-2 text-xs font-700 uppercase tracking-wider"
-                                  style={{ color: "var(--muted-foreground)" }}
-                                >
-                                  {group.replace(/_/g, " ")}
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {perms.map((p) => (
-                                    <span
-                                      key={p.code}
-                                      title={p.description}
-                                      className="rounded border px-2 py-0.5 text-xs font-600"
-                                      style={{
-                                        borderColor: "var(--border)",
-                                        color: "var(--foreground)",
-                                      }}
-                                    >
-                                      {p.code.split(".").slice(1).join(".")}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            ),
-                          )
-                        })()}
+                        <button
+                          type="button"
+                          onClick={() => openEditRole(role)}
+                          className="rounded border px-2.5 py-1 text-xs font-600"
+                          style={{
+                            borderColor: "var(--border)",
+
+                            color: "var(--foreground)",
+                          }}
+                        >
+                          Edit
+                        </button>
+                        {!isPrimaryAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => void deleteRole(role)}
+                            className="rounded border px-2.5 py-1 text-xs font-600"
+                            style={{
+                              borderColor: "#ef444440",
+
+                              color: "#ef4444",
+                            }}
+                          >
+                            Delete
+                          </button>
+                        )}
                       </div>
                     )}
-                  </>
-                ) : (
-                  <p
-                    className="px-4 py-10 text-center text-sm"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    Select a role to review its permissions.
-                  </p>
-                )}
-              </div>
+                  </div>
+                )
+              })}
+              {!data.roles.length && (
+                <p
+                  className="text-sm"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  No roles are configured.
+                </p>
+              )}
             </div>
-          )}
+
+            {}
+            <div
+              className="rounded border"
+              style={{
+                background: "var(--card)",
+
+                borderColor: "var(--border)",
+              }}
+            >
+              {selectedRole ? (
+                <>
+                  <div
+                    className="border-b px-4 py-3"
+                    style={{ borderColor: "var(--border)" }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h2
+                          className="text-sm font-700"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {selectedRole.name}
+                        </h2>
+                        <p
+                          className="mt-0.5 text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {selectedRole.description || "No description."}
+                        </p>
+                      </div>
+                      <span
+                        className="shrink-0 text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {permissionsForRole.size} permission
+                        {permissionsForRole.size !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                  </div>
+                  {permissionsForRole.size === 0 ? (
+                    <p
+                      className="px-4 py-6 text-sm"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      No permissions assigned to this role.
+                    </p>
+                  ) : (
+                    <div
+                      className="divide-y"
+                      style={{ borderColor: "var(--border)" }}
+                    >
+                      {(() => {
+                        const grouped = new Map<string, PermissionRecord[]>()
+
+                        data.permissions
+
+                          .filter((p) => permissionsForRole.has(p.code))
+
+                          .forEach((p) => {
+                            const group = p.code.split(".")[0] ?? "other"
+
+                            if (!grouped.has(group)) grouped.set(group, [])
+
+                            grouped.get(group)!.push(p)
+                          })
+
+                        return Array.from(grouped.entries()).map(
+                          ([group, perms]) => (
+                            <div key={group} className="px-4 py-3">
+                              <div
+                                className="mb-2 text-xs font-700 uppercase tracking-wider"
+                                style={{ color: "var(--muted-foreground)" }}
+                              >
+                                {group.replace(/_/g, " ")}
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {perms.map((p) => (
+                                  <span
+                                    key={p.code}
+                                    title={p.description}
+                                    className="rounded border px-2 py-0.5 text-xs font-600"
+                                    style={{
+                                      borderColor: "var(--border)",
+
+                                      color: "var(--foreground)",
+                                    }}
+                                  >
+                                    {p.code.split(".").slice(1).join(".")}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ),
+                        )
+                      })()}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p
+                  className="px-4 py-10 text-center text-sm"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Select a role to review its permissions.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {tab === "staff" && (
           <div className="space-y-4">
@@ -1885,6 +2324,7 @@ export default function UsersRoles({
               className="rounded border"
               style={{
                 background: "var(--card)",
+
                 borderColor: "var(--border)",
               }}
             >
@@ -1984,7 +2424,9 @@ export default function UsersRoles({
                         className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
                         style={{
                           background: "var(--primary)",
+
                           color: "var(--primary-foreground)",
+
                           borderColor: "var(--primary)",
                         }}
                       >
@@ -2017,164 +2459,200 @@ export default function UsersRoles({
               )}
 
               <div className="overflow-x-auto">
-                <div className="app-table-scroll"><table className="w-full min-w-225 text-sm">
-                  <thead>
-                    <tr
-                      className="border-b"
-                      style={{ borderColor: "var(--border)" }}
-                    >
-                      {[
-                        "Staff ID",
-                        "Name",
-                        "Position",
-                        "Pay arrangement",
-                        "Base salary",
-                        "Weekly transport",
-                        "Status",
-                        "Linked user",
-                        "Actions",
-                      ].map((heading) => (
-                        <th
-                          key={heading}
-                          className="px-4 py-3 text-left text-xs font-700 uppercase tracking-wide"
-                          style={{ color: "var(--muted-foreground)" }}
-                        >
-                          {heading}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {staffMembers.map((member) => (
+                <div className="app-table-scroll">
+                  <table className="w-full min-w-225 text-sm">
+                    <thead>
                       <tr
-                        key={member.id}
-                        className="border-b last:border-0"
+                        className="border-b"
                         style={{ borderColor: "var(--border)" }}
                       >
-                        <td
-                          className="px-4 py-3 font-600"
-                          style={{ color: "var(--foreground)" }}
-                        >
-                          <div className="flex items-center gap-2">
-                            <span>{member.staffId}</span>
-                            {staffIdSettings?.canChangeSequence && (
-                              <button
-                                type="button"
-                                onClick={() => openEditStaffId(member)}
-                                className="rounded border px-2 py-1 text-xs font-500"
-                                style={{
-                                  borderColor: "var(--border)",
-                                  color: "var(--muted-foreground)",
-                                }}
-                                aria-label={`Edit staff ID for ${member.name}`}
-                              >
-                                Edit ID
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                        <td
-                          className="px-4 py-3"
-                          style={{ color: "var(--foreground)" }}
-                        >
-                          {member.name}
-                        </td>
-                        <td
-                          className="px-4 py-3"
-                          style={{ color: "var(--muted-foreground)" }}
-                        >
-                          {member.position}
-                        </td>
-                        <td
-                          className="px-4 py-3 text-xs capitalize"
-                          style={{ color: "var(--muted-foreground)" }}
-                        >
-                          {member.payType.replace(/_/g, " ")}
-                        </td>
-                        <td
-                          className="px-4 py-3 mono text-xs"
-                          style={{ color: "var(--foreground)" }}
-                        >
-                          {member.baseSalary
-                            ? `UGX ${member.baseSalary.toLocaleString("en-UG")}`
-                            : "—"}
-                        </td>
-                        <td
-                          className="px-4 py-3 mono text-xs"
-                          style={{ color: "var(--foreground)" }}
-                        >
-                          {member.weeklyTransportAllowance
-                            ? `UGX ${member.weeklyTransportAllowance.toLocaleString("en-UG")}/wk`
-                            : "—"}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className="rounded px-2 py-1 text-xs font-600"
-                            style={{
-                              color:
-                                member.status === "Active"
-                                  ? "#10b981"
-                                  : member.status === "On Leave"
-                                    ? "#f59e0b"
-                                    : "#ef4444",
-                              background:
-                                member.status === "Active"
-                                  ? "#10b98120"
-                                  : member.status === "On Leave"
-                                    ? "#f59e0b20"
-                                    : "#ef444420",
-                            }}
+                        {[
+                          "Staff ID",
+
+                          "Name",
+
+                          "Position",
+
+                          "Line manager",
+
+                          "Branch",
+
+                          "Pay arrangement",
+
+                          "Base salary",
+
+                          "Weekly transport",
+
+                          "Status",
+
+                          "Linked user",
+
+                          "Actions",
+                        ].map((heading) => (
+                          <th
+                            key={heading}
+                            className="px-4 py-3 text-left text-xs font-700 uppercase tracking-wide"
+                            style={{ color: "var(--muted-foreground)" }}
                           >
-                            {member.status}
-                          </span>
-                        </td>
-                        <td
-                          className="px-4 py-3"
-                          style={{ color: "var(--muted-foreground)" }}
+                            {heading}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {staffMembers.map((member) => (
+                        <tr
+                          key={member.id}
+                          className="border-b last:border-0"
+                          style={{ borderColor: "var(--border)" }}
                         >
-                          {data.users.find(
-                            (user) => user.id === member.linkedUserId,
-                          )?.email ?? "Not linked"}
-                        </td>
-                        <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={() => openEditStaff(member)}
-                            className="rounded border px-3 py-1.5 text-xs font-600"
-                            style={{
-                              borderColor: "var(--border)",
-                              color: "var(--foreground)",
-                            }}
+                          <td
+                            className="px-4 py-3 font-600"
+                            style={{ color: "var(--foreground)" }}
                           >
-                            Edit
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {staffLoading && !staffMembers.length && (
-                      <tr>
-                        <td
-                          colSpan={9}
-                          className="px-4 py-10 text-center text-sm"
-                          style={{ color: "var(--muted-foreground)" }}
-                        >
-                          Loading staff records…
-                        </td>
-                      </tr>
-                    )}
-                    {!staffLoading && !staffMembers.length && (
-                      <tr>
-                        <td
-                          colSpan={9}
-                          className="px-4 py-10 text-center text-sm"
-                          style={{ color: "var(--muted-foreground)" }}
-                        >
-                          No staff members have been added yet.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table></div>
+                            <div className="flex items-center gap-2">
+                              <span>{member.staffId}</span>
+                              {staffIdSettings?.canChangeSequence && (
+                                <button
+                                  type="button"
+                                  onClick={() => openEditStaffId(member)}
+                                  className="rounded border px-2 py-1 text-xs font-500"
+                                  style={{
+                                    borderColor: "var(--border)",
+
+                                    color: "var(--muted-foreground)",
+                                  }}
+                                  aria-label={`Edit staff ID for ${member.name}`}
+                                >
+                                  Edit ID
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td
+                            className="px-4 py-3"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            {member.name}
+                          </td>
+                          <td
+                            className="px-4 py-3"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            {member.position}
+                          </td>
+                          <td
+                            className="px-4 py-3"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            {staffMembers.find(
+                              (staff) => staff.id === member.lineManagerStaffId,
+                            )?.name ?? "—"}
+                          </td>
+                          <td
+                            className="px-4 py-3"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            {staffBranches.find(
+                              (branch) => branch.id === member.branchId,
+                            )?.name ??
+                              (member.branchId
+                                ? "Unknown branch"
+                                : "Main Branch")}
+                          </td>
+                          <td
+                            className="px-4 py-3 text-xs capitalize"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            {member.payType.replace(/_/g, " ")}
+                          </td>
+                          <td
+                            className="px-4 py-3 mono text-xs"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            {member.baseSalary
+                              ? `UGX ${member.baseSalary.toLocaleString("en-UG")}`
+                              : "—"}
+                          </td>
+                          <td
+                            className="px-4 py-3 mono text-xs"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            {member.weeklyTransportAllowance
+                              ? `UGX ${member.weeklyTransportAllowance.toLocaleString("en-UG")}/wk`
+                              : "—"}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className="rounded px-2 py-1 text-xs font-600"
+                              style={{
+                                color:
+                                  member.status === "Active"
+                                    ? "#10b981"
+                                    : member.status === "On Leave"
+                                      ? "#f59e0b"
+                                      : "#ef4444",
+
+                                background:
+                                  member.status === "Active"
+                                    ? "#10b98120"
+                                    : member.status === "On Leave"
+                                      ? "#f59e0b20"
+                                      : "#ef444420",
+                              }}
+                            >
+                              {member.status}
+                            </span>
+                          </td>
+                          <td
+                            className="px-4 py-3"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            {data.users.find(
+                              (user) => user.id === member.linkedUserId,
+                            )?.email ?? "Not linked"}
+                          </td>
+                          <td className="px-4 py-3">
+                            <button
+                              type="button"
+                              onClick={() => openEditStaff(member)}
+                              className="rounded border px-3 py-1.5 text-xs font-600"
+                              style={{
+                                borderColor: "var(--border)",
+
+                                color: "var(--foreground)",
+                              }}
+                            >
+                              Edit
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {staffLoading && !staffMembers.length && (
+                        <tr>
+                          <td
+                            colSpan={11}
+                            className="px-4 py-10 text-center text-sm"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            Loading staff records…
+                          </td>
+                        </tr>
+                      )}
+                      {!staffLoading && !staffMembers.length && (
+                        <tr>
+                          <td
+                            colSpan={11}
+                            className="px-4 py-10 text-center text-sm"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            No staff members have been added yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
@@ -2187,15 +2665,22 @@ export default function UsersRoles({
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) {
               setShowNewUser(false)
+
               setError("")
+
               setUserDefaultPassword("")
+
               setUserInviteMode("email-link")
+
+              setUserType("member")
+
+              setInvitedStaffForm(emptyInvitedStaffForm)
             }
           }}
         >
           <form
             onSubmit={submitUser}
-            className="w-full max-w-md rounded border p-6"
+            className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded border p-6"
             style={{ background: "var(--card)", borderColor: "var(--border)" }}
           >
             <div className="mb-5 flex items-start justify-between gap-2">
@@ -2209,9 +2694,16 @@ export default function UsersRoles({
                 type="button"
                 onClick={() => {
                   setShowNewUser(false)
+
                   setError("")
+
                   setUserDefaultPassword("")
+
                   setUserInviteMode("email-link")
+
+                  setUserType("member")
+
+                  setInvitedStaffForm(emptyInvitedStaffForm)
                 }}
                 className="rounded p-1 text-xs leading-none"
                 style={{ color: "var(--muted-foreground)" }}
@@ -2229,6 +2721,7 @@ export default function UsersRoles({
                 type="button"
                 onClick={() => {
                   setUserInviteMode("email-link")
+
                   setError("")
                 }}
                 className="flex-1 px-3 py-2 transition-colors"
@@ -2237,6 +2730,7 @@ export default function UsersRoles({
                     userInviteMode === "email-link"
                       ? "var(--primary)"
                       : "var(--secondary)",
+
                   color:
                     userInviteMode === "email-link"
                       ? "var(--primary-foreground)"
@@ -2249,6 +2743,7 @@ export default function UsersRoles({
                 type="button"
                 onClick={() => {
                   setUserInviteMode("default-password")
+
                   setError("")
                 }}
                 className="flex-1 px-3 py-2 transition-colors"
@@ -2257,6 +2752,7 @@ export default function UsersRoles({
                     userInviteMode === "default-password"
                       ? "var(--primary)"
                       : "var(--secondary)",
+
                   color:
                     userInviteMode === "default-password"
                       ? "var(--primary-foreground)"
@@ -2309,9 +2805,9 @@ export default function UsersRoles({
                   style={fieldStyle}
                 >
                   {data.roles
-                    .filter(
-                      (role) => !isPrimaryAdministratorRole(role.name),
-                    )
+
+                    .filter((role) => !isPrimaryAdministratorRole(role.name))
+
                     .map((role) => (
                       <option key={role.id} value={role.id}>
                         {role.name}
@@ -2323,11 +2819,44 @@ export default function UsersRoles({
                 className="block text-xs font-700 uppercase tracking-wider"
                 style={{ color: "var(--muted-foreground)" }}
               >
+                Account type
+                <select
+                  required
+                  value={userType}
+                  onChange={(event) => {
+                    const value = event.target.value as typeof userType
+
+                    setUserType(value)
+
+                    if (value === "member")
+                      setInvitedStaffForm(emptyInvitedStaffForm)
+                  }}
+                  className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={fieldStyle}
+                >
+                  <option value="member">Member — users table only</option>
+                  <option value="staff">Staff — users and staff tables</option>
+                </select>
+              </label>
+              <label
+                className="block text-xs font-700 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Branch
                 <select
                   required
                   value={userBranchId}
-                  onChange={(e) => setUserBranchId(e.target.value)}
+                  onChange={(e) => {
+                    setUserBranchId(e.target.value)
+
+                    setInvitedStaffForm((current) => ({
+                      ...current,
+
+                      lineManagerStaffId: "",
+
+                      transportAccountId: "",
+                    }))
+                  }}
                   className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                   style={fieldStyle}
                 >
@@ -2341,6 +2870,216 @@ export default function UsersRoles({
                   ))}
                 </select>
               </label>
+
+              {userType === "staff" && (
+                <>
+                  <label
+                    className="block text-xs font-700 uppercase tracking-wider"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Position
+                    <input
+                      required
+                      maxLength={150}
+                      value={invitedStaffForm.position}
+                      onChange={(event) =>
+                        setInvitedStaffForm((current) => ({
+                          ...current,
+
+                          position: event.target.value,
+                        }))
+                      }
+                      className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                      style={fieldStyle}
+                      placeholder="Position"
+                    />
+                  </label>
+                  <label
+                    className="block text-xs font-700 uppercase tracking-wider"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Line manager
+                    <select
+                      value={invitedStaffForm.lineManagerStaffId}
+                      onChange={(event) =>
+                        setInvitedStaffForm((current) => ({
+                          ...current,
+
+                          lineManagerStaffId: event.target.value,
+                        }))
+                      }
+                      className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                      style={fieldStyle}
+                    >
+                      <option value="">No line manager</option>
+                      {staffMembers
+
+                        .filter((manager) => manager.status === "Active")
+
+                        .map((manager) => (
+                          <option key={manager.id} value={manager.id}>
+                            {manager.staffId} — {manager.name} (
+                            {manager.position})
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <label
+                    className="block text-xs font-700 uppercase tracking-wider"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Date joined
+                    <input
+                      required
+                      type="date"
+                      value={invitedStaffForm.dateJoined}
+                      onChange={(event) =>
+                        setInvitedStaffForm((current) => ({
+                          ...current,
+
+                          dateJoined: event.target.value,
+                        }))
+                      }
+                      className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                      style={fieldStyle}
+                    />
+                  </label>
+                  <label
+                    className="block text-xs font-700 uppercase tracking-wider"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Pay arrangement
+                    <select
+                      value={invitedStaffForm.payType}
+                      onChange={(event) => {
+                        const payType = event.target.value as StaffPayType
+
+                        setInvitedStaffForm((current) => ({
+                          ...current,
+
+                          payType,
+
+                          ...(payType === "payroll"
+                            ? {
+                                baseSalary:
+                                  current.baseSalary === "0"
+                                    ? ""
+                                    : current.baseSalary,
+                              }
+                            : {
+                                baseSalary: "0",
+
+                                weeklyTransportAllowance: "0",
+
+                                transportAccountId: "",
+                              }),
+                        }))
+                      }}
+                      className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                      style={fieldStyle}
+                    >
+                      <option value="payroll">Payroll</option>
+                      <option value="project">Project based</option>
+                      <option value="no_payroll">No payroll</option>
+                    </select>
+                  </label>
+                  {invitedStaffForm.payType === "payroll" && (
+                    <>
+                      <label
+                        className="block text-xs font-700 uppercase tracking-wider"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        Basic salary per month
+                        <input
+                          required
+                          min="0.01"
+                          max="999999999999.99"
+                          step="0.01"
+                          type="number"
+                          value={invitedStaffForm.baseSalary}
+                          onChange={(event) =>
+                            setInvitedStaffForm((current) => ({
+                              ...current,
+                              baseSalary: event.target.value,
+                            }))
+                          }
+                          className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                          style={fieldStyle}
+                        />
+                      </label>
+                      <label
+                        className="block text-xs font-700 uppercase tracking-wider"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        Transport allowance per week
+                        <input
+                          min="0"
+                          max="999999999999.99"
+                          step="0.01"
+                          type="number"
+                          value={invitedStaffForm.weeklyTransportAllowance}
+                          onChange={(event) =>
+                            setInvitedStaffForm((current) => ({
+                              ...current,
+
+                              weeklyTransportAllowance: event.target.value,
+
+                              transportAccountId:
+                                Number(event.target.value) > 0
+                                  ? current.transportAccountId
+                                  : "",
+                            }))
+                          }
+                          className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                          style={fieldStyle}
+                        />
+                      </label>
+                      {Number(invitedStaffForm.weeklyTransportAllowance) > 0 &&
+                        (staffAccounts.length ? (
+                          <label
+                            className="block text-xs font-700 uppercase tracking-wider"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            Transport allowance funding account
+                            <select
+                              required
+                              value={invitedStaffForm.transportAccountId}
+                              onChange={(event) =>
+                                setInvitedStaffForm((current) => ({
+                                  ...current,
+                                  transportAccountId: event.target.value,
+                                }))
+                              }
+                              className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                              style={fieldStyle}
+                            >
+                              <option value="">Select funding account</option>
+                              {staffAccounts.map((account) => (
+                                <option key={account.id} value={account.id}>
+                                  {account.name} —{" "}
+                                  {account.account_type.replace(/_/g, " ")}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : (
+                          <p role="alert" className="text-sm text-red-500">
+                            Add an active company account before setting a
+                            transport allowance.
+                          </p>
+                        ))}
+                    </>
+                  )}
+                  {staffLoading && (
+                    <p
+                      className="text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Loading staff and funding accounts…
+                    </p>
+                  )}
+                </>
+              )}
 
               {userInviteMode === "default-password" && (
                 <label
@@ -2397,10 +3136,17 @@ export default function UsersRoles({
             <div className="mt-5 flex gap-3">
               <button
                 type="submit"
-                disabled={saving}
+                disabled={
+                  saving ||
+                  (userType === "staff" &&
+                    (staffLoading ||
+                      (Number(invitedStaffForm.weeklyTransportAllowance) > 0 &&
+                        staffAccounts.length === 0)))
+                }
                 className="flex-1 rounded py-2 text-sm font-600 disabled:opacity-50"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
                 }}
               >
@@ -2414,13 +3160,21 @@ export default function UsersRoles({
                 type="button"
                 onClick={() => {
                   setShowNewUser(false)
+
                   setError("")
+
                   setUserDefaultPassword("")
+
                   setUserInviteMode("email-link")
+
+                  setUserType("member")
+
+                  setInvitedStaffForm(emptyInvitedStaffForm)
                 }}
                 className="flex-1 rounded border py-2 text-sm"
                 style={{
                   borderColor: "var(--border)",
+
                   color: "var(--muted-foreground)",
                 }}
               >
@@ -2437,6 +3191,7 @@ export default function UsersRoles({
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
               setShowNewRole(false)
+
               setError("")
             }
           }}
@@ -2469,6 +3224,7 @@ export default function UsersRoles({
                 aria-label="Close"
                 onClick={() => {
                   setShowNewRole(false)
+
                   setError("")
                 }}
                 className="rounded p-1 text-xs"
@@ -2500,7 +3256,9 @@ export default function UsersRoles({
                   value={roleName}
                   onChange={(event) => {
                     const nextName = event.target.value
+
                     setRoleName(nextName)
+
                     setSelectedPermissions((current) =>
                       current.filter(
                         (permission) =>
@@ -2537,17 +3295,13 @@ export default function UsersRoles({
                 />
               </div>
               <RolePermissionsEditor
-                permissions={
-                  data.permissions.filter(
-                    (permission) =>
-                      (permission.code !== "agent_finance.view" ||
-                        isRecruitmentAgentRole(roleName)) &&
-                      (!isRecruitmentAgentRole(roleName) ||
-                        !isRecruitmentAgentRestrictedPermission(
-                          permission.code,
-                        )),
-                  )
-                }
+                permissions={data.permissions.filter(
+                  (permission) =>
+                    (permission.code !== "agent_finance.view" ||
+                      isRecruitmentAgentRole(roleName)) &&
+                    (!isRecruitmentAgentRole(roleName) ||
+                      !isRecruitmentAgentRestrictedPermission(permission.code)),
+                )}
                 selectedPermissions={selectedPermissions}
                 onChange={setSelectedPermissions}
               />
@@ -2563,6 +3317,7 @@ export default function UsersRoles({
                 className="flex-1 rounded py-2.5 text-sm font-600 disabled:opacity-50"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
                 }}
               >
@@ -2572,11 +3327,13 @@ export default function UsersRoles({
                 type="button"
                 onClick={() => {
                   setShowNewRole(false)
+
                   setError("")
                 }}
                 className="rounded border px-5 py-2.5 text-sm font-600"
                 style={{
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               >
@@ -2593,6 +3350,7 @@ export default function UsersRoles({
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) {
               setShowEditRole(false)
+
               setError("")
             }
           }}
@@ -2628,6 +3386,7 @@ export default function UsersRoles({
                 type="button"
                 onClick={() => {
                   setShowEditRole(false)
+
                   setError("")
                 }}
                 className="rounded p-1 text-xs"
@@ -2668,9 +3427,7 @@ export default function UsersRoles({
                   maxLength={100}
                   value={roleEditName}
                   onChange={(e) => setRoleEditName(e.target.value)}
-                  disabled={
-                    isPrimaryAdministratorRole(editingRole.name)
-                  }
+                  disabled={isPrimaryAdministratorRole(editingRole.name)}
                   className="mt-1 w-full rounded border px-3 py-2.5 text-sm outline-none disabled:opacity-50"
                   style={fieldStyle}
                   placeholder="e.g. Branch Supervisor"
@@ -2702,87 +3459,132 @@ export default function UsersRoles({
               >
                 Only the permissions you select below will be assigned.
               </p>
-              <section className="space-y-3 rounded border p-4" style={{ borderColor: "var(--border)" }}>
+              <section
+                className="space-y-3 rounded border p-4"
+                style={{ borderColor: "var(--border)" }}
+              >
                 <div>
-                  <h3 className="text-xs font-700 uppercase tracking-wider" style={{ color: "var(--foreground)" }}>
+                  <h3
+                    className="text-xs font-700 uppercase tracking-wider"
+                    style={{ color: "var(--foreground)" }}
+                  >
                     Access settings
                   </h3>
-                  <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
-                    These scope settings are enforced by the API and database policies.
+                  <p
+                    className="mt-1 text-xs"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    These scope settings are enforced by the API and database
+                    policies.
                   </p>
                 </div>
-                <label className="block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
+                <label
+                  className="block text-xs font-600"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
                   Candidate pipeline
                   <select
                     value={roleEditAccessSettings.candidate_scope}
                     disabled={isRecruitmentAgentRole(editingRole.name)}
-                    onChange={(event) => setRoleEditAccessSettings((current) => ({
-                      ...current,
-                      candidate_scope: event.target.value as RoleAccessSettings["candidate_scope"],
-                    }))}
+                    onChange={(event) =>
+                      setRoleEditAccessSettings((current) => ({
+                        ...current,
+
+                        candidate_scope: event.target
+                          .value as RoleAccessSettings["candidate_scope"],
+                      }))
+                    }
                     className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-70"
                     style={fieldStyle}
                   >
-                    <option value="company">All candidates in accessible branches</option>
-                    <option value="assigned">Candidates assigned to this user only</option>
+                    <option value="company">
+                      All candidates in accessible branches
+                    </option>
+                    <option value="assigned">
+                      Candidates assigned to this user only
+                    </option>
                   </select>
                   {isRecruitmentAgentRole(editingRole.name) && (
                     <span className="mt-1 block font-normal">
-                      Recruitment Agents can only see candidates assigned to them.
+                      Recruitment Agents can only see candidates assigned to
+                      them.
                     </span>
                   )}
                 </label>
-                <label className="block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
+                <label
+                  className="block text-xs font-600"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
                   Candidate inquiries
                   <select
                     value={roleEditAccessSettings.inquiry_scope}
-                    onChange={(event) => setRoleEditAccessSettings((current) => ({
-                      ...current,
-                      inquiry_scope: event.target.value as RoleAccessSettings["inquiry_scope"],
-                    }))}
+                    onChange={(event) =>
+                      setRoleEditAccessSettings((current) => ({
+                        ...current,
+
+                        inquiry_scope: event.target
+                          .value as RoleAccessSettings["inquiry_scope"],
+                      }))
+                    }
                     className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
                     style={fieldStyle}
                   >
-                    <option value="company">All inquiries in accessible branches</option>
-                    <option value="created">Inquiries created by this user only</option>
+                    <option value="company">
+                      All inquiries in accessible branches
+                    </option>
+                    <option value="created">
+                      Inquiries created by this user only
+                    </option>
                   </select>
                 </label>
                 {([
-                  ["candidate_registration", "Allow registering candidates from inquiries"],
-                  ["agent_visa_finance", "Allow agent-specific invoices and candidate receipts"],
+                  [
+                    "candidate_registration",
+                    "Allow registering candidates from inquiries",
+                  ],
+
+                  [
+                    "agent_visa_finance",
+                    "Allow agent-specific invoices and candidate receipts",
+                  ],
                 ] as const)
+
                   .filter(
                     ([key]) =>
                       key !== "agent_visa_finance" ||
                       isRecruitmentAgentRole(editingRole.name),
                   )
+
                   .map(([key, label]) => (
-                  <label key={key} className="flex items-start gap-2 text-xs" style={{ color: "var(--foreground)" }}>
-                    <input
-                      type="checkbox"
-                      checked={roleEditAccessSettings[key]}
-                      onChange={(event) => setRoleEditAccessSettings((current) => ({
-                        ...current,
-                        [key]: event.target.checked,
-                      }))}
-                      className="mt-0.5"
-                    />
-                    <span>{label}</span>
-                  </label>
+                    <label
+                      key={key}
+                      className="flex items-start gap-2 text-xs"
+                      style={{ color: "var(--foreground)" }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={roleEditAccessSettings[key]}
+                        onChange={(event) =>
+                          setRoleEditAccessSettings((current) => ({
+                            ...current,
+
+                            [key]: event.target.checked,
+                          }))
+                        }
+                        className="mt-0.5"
+                      />
+                      <span>{label}</span>
+                    </label>
                   ))}
               </section>
               <RolePermissionsEditor
-                permissions={
-                  data.permissions.filter(
-                    (permission) =>
-                      (permission.code !== "agent_finance.view" ||
-                        isRecruitmentAgentRole(editingRole.name)) &&
-                      (!isRecruitmentAgentRole(editingRole.name) ||
-                        !isRecruitmentAgentRestrictedPermission(
-                          permission.code,
-                        )),
-                  )
-                }
+                permissions={data.permissions.filter(
+                  (permission) =>
+                    (permission.code !== "agent_finance.view" ||
+                      isRecruitmentAgentRole(editingRole.name)) &&
+                    (!isRecruitmentAgentRole(editingRole.name) ||
+                      !isRecruitmentAgentRestrictedPermission(permission.code)),
+                )}
                 selectedPermissions={roleEditPermissions}
                 onChange={setRoleEditPermissions}
               />
@@ -2799,6 +3601,7 @@ export default function UsersRoles({
                 className="flex-1 rounded py-2.5 text-sm font-600 disabled:opacity-50"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
                 }}
               >
@@ -2808,11 +3611,13 @@ export default function UsersRoles({
                 type="button"
                 onClick={() => {
                   setShowEditRole(false)
+
                   setError("")
                 }}
                 className="rounded border px-5 py-2.5 text-sm font-600"
                 style={{
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               >
@@ -2860,7 +3665,9 @@ export default function UsersRoles({
                   className="rounded border px-3 py-2 text-sm"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 >
@@ -2898,6 +3705,7 @@ export default function UsersRoles({
                 className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
                 style={{
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               >
@@ -2909,7 +3717,9 @@ export default function UsersRoles({
                 className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
+
                   borderColor: "var(--primary)",
                 }}
               >
@@ -2968,6 +3778,7 @@ export default function UsersRoles({
                   onChange={(event) =>
                     setStaffForm((current) => ({
                       ...current,
+
                       name: event.target.value,
                     }))
                   }
@@ -2988,6 +3799,7 @@ export default function UsersRoles({
                   onChange={(event) =>
                     setStaffForm((current) => ({
                       ...current,
+
                       position: event.target.value,
                     }))
                   }
@@ -3000,6 +3812,75 @@ export default function UsersRoles({
                 className="block text-xs font-700 uppercase tracking-wider"
                 style={{ color: "var(--muted-foreground)" }}
               >
+                Line manager
+                <select
+                  value={staffForm.lineManagerStaffId}
+                  onChange={(event) =>
+                    setStaffForm((current) => ({
+                      ...current,
+
+                      lineManagerStaffId: event.target.value,
+                    }))
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none"
+                  style={fieldStyle}
+                >
+                  <option value="">No line manager</option>
+                  {staffMembers
+
+                    .filter(
+                      (manager) =>
+                        manager.id !== editingStaffId &&
+                        manager.status === "Active",
+                    )
+
+                    .map((manager) => (
+                      <option key={manager.id} value={manager.id}>
+                        {manager.staffId} — {manager.name} ({manager.position})
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {staffBranchSelectionRequired && (
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Working branch
+                  <select
+                    required
+                    value={staffForm.branchId}
+                    onChange={(event) =>
+                      setStaffForm((current) => ({
+                        ...current,
+
+                        branchId: event.target.value,
+
+                        lineManagerStaffId: "",
+                      }))
+                    }
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none"
+                    style={fieldStyle}
+                  >
+                    <option value="">Select a branch</option>
+                    {staffBranches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name}
+                        {branch.code ? ` (${branch.code})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {staffBranches.length === 0 && (
+                    <span className="mt-1 block normal-case tracking-normal">
+                      Create an active branch before adding staff.
+                    </span>
+                  )}
+                </label>
+              )}
+              <label
+                className="block text-xs font-700 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Date joined
                 <input
                   required
@@ -3008,6 +3889,7 @@ export default function UsersRoles({
                   onChange={(event) =>
                     setStaffForm((current) => ({
                       ...current,
+
                       dateJoined: event.target.value,
                     }))
                   }
@@ -3024,9 +3906,12 @@ export default function UsersRoles({
                   value={staffForm.payType}
                   onChange={(event) => {
                     const payType = event.target.value as StaffPayType
+
                     setStaffForm((current) => ({
                       ...current,
+
                       payType,
+
                       ...(payType === "payroll"
                         ? {
                             baseSalary:
@@ -3036,7 +3921,9 @@ export default function UsersRoles({
                           }
                         : {
                             baseSalary: "0",
+
                             weeklyTransportAllowance: "0",
+
                             transportAccountId: "",
                           }),
                     }))
@@ -3055,7 +3942,7 @@ export default function UsersRoles({
                     className="block text-xs font-700 uppercase tracking-wider"
                     style={{ color: "var(--muted-foreground)" }}
                   >
-                    Basic salary (UGX/month)
+                    Basic salary per month
                     <input
                       required
                       min="0.01"
@@ -3066,6 +3953,7 @@ export default function UsersRoles({
                       onChange={(event) =>
                         setStaffForm((current) => ({
                           ...current,
+
                           baseSalary: event.target.value,
                         }))
                       }
@@ -3077,7 +3965,7 @@ export default function UsersRoles({
                     className="block text-xs font-700 uppercase tracking-wider"
                     style={{ color: "var(--muted-foreground)" }}
                   >
-                    Transport allowance (UGX/week)
+                    Transport allowance per week
                     <input
                       min="0"
                       max="999999999999.99"
@@ -3087,7 +3975,9 @@ export default function UsersRoles({
                       onChange={(event) =>
                         setStaffForm((current) => ({
                           ...current,
+
                           weeklyTransportAllowance: event.target.value,
+
                           transportAccountId:
                             Number(event.target.value) > 0
                               ? current.transportAccountId
@@ -3108,10 +3998,13 @@ export default function UsersRoles({
                         {(
                           (Number(staffForm.weeklyTransportAllowance) * 52) /
                             12 || 0
-                        ).toLocaleString("en-UG", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        )
+
+                          .toLocaleString("en-UG", {
+                            minimumFractionDigits: 2,
+
+                            maximumFractionDigits: 2,
+                          })}
                       </p>
                       <label
                         className="block text-xs font-700 uppercase tracking-wider md:col-span-2"
@@ -3125,16 +4018,21 @@ export default function UsersRoles({
                           onChange={(transportAccountId) =>
                             setStaffForm((current) => ({
                               ...current,
+
                               transportAccountId,
                             }))
                           }
                           options={staffAccounts.map((account) => ({
                             value: account.id,
+
                             label: account.name,
+
                             description: account.account_type.replace(
                               /_/g,
+
                               " ",
                             ),
+
                             searchText: account.account_number,
                           }))}
                           placeholder="Select the account to fund this benefit"
@@ -3157,6 +4055,7 @@ export default function UsersRoles({
                     setStaffForm((current) => ({ ...current, linkedUserId }))
                   }
                   options={data.users
+
                     .filter(
                       (user) =>
                         user.status === "active" &&
@@ -3165,10 +4064,14 @@ export default function UsersRoles({
                         ) ||
                           user.id === staffForm.linkedUserId),
                     )
+
                     .map((user) => ({
                       value: user.id,
+
                       label: user.name,
+
                       description: user.email,
+
                       searchText: `${user.email} ${user.role}`,
                     }))}
                   placeholder="Type a name or email"
@@ -3185,6 +4088,7 @@ export default function UsersRoles({
                   onChange={(event) =>
                     setStaffForm((current) => ({
                       ...current,
+
                       status: event.target.value as StaffRecord["status"],
                     }))
                   }
@@ -3201,10 +4105,16 @@ export default function UsersRoles({
             <div className="mt-6 flex gap-3">
               <button
                 type="submit"
-                disabled={saving}
+                disabled={
+                  saving ||
+                  (!editingStaffId &&
+                    staffBranchSelectionRequired &&
+                    staffBranches.length === 0)
+                }
                 className="flex-1 rounded py-2.5 text-sm font-600 disabled:opacity-50"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
                 }}
               >
@@ -3220,6 +4130,7 @@ export default function UsersRoles({
                 className="flex-1 rounded border py-2.5 text-sm"
                 style={{
                   borderColor: "var(--border)",
+
                   color: "var(--muted-foreground)",
                 }}
               >
@@ -3235,59 +4146,100 @@ export default function UsersRoles({
 
 const MODULES = [
   "Candidates",
+
   "Candidate Profiles",
+
   "Attachments",
+
   "Finance",
+
   "Income",
+
   "Expenses",
+
   "Payments",
+
   "Paychecks",
+
   "Passport Custody",
+
   "AI Tools",
+
   "Reports",
+
   "Users",
+
   "Settings",
 ] as const
+
 const PERMS = ["View", "Create", "Edit", "Delete", "Approve", "Export"] as const
 
 const roles = [
   {
     id: 1,
+
     name: "Primary Administrator",
+
     color: "#f59e0b",
+
     users: 1,
+
     custom: false,
   },
+
   {
     id: 2,
+
     name: "Recruitment Manager",
+
     color: "#6366f1",
+
     users: 2,
+
     custom: false,
   },
+
   {
     id: 3,
+
     name: "Recruitment Agent",
+
     color: "#3b82f6",
+
     users: 4,
+
     custom: false,
   },
+
   { id: 4, name: "Finance Manager", color: "#10b981", users: 1, custom: false },
+
   { id: 5, name: "Finance Officer", color: "#8b5cf6", users: 2, custom: false },
+
   {
     id: 6,
+
     name: "Document Officer",
+
     color: "#14b8a6",
+
     users: 1,
+
     custom: false,
   },
+
   { id: 7, name: "Medical Officer", color: "#ec4899", users: 1, custom: false },
+
   { id: 8, name: "Viewer", color: "#6b7280", users: 3, custom: false },
+
   {
     id: 9,
+
     name: "Custom: Branch Lead",
+
     color: "#f97316",
+
     users: 2,
+
     custom: true,
   },
 ]
@@ -3295,65 +4247,113 @@ const roles = [
 const users = [
   {
     id: 1,
+
     name: "Aisha Khan",
+
     email: "aisha@kilaxrecruit.com",
+
     role: "Primary Administrator",
+
     branch: "HQ",
+
     status: "Active",
+
     lastLogin: "Aug 26, 2026",
   },
+
   {
     id: 2,
+
     name: "Director Vicent",
+
     email: "vicent@kilaxrecruit.com",
+
     role: "Recruitment Manager",
+
     branch: "Kampala",
+
     status: "Active",
+
     lastLogin: "Aug 26, 2026",
   },
+
   {
     id: 3,
+
     name: "Asiimwe David",
+
     email: "david@kilaxrecruit.com",
+
     role: "Recruitment Agent",
+
     branch: "Masaka",
+
     status: "Active",
+
     lastLogin: "Aug 25, 2026",
   },
+
   {
     id: 4,
+
     name: "Fatuma Nakirya",
+
     email: "fatuma@kilaxrecruit.com",
+
     role: "Recruitment Agent",
+
     branch: "Mbarara",
+
     status: "Active",
+
     lastLogin: "Aug 24, 2026",
   },
+
   {
     id: 5,
+
     name: "Grace Acen",
+
     email: "grace@kilaxrecruit.com",
+
     role: "Finance Officer",
+
     branch: "HQ",
+
     status: "Active",
+
     lastLogin: "Aug 26, 2026",
   },
+
   {
     id: 6,
+
     name: "Peter Mukasa",
+
     email: "peter@kilaxrecruit.com",
+
     role: "Recruitment Agent",
+
     branch: "Gulu",
+
     status: "Inactive",
+
     lastLogin: "Aug 10, 2026",
   },
+
   {
     id: 7,
+
     name: "Sarah Nakigozi",
+
     email: "sarah@kilaxrecruit.com",
+
     role: "Document Officer",
+
     branch: "HQ",
+
     status: "Active",
+
     lastLogin: "Aug 23, 2026",
   },
 ]
@@ -3362,32 +4362,46 @@ const defaultPerms: Record<string, Record<string, boolean>> =
   Object.fromEntries(
     MODULES.map((m) => [
       m,
+
       Object.fromEntries(PERMS.map((p) => [p, p === "View"])),
     ]),
   )
 
 const roleColor: Record<string, string> = {
   "Primary Administrator": "#f59e0b",
+
   "Recruitment Manager": "#6366f1",
+
   "Recruitment Agent": "#3b82f6",
+
   "Finance Manager": "#10b981",
+
   "Finance Officer": "#8b5cf6",
+
   "Document Officer": "#14b8a6",
+
   "Medical Officer": "#ec4899",
+
   Viewer: "#6b7280",
+
   "Custom: Branch Lead": "#f97316",
 }
 
 function LegacyUsersRoles() {
   const [tab, setTab] = useState<"users" | "roles">("users")
+
   const [selectedRole, setSelectedRole] = useState<typeof roles[0] | null>(null)
+
   const [perms, setPerms] = useState(defaultPerms)
+
   const [showNewUser, setShowNewUser] = useState(false)
+
   const [showNewRole, setShowNewRole] = useState(false)
 
   const togglePerm = (module: string, perm: string) => {
     setPerms((prev) => ({
       ...prev,
+
       [module]: { ...prev[module], [perm]: !prev[module]?.[perm] },
     }))
   }
@@ -3419,6 +4433,7 @@ function LegacyUsersRoles() {
               className="px-4 py-1.5 text-sm font-600 rounded"
               style={{
                 background: "var(--primary)",
+
                 color: "var(--primary-foreground)",
               }}
             >
@@ -3431,6 +4446,7 @@ function LegacyUsersRoles() {
               className="px-4 py-1.5 text-sm font-600 rounded"
               style={{
                 background: "var(--primary)",
+
                 color: "var(--primary-foreground)",
               }}
             >
@@ -3451,6 +4467,7 @@ function LegacyUsersRoles() {
             className="px-5 py-3 text-sm font-600 capitalize"
             style={{
               color: tab === t ? "var(--primary)" : "var(--muted-foreground)",
+
               borderBottom:
                 tab === t
                   ? "2px solid var(--primary)"
@@ -3468,123 +4485,141 @@ function LegacyUsersRoles() {
             className="rounded border"
             style={{ background: "var(--card)", borderColor: "var(--border)" }}
           >
-            <div className="app-table-scroll"><table className="w-full text-sm">
-              <thead>
-                <tr
-                  className="border-b"
-                  style={{ borderColor: "var(--border)" }}
-                >
-                  {[
-                    "Name",
-                    "Email",
-                    "Role",
-                    "Branch",
-                    "Status",
-                    "Last Login",
-                    "",
-                  ].map((h) => (
-                    <th
-                      key={h}
-                      className="text-left px-4 py-3 text-xs font-700 uppercase tracking-wide"
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
+            <div className="app-table-scroll">
+              <table className="w-full text-sm">
+                <thead>
                   <tr
-                    key={u.id}
                     className="border-b"
                     style={{ borderColor: "var(--border)" }}
                   >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-700"
+                    {[
+                      "Name",
+
+                      "Email",
+
+                      "Role",
+
+                      "Branch",
+
+                      "Status",
+
+                      "Last Login",
+
+                      "",
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left px-4 py-3 text-xs font-700 uppercase tracking-wide"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u) => (
+                    <tr
+                      key={u.id}
+                      className="border-b"
+                      style={{ borderColor: "var(--border)" }}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-700"
+                            style={{
+                              background:
+                                (roleColor[u.role] || "#6b7280") + "22",
+
+                              color: roleColor[u.role] || "#6b7280",
+                            }}
+                          >
+                            {u.name
+
+                              .split(" ")
+
+                              .map((n) => n[0])
+
+                              .join("")
+
+                              .slice(0, 2)}
+                          </div>
+                          <span
+                            className="font-600"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            {u.name}
+                          </span>
+                        </div>
+                      </td>
+                      <td
+                        className="px-4 py-3 text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {u.email}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className="text-xs font-600 px-2 py-0.5 rounded"
                           style={{
-                            background: (roleColor[u.role] || "#6b7280") + "22",
                             color: roleColor[u.role] || "#6b7280",
+
+                            background: (roleColor[u.role] || "#6b7280") + "20",
                           }}
                         >
-                          {u.name
-                            .split(" ")
-                            .map((n) => n[0])
-                            .join("")
-                            .slice(0, 2)}
-                        </div>
-                        <span
-                          className="font-600"
-                          style={{ color: "var(--foreground)" }}
-                        >
-                          {u.name}
+                          {u.role}
                         </span>
-                      </div>
-                    </td>
-                    <td
-                      className="px-4 py-3 text-xs"
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      {u.email}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className="text-xs font-600 px-2 py-0.5 rounded"
-                        style={{
-                          color: roleColor[u.role] || "#6b7280",
-                          background: (roleColor[u.role] || "#6b7280") + "20",
-                        }}
+                      </td>
+                      <td
+                        className="px-4 py-3 text-xs"
+                        style={{ color: "var(--foreground)" }}
                       >
-                        {u.role}
-                      </span>
-                    </td>
-                    <td
-                      className="px-4 py-3 text-xs"
-                      style={{ color: "var(--foreground)" }}
-                    >
-                      {u.branch}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className="mono text-xs font-600 px-1.5 py-0.5 rounded"
-                        style={{
-                          color: u.status === "Active" ? "#10b981" : "#ef4444",
-                          background:
-                            u.status === "Active" ? "#10b98120" : "#ef444420",
-                        }}
+                        {u.branch}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className="mono text-xs font-600 px-1.5 py-0.5 rounded"
+                          style={{
+                            color:
+                              u.status === "Active" ? "#10b981" : "#ef4444",
+
+                            background:
+                              u.status === "Active" ? "#10b98120" : "#ef444420",
+                          }}
+                        >
+                          {u.status}
+                        </span>
+                      </td>
+                      <td
+                        className="px-4 py-3 mono text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
                       >
-                        {u.status}
-                      </span>
-                    </td>
-                    <td
-                      className="px-4 py-3 mono text-xs"
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      {u.lastLogin}
-                    </td>
-                    <td className="px-4 py-3 flex gap-2">
-                      <button
-                        className="text-xs px-2 py-1 rounded border"
-                        style={{
-                          borderColor: "var(--border)",
-                          color: "var(--muted-foreground)",
-                        }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="text-xs px-2 py-1 rounded border"
-                        style={{ borderColor: "#ef444430", color: "#ef4444" }}
-                      >
-                        {u.status === "Active" ? "Deactivate" : "Activate"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
+                        {u.lastLogin}
+                      </td>
+                      <td className="px-4 py-3 flex gap-2">
+                        <button
+                          className="text-xs px-2 py-1 rounded border"
+                          style={{
+                            borderColor: "var(--border)",
+
+                            color: "var(--muted-foreground)",
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="text-xs px-2 py-1 rounded border"
+                          style={{ borderColor: "#ef444430", color: "#ef4444" }}
+                        >
+                          {u.status === "Active" ? "Deactivate" : "Activate"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -3608,6 +4643,7 @@ function LegacyUsersRoles() {
                       selectedRole?.id === r.id
                         ? "var(--secondary)"
                         : "var(--card)",
+
                     borderColor:
                       selectedRole?.id === r.id ? r.color : "var(--border)",
                   }}
@@ -3628,6 +4664,7 @@ function LegacyUsersRoles() {
                         className="mono text-xs px-1 py-0.5 rounded"
                         style={{
                           background: "#f97316" + "20",
+
                           color: "#f97316",
                         }}
                       >
@@ -3651,6 +4688,7 @@ function LegacyUsersRoles() {
                 className="rounded border overflow-hidden"
                 style={{
                   background: "var(--card)",
+
                   borderColor: "var(--border)",
                 }}
               >
@@ -3680,6 +4718,7 @@ function LegacyUsersRoles() {
                     className="text-xs px-2 py-1 rounded border"
                     style={{
                       borderColor: "var(--border)",
+
                       color: "var(--muted-foreground)",
                     }}
                   >
@@ -3687,60 +4726,64 @@ function LegacyUsersRoles() {
                   </button>
                 </div>
                 <div className="overflow-auto">
-                  <div className="app-table-scroll"><table className="w-full text-xs">
-                    <thead>
-                      <tr
-                        className="border-b"
-                        style={{ borderColor: "var(--border)" }}
-                      >
-                        <th
-                          className="text-left px-4 py-2.5 font-700 uppercase tracking-wider w-48"
-                          style={{ color: "var(--muted-foreground)" }}
-                        >
-                          Module
-                        </th>
-                        {PERMS.map((p) => (
-                          <th
-                            key={p}
-                            className="px-3 py-2.5 font-700 uppercase tracking-wider text-center"
-                            style={{ color: "var(--muted-foreground)" }}
-                          >
-                            {p}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {MODULES.map((m) => (
+                  <div className="app-table-scroll">
+                    <table className="w-full text-xs">
+                      <thead>
                         <tr
-                          key={m}
                           className="border-b"
                           style={{ borderColor: "var(--border)" }}
                         >
-                          <td
-                            className="px-4 py-2.5 font-600"
-                            style={{ color: "var(--foreground)" }}
+                          <th
+                            className="text-left px-4 py-2.5 font-700 uppercase tracking-wider w-48"
+                            style={{ color: "var(--muted-foreground)" }}
                           >
-                            {m}
-                          </td>
+                            Module
+                          </th>
                           {PERMS.map((p) => (
-                            <td key={p} className="px-3 py-2.5 text-center">
-                              <input
-                                type="checkbox"
-                                checked={!!perms[m]?.[p]}
-                                onChange={() => togglePerm(m, p)}
-                                style={{
-                                  accentColor: selectedRole.color,
-                                  width: "14px",
-                                  height: "14px",
-                                }}
-                              />
-                            </td>
+                            <th
+                              key={p}
+                              className="px-3 py-2.5 font-700 uppercase tracking-wider text-center"
+                              style={{ color: "var(--muted-foreground)" }}
+                            >
+                              {p}
+                            </th>
                           ))}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table></div>
+                      </thead>
+                      <tbody>
+                        {MODULES.map((m) => (
+                          <tr
+                            key={m}
+                            className="border-b"
+                            style={{ borderColor: "var(--border)" }}
+                          >
+                            <td
+                              className="px-4 py-2.5 font-600"
+                              style={{ color: "var(--foreground)" }}
+                            >
+                              {m}
+                            </td>
+                            {PERMS.map((p) => (
+                              <td key={p} className="px-3 py-2.5 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={!!perms[m]?.[p]}
+                                  onChange={() => togglePerm(m, p)}
+                                  style={{
+                                    accentColor: selectedRole.color,
+
+                                    width: "14px",
+
+                                    height: "14px",
+                                  }}
+                                />
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -3748,7 +4791,9 @@ function LegacyUsersRoles() {
                 className="rounded border flex items-center justify-center"
                 style={{
                   background: "var(--card)",
+
                   borderColor: "var(--border)",
+
                   minHeight: "300px",
                 }}
               >
@@ -3783,7 +4828,9 @@ function LegacyUsersRoles() {
             <div className="space-y-3">
               {[
                 { label: "Full Name", ph: "User full name" },
+
                 { label: "Email", ph: "user@yourcompany.com" },
+
                 { label: "Password", ph: "Temporary password" },
               ].map(({ label, ph }) => (
                 <div key={label}>
@@ -3799,7 +4846,9 @@ function LegacyUsersRoles() {
                     className="w-full px-3 py-2 text-sm rounded border outline-none"
                     style={{
                       background: "var(--secondary)",
+
                       borderColor: "var(--border)",
+
                       color: "var(--foreground)",
                     }}
                   />
@@ -3816,7 +4865,9 @@ function LegacyUsersRoles() {
                   className="w-full px-3 py-2 text-sm rounded border outline-none"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 >
@@ -3836,7 +4887,9 @@ function LegacyUsersRoles() {
                   className="w-full px-3 py-2 text-sm rounded border outline-none"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 >
@@ -3851,6 +4904,7 @@ function LegacyUsersRoles() {
                 className="flex-1 py-2 text-sm font-600 rounded"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
                 }}
               >
@@ -3861,6 +4915,7 @@ function LegacyUsersRoles() {
                 className="flex-1 py-2 text-sm rounded border"
                 style={{
                   borderColor: "var(--border)",
+
                   color: "var(--muted-foreground)",
                 }}
               >
@@ -3901,7 +4956,9 @@ function LegacyUsersRoles() {
                   className="w-full px-3 py-2 text-sm rounded border outline-none"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -3917,7 +4974,9 @@ function LegacyUsersRoles() {
                   className="w-full px-3 py-2 text-sm rounded border outline-none"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 >
@@ -3933,6 +4992,7 @@ function LegacyUsersRoles() {
                 className="flex-1 py-2 text-sm font-600 rounded"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
                 }}
               >
@@ -3943,6 +5003,7 @@ function LegacyUsersRoles() {
                 className="flex-1 py-2 text-sm rounded border"
                 style={{
                   borderColor: "var(--border)",
+
                   color: "var(--muted-foreground)",
                 }}
               >

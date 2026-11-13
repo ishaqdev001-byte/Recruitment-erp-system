@@ -141,6 +141,17 @@ type StaffProfile = {
   criminalCaseStatus: string
 }
 
+type EmploymentSummary = {
+  position: string
+  dateJoined: string
+  branchName: string
+  lineManagerName: string
+  payType: string
+  baseSalary: number
+  weeklyTransportAllowance: number
+  monthlyTransportAllowance: number
+}
+
 type PersonalDocument = {
   id: string
   document_type: string
@@ -163,13 +174,7 @@ type MyPayslip = {
   payslipUrl: string
 }
 
-type ProfileSection =
-  | "personal"
-  | "identification"
-  | "academicQualifications"
-  | "professionalQualifications"
-  | "workExperience"
-  | "languages"
+type ProfileSection = "personal" | "identification" | "academicQualifications" | "professionalQualifications" | "workExperience" | "languages"
 
 const emptyQualification = (): Qualification => ({
   qualification: "",
@@ -238,12 +243,14 @@ export default function HumanResources({
   forcePersonalDetailsUpdate = false,
   onPersonalDetailsComplete,
 }: {
-  companyId: string;
-  isOwner: boolean;
-  forcePersonalDetailsUpdate?: boolean;
-  onPersonalDetailsComplete?: (complete: boolean) => void;
+  companyId: string
+  isOwner: boolean
+  forcePersonalDetailsUpdate?: boolean
+  onPersonalDetailsComplete?: (complete: boolean) => void
 }) {
   const [profile, setProfile] = useState<StaffProfile>(emptyProfile)
+  const [employmentSummary, setEmploymentSummary] =
+    useState<EmploymentSummary | null>(null)
 
   const [documents, setDocuments] = useState<PersonalDocument[]>([])
 
@@ -265,8 +272,9 @@ export default function HumanResources({
 
   const [saving, setSaving] = useState(false)
   const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set())
-  const [editingSection, setEditingSection] =
-    useState<ProfileSection | null>("personal")
+  const [editingSection, setEditingSection] = useState<ProfileSection | null>(
+    "personal",
+  )
 
   const [uploading, setUploading] = useState(false)
 
@@ -321,7 +329,7 @@ export default function HumanResources({
           const response = await fetch(
             `/api/workspace/staff/hr-profiles?companyId=${encodeURIComponent(companyId)}`,
             {
-            cache: "no-store",
+              cache: "no-store",
             },
           )
 
@@ -388,6 +396,7 @@ export default function HumanResources({
 
         const result = (await response.json()) as {
           profile?: StaffProfile
+          employmentSummary?: EmploymentSummary
           personalDetailsComplete?: boolean
           error?: string
         }
@@ -414,6 +423,7 @@ export default function HumanResources({
         }
 
         setProfile(normalized)
+        setEmploymentSummary(result.employmentSummary ?? null)
         setEditingSection(
           result.personalDetailsComplete && !forcePersonalDetailsUpdate
             ? null
@@ -570,15 +580,20 @@ export default function HumanResources({
             incompleteFields.push(`${section}-${index}-qualification`)
           if (!item.institution.trim())
             incompleteFields.push(`${section}-${index}-institution`)
-          if (!item.year)
-            incompleteFields.push(`${section}-${index}-year`)
+          if (!item.year) incompleteFields.push(`${section}-${index}-year`)
         }
       })
     } else if (section === "workExperience") {
       profile.workExperience.forEach((item, index) => {
         if (
-          [item.employer, item.position, item.location, item.startDate, item.endDate, item.responsibilities]
-            .some((value) => value.trim())
+          [
+            item.employer,
+            item.position,
+            item.location,
+            item.startDate,
+            item.endDate,
+            item.responsibilities,
+          ].some((value) => value.trim())
         ) {
           if (!item.employer.trim())
             incompleteFields.push(`workExperience-${index}-employer`)
@@ -665,9 +680,7 @@ export default function HumanResources({
       if (result.profile) setProfile(result.profile)
       setEditingSection(null)
       if (section === "personal") {
-        onPersonalDetailsComplete?.(
-          Boolean(result.personalDetailsComplete),
-        )
+        onPersonalDetailsComplete?.(Boolean(result.personalDetailsComplete))
       }
 
       setNotice("Your changes have been saved.")
@@ -778,14 +791,14 @@ export default function HumanResources({
       : {}),
   })
   const personalDetailsComplete = Boolean(
-    profile.name.trim()
-    && profile.phone.trim()
-    && profile.dateOfBirth
-    && profile.sex
-    && profile.localAddress.trim()
-    && profile.nextOfKin.trim()
-    && profile.nextOfKinPhone.trim()
-    && profile.emergencyContactAddress.trim()
+    profile.name.trim() &&
+      profile.phone.trim() &&
+      profile.dateOfBirth &&
+      profile.sex &&
+      profile.localAddress.trim() &&
+      profile.nextOfKin.trim() &&
+      profile.nextOfKinPhone.trim() &&
+      profile.emergencyContactAddress.trim(),
   )
 
   if (isOwner) {
@@ -914,75 +927,77 @@ export default function HumanResources({
               className="overflow-x-auto rounded border"
               style={{ borderColor: "var(--border)" }}
             >
-              <div className="app-table-scroll"><table className="w-full min-w-[760px] border-collapse text-left text-sm">
-                <thead
-                  style={{
-                    background: "var(--secondary)",
-                    color: "var(--muted-foreground)",
-                  }}
-                >
-                  <tr>
-                    {[
-                      "Staff ID",
-                      "Full name",
-                      "Branch",
-                      "Date joined",
-                      "Position",
-                      "Action",
-                    ].map((heading) => (
-                      <th
-                        key={heading}
-                        className="px-4 py-3 text-xs font-700 uppercase tracking-wide"
-                      >
-                        {heading}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {hrProfiles.map((staff) => (
-                    <tr
-                      key={staff.id}
-                      className="border-t"
-                      style={{
-                        borderColor: "var(--border)",
-                        color: "var(--foreground)",
-                      }}
-                    >
-                      <td className="px-4 py-3 font-600">{staff.staffId}</td>
-                      <td className="px-4 py-3">{staff.name}</td>
-                      <td className="px-4 py-3">{staff.branchName}</td>
-                      <td className="px-4 py-3">{staff.dateJoined || "—"}</td>
-                      <td className="px-4 py-3">{staff.position}</td>
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          disabled={detailLoading}
-                          onClick={() => void viewHrProfile(staff.id)}
-                          className="rounded border px-3 py-1.5 text-xs font-600 disabled:opacity-50"
-                          style={{
-                            borderColor: "var(--border)",
-                            color: "var(--primary)",
-                          }}
-                        >
-                          {detailLoading ? "Loading…" : "View"}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {!hrProfiles.length && (
+              <div className="app-table-scroll">
+                <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+                  <thead
+                    style={{
+                      background: "var(--secondary)",
+                      color: "var(--muted-foreground)",
+                    }}
+                  >
                     <tr>
-                      <td
-                        colSpan={6}
-                        className="px-4 py-10 text-center"
-                        style={{ color: "var(--muted-foreground)" }}
-                      >
-                        No staff profiles are available yet.
-                      </td>
+                      {[
+                        "Staff ID",
+                        "Full name",
+                        "Branch",
+                        "Date joined",
+                        "Position",
+                        "Action",
+                      ].map((heading) => (
+                        <th
+                          key={heading}
+                          className="px-4 py-3 text-xs font-700 uppercase tracking-wide"
+                        >
+                          {heading}
+                        </th>
+                      ))}
                     </tr>
-                  )}
-                </tbody>
-              </table></div>
+                  </thead>
+                  <tbody>
+                    {hrProfiles.map((staff) => (
+                      <tr
+                        key={staff.id}
+                        className="border-t"
+                        style={{
+                          borderColor: "var(--border)",
+                          color: "var(--foreground)",
+                        }}
+                      >
+                        <td className="px-4 py-3 font-600">{staff.staffId}</td>
+                        <td className="px-4 py-3">{staff.name}</td>
+                        <td className="px-4 py-3">{staff.branchName}</td>
+                        <td className="px-4 py-3">{staff.dateJoined || "—"}</td>
+                        <td className="px-4 py-3">{staff.position}</td>
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            disabled={detailLoading}
+                            onClick={() => void viewHrProfile(staff.id)}
+                            className="rounded border px-3 py-1.5 text-xs font-600 disabled:opacity-50"
+                            style={{
+                              borderColor: "var(--border)",
+                              color: "var(--primary)",
+                            }}
+                          >
+                            {detailLoading ? "Loading…" : "View"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!hrProfiles.length && (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="px-4 py-10 text-center"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          No staff profiles are available yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -1082,31 +1097,33 @@ export default function HumanResources({
                       className="overflow-x-auto rounded border"
                       style={{ borderColor: "var(--border)" }}
                     >
-                      <div className="app-table-scroll"><table className="w-full text-left text-sm">
-                        <thead>
-                          <tr style={{ color: "var(--muted-foreground)" }}>
-                            <th className="p-2">Qualification</th>
-                            <th className="p-2">Institution</th>
-                            <th className="p-2">Year</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedHrProfile[field].map((item, index) => (
-                            <tr
-                              key={`${field}-${index}`}
-                              className="border-t"
-                              style={{
-                                borderColor: "var(--border)",
-                                color: "var(--foreground)",
-                              }}
-                            >
-                              <td className="p-2">{item.qualification}</td>
-                              <td className="p-2">{item.institution}</td>
-                              <td className="p-2">{item.year}</td>
+                      <div className="app-table-scroll">
+                        <table className="w-full text-left text-sm">
+                          <thead>
+                            <tr style={{ color: "var(--muted-foreground)" }}>
+                              <th className="p-2">Qualification</th>
+                              <th className="p-2">Institution</th>
+                              <th className="p-2">Year</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table></div>
+                          </thead>
+                          <tbody>
+                            {selectedHrProfile[field].map((item, index) => (
+                              <tr
+                                key={`${field}-${index}`}
+                                className="border-t"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "var(--foreground)",
+                                }}
+                              >
+                                <td className="p-2">{item.qualification}</td>
+                                <td className="p-2">{item.institution}</td>
+                                <td className="p-2">{item.year}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </section>
@@ -1233,21 +1250,23 @@ export default function HumanResources({
           style={{ color: "var(--muted-foreground)" }}
         >
           {personalDetailsComplete
-                ? forcePersonalDetailsUpdate
-                  ? "Update your personal details before continuing to the workspace."
-                  : "Your employee record"
-                : "Complete your personal details to unlock the rest of the workspace."}
-            </p>
+            ? forcePersonalDetailsUpdate
+              ? "Update your personal details before continuing to the workspace."
+              : "Your employee record"
+            : "Complete your personal details to unlock the rest of the workspace."}
+        </p>
+      </div>
+      <div className="mx-auto max-w-5xl space-y-4 p-6">
+        {forcePersonalDetailsUpdate && (
+          <div
+            role="alert"
+            className="rounded border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+          >
+            You reported that your contact or address information has changed.
+            Update and save your personal details before continuing to use the
+            app.
           </div>
-          <div className="mx-auto max-w-5xl space-y-4 p-6">
-            {forcePersonalDetailsUpdate && (
-              <div
-                role="alert"
-                className="rounded border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
-              >
-                You reported that your contact or address information has changed. Update and save your personal details before continuing to use the app.
-              </div>
-            )}
+        )}
         {error && (
           <div
             role="alert"
@@ -1273,6 +1292,76 @@ export default function HumanResources({
           </p>
         ) : !profile.id ? null : (
           <>
+            <section
+              className="rounded border p-4 sm:p-5"
+              style={{
+                background: "var(--card)",
+                borderColor: "var(--border)",
+              }}
+              aria-labelledby="employment-details-title"
+            >
+              <h2
+                id="employment-details-title"
+                className="mb-4 text-sm font-700"
+                style={{ color: "var(--foreground)" }}
+              >
+                Employment details
+              </h2>
+              <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                {[
+                  [
+                    "Position",
+                    employmentSummary?.position || profile.position || "—",
+                  ],
+                  ["Branch", employmentSummary?.branchName || "Unassigned"],
+                  [
+                    "Line manager",
+                    employmentSummary?.lineManagerName || "Not assigned",
+                  ],
+                  ["Date joined", employmentSummary?.dateJoined || "—"],
+                  [
+                    "Basic salary per month",
+                    employmentSummary?.payType === "payroll" &&
+                    employmentSummary.baseSalary > 0
+                      ? `UGX ${employmentSummary.baseSalary.toLocaleString("en-UG")}`
+                      : "Not on payroll",
+                  ],
+                  [
+                    "Transport allowance per week",
+                    employmentSummary?.weeklyTransportAllowance
+                      ? `UGX ${employmentSummary.weeklyTransportAllowance.toLocaleString("en-UG")}`
+                      : "None recorded",
+                  ],
+                  [
+                    "Estimated monthly transport benefit",
+                    employmentSummary?.monthlyTransportAllowance
+                      ? `UGX ${employmentSummary.monthlyTransportAllowance.toLocaleString(
+                          "en-UG",
+                          {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          },
+                        )}`
+                      : "None recorded",
+                  ],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <dt
+                      className="text-xs font-600"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {label}
+                    </dt>
+                    <dd
+                      className="mt-1 font-600"
+                      style={{ color: "var(--foreground)" }}
+                    >
+                      {value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
             <form
               onSubmit={(event) =>
                 void submitProfile(event, editingSection ?? "personal")
@@ -1327,7 +1416,12 @@ export default function HumanResources({
                       maxLength={200}
                       value={profile.name}
                       onChange={(event) => {
-                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "name")))
+                        setInvalidFields(
+                          (current) =>
+                            new Set(
+                              [...current].filter((field) => field !== "name"),
+                            ),
+                        )
                         setField("name", event.target.value)
                       }}
                       className={inputClass}
@@ -1355,12 +1449,15 @@ export default function HumanResources({
                       data-profile-field="phone"
                       maxLength={60}
                       value={profile.phone}
-                      onChange={(event) =>
-                        {
-                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "phone")))
-                          setField("phone", event.target.value)
-                        }
-                      }
+                      onChange={(event) => {
+                        setInvalidFields(
+                          (current) =>
+                            new Set(
+                              [...current].filter((field) => field !== "phone"),
+                            ),
+                        )
+                        setField("phone", event.target.value)
+                      }}
                       className={inputClass}
                       style={profileFieldStyle("phone")}
                     />
@@ -1374,12 +1471,17 @@ export default function HumanResources({
                       data-profile-field="dateOfBirth"
                       type="date"
                       value={profile.dateOfBirth}
-                      onChange={(event) =>
-                        {
-                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "dateOfBirth")))
-                          setField("dateOfBirth", event.target.value)
-                        }
-                      }
+                      onChange={(event) => {
+                        setInvalidFields(
+                          (current) =>
+                            new Set(
+                              [...current].filter(
+                                (field) => field !== "dateOfBirth",
+                              ),
+                            ),
+                        )
+                        setField("dateOfBirth", event.target.value)
+                      }}
                       className={inputClass}
                       style={profileFieldStyle("dateOfBirth")}
                     />
@@ -1393,7 +1495,12 @@ export default function HumanResources({
                       data-profile-field="sex"
                       value={profile.sex}
                       onChange={(event) => {
-                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "sex")))
+                        setInvalidFields(
+                          (current) =>
+                            new Set(
+                              [...current].filter((field) => field !== "sex"),
+                            ),
+                        )
                         setField("sex", event.target.value)
                       }}
                       className={inputClass}
@@ -1415,12 +1522,17 @@ export default function HumanResources({
                       data-profile-field="localAddress"
                       maxLength={500}
                       value={profile.localAddress}
-                      onChange={(event) =>
-                        {
-                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "localAddress")))
-                          setField("localAddress", event.target.value)
-                        }
-                      }
+                      onChange={(event) => {
+                        setInvalidFields(
+                          (current) =>
+                            new Set(
+                              [...current].filter(
+                                (field) => field !== "localAddress",
+                              ),
+                            ),
+                        )
+                        setField("localAddress", event.target.value)
+                      }}
                       className={inputClass}
                       style={profileFieldStyle("localAddress")}
                     />
@@ -1449,12 +1561,17 @@ export default function HumanResources({
                       data-profile-field="nextOfKin"
                       maxLength={200}
                       value={profile.nextOfKin}
-                      onChange={(event) =>
-                        {
-                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "nextOfKin")))
-                          setField("nextOfKin", event.target.value)
-                        }
-                      }
+                      onChange={(event) => {
+                        setInvalidFields(
+                          (current) =>
+                            new Set(
+                              [...current].filter(
+                                (field) => field !== "nextOfKin",
+                              ),
+                            ),
+                        )
+                        setField("nextOfKin", event.target.value)
+                      }}
                       className={inputClass}
                       style={profileFieldStyle("nextOfKin")}
                     />
@@ -1468,12 +1585,17 @@ export default function HumanResources({
                       data-profile-field="nextOfKinPhone"
                       maxLength={60}
                       value={profile.nextOfKinPhone}
-                      onChange={(event) =>
-                        {
-                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "nextOfKinPhone")))
-                          setField("nextOfKinPhone", event.target.value)
-                        }
-                      }
+                      onChange={(event) => {
+                        setInvalidFields(
+                          (current) =>
+                            new Set(
+                              [...current].filter(
+                                (field) => field !== "nextOfKinPhone",
+                              ),
+                            ),
+                        )
+                        setField("nextOfKinPhone", event.target.value)
+                      }}
                       className={inputClass}
                       style={profileFieldStyle("nextOfKinPhone")}
                     />
@@ -1487,12 +1609,17 @@ export default function HumanResources({
                       data-profile-field="emergencyContactAddress"
                       maxLength={500}
                       value={profile.emergencyContactAddress}
-                      onChange={(event) =>
-                        {
-                          setInvalidFields((current) => new Set([...current].filter((field) => field !== "emergencyContactAddress")))
-                          setField("emergencyContactAddress", event.target.value)
-                        }
-                      }
+                      onChange={(event) => {
+                        setInvalidFields(
+                          (current) =>
+                            new Set(
+                              [...current].filter(
+                                (field) => field !== "emergencyContactAddress",
+                              ),
+                            ),
+                        )
+                        setField("emergencyContactAddress", event.target.value)
+                      }}
                       className={inputClass}
                       style={profileFieldStyle("emergencyContactAddress")}
                     />
@@ -1535,75 +1662,103 @@ export default function HumanResources({
                     : "No identification details added yet"}
                 </p>
                 <div hidden={editingSection !== "identification"}>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label
-                    className={labelClass}
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    Passport number
-                    <input
-                      data-profile-field="passportNumber"
-                      maxLength={30}
-                      value={profile.passportNumber}
-                      onChange={(event) => {
-                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "passportNumber")))
-                        setField("passportNumber", event.target.value)
-                      }}
-                      className={inputClass}
-                      style={profileFieldStyle("passportNumber")}
-                    />
-                  </label>
-                  <label
-                    className={labelClass}
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    Passport expiry date
-                    <input
-                      data-profile-field="passportExpiry"
-                      type="date"
-                      value={profile.passportExpiry}
-                      onChange={(event) => {
-                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "passportExpiry")))
-                        setField("passportExpiry", event.target.value)
-                      }}
-                      className={inputClass}
-                      style={profileFieldStyle("passportExpiry")}
-                    />
-                  </label>
-                  <label
-                    className={labelClass}
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    National ID number
-                    <input
-                      data-profile-field="nationalIdNumber"
-                      maxLength={40}
-                      value={profile.nationalIdNumber}
-                      onChange={(event) => {
-                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "nationalIdNumber")))
-                        setField("nationalIdNumber", event.target.value)
-                      }}
-                      className={inputClass}
-                      style={profileFieldStyle("nationalIdNumber")}
-                    />
-                  </label>
-                  <label
-                    className={labelClass}
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    National ID expiry date
-                    <input
-                      data-profile-field="nationalIdExpiry"
-                      type="date"
-                      value={profile.nationalIdExpiry}
-                      onChange={(event) => {
-                        setInvalidFields((current) => new Set([...current].filter((field) => field !== "nationalIdExpiry")))
-                        setField("nationalIdExpiry", event.target.value)
-                      }}
-                      className={inputClass}
-                    />
-                  </label>
-                </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label
+                      className={labelClass}
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Passport number
+                      <input
+                        data-profile-field="passportNumber"
+                        maxLength={30}
+                        value={profile.passportNumber}
+                        onChange={(event) => {
+                          setInvalidFields(
+                            (current) =>
+                              new Set(
+                                [...current].filter(
+                                  (field) => field !== "passportNumber",
+                                ),
+                              ),
+                          )
+                          setField("passportNumber", event.target.value)
+                        }}
+                        className={inputClass}
+                        style={profileFieldStyle("passportNumber")}
+                      />
+                    </label>
+                    <label
+                      className={labelClass}
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Passport expiry date
+                      <input
+                        data-profile-field="passportExpiry"
+                        type="date"
+                        value={profile.passportExpiry}
+                        onChange={(event) => {
+                          setInvalidFields(
+                            (current) =>
+                              new Set(
+                                [...current].filter(
+                                  (field) => field !== "passportExpiry",
+                                ),
+                              ),
+                          )
+                          setField("passportExpiry", event.target.value)
+                        }}
+                        className={inputClass}
+                        style={profileFieldStyle("passportExpiry")}
+                      />
+                    </label>
+                    <label
+                      className={labelClass}
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      National ID number
+                      <input
+                        data-profile-field="nationalIdNumber"
+                        maxLength={40}
+                        value={profile.nationalIdNumber}
+                        onChange={(event) => {
+                          setInvalidFields(
+                            (current) =>
+                              new Set(
+                                [...current].filter(
+                                  (field) => field !== "nationalIdNumber",
+                                ),
+                              ),
+                          )
+                          setField("nationalIdNumber", event.target.value)
+                        }}
+                        className={inputClass}
+                        style={profileFieldStyle("nationalIdNumber")}
+                      />
+                    </label>
+                    <label
+                      className={labelClass}
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      National ID expiry date
+                      <input
+                        data-profile-field="nationalIdExpiry"
+                        type="date"
+                        value={profile.nationalIdExpiry}
+                        onChange={(event) => {
+                          setInvalidFields(
+                            (current) =>
+                              new Set(
+                                [...current].filter(
+                                  (field) => field !== "nationalIdExpiry",
+                                ),
+                              ),
+                          )
+                          setField("nationalIdExpiry", event.target.value)
+                        }}
+                        className={inputClass}
+                      />
+                    </label>
+                  </div>
                 </div>
               </section>
 
@@ -1670,10 +1825,7 @@ export default function HumanResources({
                         : "No qualifications added yet"}
                     </p>
                   )}
-                  <div
-                    hidden={editingSection !== type}
-                    className="space-y-4"
-                  >
+                  <div hidden={editingSection !== type} className="space-y-4">
                     {profile[type].map((qualification, index) => (
                       <div
                         key={`${type}-${index}`}
@@ -1698,7 +1850,9 @@ export default function HumanResources({
                               )
                             }
                             className={inputClass}
-                            style={profileFieldStyle(`${type}-${index}-qualification`)}
+                            style={profileFieldStyle(
+                              `${type}-${index}-qualification`,
+                            )}
                           />
                         </label>
                         <label
@@ -1719,7 +1873,9 @@ export default function HumanResources({
                               )
                             }
                             className={inputClass}
-                            style={profileFieldStyle(`${type}-${index}-institution`)}
+                            style={profileFieldStyle(
+                              `${type}-${index}-institution`,
+                            )}
                           />
                         </label>
                         <label
@@ -1862,7 +2018,9 @@ export default function HumanResources({
                             )
                           }
                           className={inputClass}
-                          style={profileFieldStyle(`workExperience-${index}-employer`)}
+                          style={profileFieldStyle(
+                            `workExperience-${index}-employer`,
+                          )}
                         />
                       </label>
                       <label
@@ -1882,7 +2040,9 @@ export default function HumanResources({
                             )
                           }
                           className={inputClass}
-                          style={profileFieldStyle(`workExperience-${index}-position`)}
+                          style={profileFieldStyle(
+                            `workExperience-${index}-position`,
+                          )}
                         />
                       </label>
                       <label
@@ -1902,7 +2062,9 @@ export default function HumanResources({
                             )
                           }
                           className={inputClass}
-                          style={profileFieldStyle(`workExperience-${index}-location`)}
+                          style={profileFieldStyle(
+                            `workExperience-${index}-location`,
+                          )}
                         />
                       </label>
                       <div className="grid grid-cols-2 gap-3">
@@ -1923,7 +2085,9 @@ export default function HumanResources({
                               )
                             }
                             className={inputClass}
-                            style={profileFieldStyle(`workExperience-${index}-startDate`)}
+                            style={profileFieldStyle(
+                              `workExperience-${index}-startDate`,
+                            )}
                           />
                         </label>
                         <label
@@ -2024,109 +2188,109 @@ export default function HumanResources({
                   </p>
                 )}
                 <div hidden={editingSection !== "languages"}>
-                <label
-                  className={labelClass}
-                  style={{ color: "var(--muted-foreground)" }}
-                >
-                  Languages known
-                  <input
-                    value={languagesText}
-                    onChange={(event) => setLanguagesText(event.target.value)}
-                    className={inputClass}
-                    style={fieldStyle}
-                    placeholder="English, Luganda, Kiswahili"
-                  />
-                </label>
-                <fieldset className="mt-5">
-                  <legend
-                    className="text-xs font-700 uppercase tracking-wider"
+                  <label
+                    className={labelClass}
                     style={{ color: "var(--muted-foreground)" }}
                   >
-                    Any criminal records?
-                  </legend>
-                  <div className="mt-2 flex gap-2">
-                    {[false, true].map((value) => (
-                      <button
-                        key={String(value)}
-                        type="button"
-                        aria-pressed={profile.hasCriminalRecord === value}
-                        onClick={() => setField("hasCriminalRecord", value)}
-                        className="rounded border px-4 py-2 text-sm"
-                        style={{
-                          borderColor:
-                            profile.hasCriminalRecord === value
-                              ? "var(--primary)"
-                              : "var(--border)",
-                          color:
-                            profile.hasCriminalRecord === value
-                              ? "var(--primary)"
-                              : "var(--muted-foreground)",
-                        }}
+                    Languages known
+                    <input
+                      value={languagesText}
+                      onChange={(event) => setLanguagesText(event.target.value)}
+                      className={inputClass}
+                      style={fieldStyle}
+                      placeholder="English, Luganda, Kiswahili"
+                    />
+                  </label>
+                  <fieldset className="mt-5">
+                    <legend
+                      className="text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Any criminal records?
+                    </legend>
+                    <div className="mt-2 flex gap-2">
+                      {[false, true].map((value) => (
+                        <button
+                          key={String(value)}
+                          type="button"
+                          aria-pressed={profile.hasCriminalRecord === value}
+                          onClick={() => setField("hasCriminalRecord", value)}
+                          className="rounded border px-4 py-2 text-sm"
+                          style={{
+                            borderColor:
+                              profile.hasCriminalRecord === value
+                                ? "var(--primary)"
+                                : "var(--border)",
+                            color:
+                              profile.hasCriminalRecord === value
+                                ? "var(--primary)"
+                                : "var(--muted-foreground)",
+                          }}
+                        >
+                          {value ? "Yes" : "No"}
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
+                  {profile.hasCriminalRecord && (
+                    <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                      <label
+                        className={labelClass}
+                        style={{ color: "var(--muted-foreground)" }}
                       >
-                        {value ? "Yes" : "No"}
-                      </button>
-                    ))}
-                  </div>
-                </fieldset>
-                {profile.hasCriminalRecord && (
-                  <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                    <label
-                      className={labelClass}
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      Type of case
-                      <input
-                        data-profile-field="criminalCaseType"
-                        maxLength={200}
-                        value={profile.criminalCaseType}
-                        onChange={(event) =>
-                          setField("criminalCaseType", event.target.value)
-                        }
-                        className={inputClass}
-                        style={profileFieldStyle("criminalCaseType")}
-                      />
-                    </label>
-                    <label
-                      className={labelClass}
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      Year
-                      <input
-                        data-profile-field="criminalCaseYear"
-                        type="number"
-                        min={1900}
-                        max={new Date().getFullYear()}
-                        value={profile.criminalCaseYear}
-                        onChange={(event) =>
-                          setField(
-                            "criminalCaseYear",
-                            event.target.value
-                              ? Number(event.target.value)
-                              : "",
-                          )
-                        }
-                        className={inputClass}
-                        style={profileFieldStyle("criminalCaseYear")}
-                      />
-                    </label>
-                    <label
-                      className={labelClass}
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      Current case status
-                      <input
-                        data-profile-field="criminalCaseStatus"
-                        maxLength={200}
-                        value={profile.criminalCaseStatus}
-                        onChange={(event) =>
-                          setField("criminalCaseStatus", event.target.value)
-                        }
-                        className={inputClass}
-                        style={profileFieldStyle("criminalCaseStatus")}
-                      />
-                    </label>
-                  </div>
-                )}
+                        Type of case
+                        <input
+                          data-profile-field="criminalCaseType"
+                          maxLength={200}
+                          value={profile.criminalCaseType}
+                          onChange={(event) =>
+                            setField("criminalCaseType", event.target.value)
+                          }
+                          className={inputClass}
+                          style={profileFieldStyle("criminalCaseType")}
+                        />
+                      </label>
+                      <label
+                        className={labelClass}
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        Year
+                        <input
+                          data-profile-field="criminalCaseYear"
+                          type="number"
+                          min={1900}
+                          max={new Date().getFullYear()}
+                          value={profile.criminalCaseYear}
+                          onChange={(event) =>
+                            setField(
+                              "criminalCaseYear",
+                              event.target.value
+                                ? Number(event.target.value)
+                                : "",
+                            )
+                          }
+                          className={inputClass}
+                          style={profileFieldStyle("criminalCaseYear")}
+                        />
+                      </label>
+                      <label
+                        className={labelClass}
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        Current case status
+                        <input
+                          data-profile-field="criminalCaseStatus"
+                          maxLength={200}
+                          value={profile.criminalCaseStatus}
+                          onChange={(event) =>
+                            setField("criminalCaseStatus", event.target.value)
+                          }
+                          className={inputClass}
+                          style={profileFieldStyle("criminalCaseStatus")}
+                        />
+                      </label>
+                    </div>
+                  )}
                 </div>
               </section>
 
@@ -2163,7 +2327,8 @@ export default function HumanResources({
                               ? "identification"
                               : editingSection === "academicQualifications"
                                 ? "academic qualifications"
-                                : editingSection === "professionalQualifications"
+                                : editingSection ===
+                                    "professionalQualifications"
                                   ? "professional qualifications"
                                   : editingSection === "workExperience"
                                     ? "employment experience"

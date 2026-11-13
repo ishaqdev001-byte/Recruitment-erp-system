@@ -10,6 +10,8 @@ For browser and closed-browser push alerts, apply `supabase/migrations/202610311
 
 For staff self-service profile names, phone numbers, and profile photos, apply `supabase/migrations/20261104093919_user_profile_photos.sql`. The migration adds `profiles.avatar_url` and a private Storage bucket; profile photos are served through the authenticated `/api/workspace/my-profile` route and are not public URLs.
 
+For staff line-manager assignments and employee employment summaries, apply `supabase/migrations/20261113045438_staff_line_managers.sql`. Staff invitations let administrators choose Staff or Member; Staff invitations create a linked roster record with branch, line manager, and pay details. Employees can view their own position, line manager, branch, monthly salary, and weekly transport allowance in Human Resource.
+
 ## Project Structure
 
 - `src/app/page.tsx` - App Router page

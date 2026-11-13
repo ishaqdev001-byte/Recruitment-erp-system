@@ -284,6 +284,7 @@ export async function GET(request: Request) {
         myBranchId: myBranchId ?? null,
         isMainBranchUser: access.canAccessAllBranches,
         canManage: access.canManageBranches,
+        canEditMainBranch: access.isOwner,
       },
       { headers },
     )
@@ -402,11 +403,31 @@ export async function POST(request: Request) {
           headers,
         })
 
+      if (existing.is_main_branch && !access.isOwner)
+        return NextResponse.json(
+          { error: "Only the Chairman can edit the Main Branch." },
+          { status: 403, headers },
+        )
+
       const updates: Record<string, unknown> = {}
-      if (typeof body.name === "string")
-        updates.name = body.name.trim().slice(0, 120)
-      if (typeof body.code === "string")
-        updates.code = body.code.trim().toUpperCase().slice(0, 20)
+      if (typeof body.name === "string") {
+        const name = body.name.trim()
+        if (!name || name.length > 120)
+          return NextResponse.json(
+            { error: "Branch name must be between 1 and 120 characters." },
+            { status: 400, headers },
+          )
+        updates.name = name
+      }
+      if (typeof body.code === "string") {
+        const code = body.code.trim().toUpperCase()
+        if (!code || code.length > 20)
+          return NextResponse.json(
+            { error: "Branch code must be between 1 and 20 characters." },
+            { status: 400, headers },
+          )
+        updates.code = code
+      }
       if (typeof body.address === "string")
         updates.address = body.address.trim().slice(0, 500)
       if (typeof body.phone === "string")
@@ -421,10 +442,9 @@ export async function POST(request: Request) {
       )
         updates.status = body.status
 
-      // Main branch name and code are protected
-      if (existing.is_main_branch && (updates.name || updates.code)) {
+      if (existing.is_main_branch && "status" in updates) {
         return NextResponse.json(
-          { error: "The Main Branch name and code cannot be changed." },
+          { error: "The Main Branch cannot be deactivated." },
           { status: 403, headers },
         )
       }

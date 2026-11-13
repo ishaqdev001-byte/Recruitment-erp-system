@@ -504,6 +504,13 @@ export async function GET() {
         .map((roleRecord) => roleRecord.id),
     )
 
+    const branchNameById = new Map(
+      (branchesResult.data ?? []).map((branch) => [branch.id, branch.name]),
+    )
+    const mainBranch = (branchesResult.data ?? []).find(
+      (branch) => branch.is_main_branch,
+    )
+
     const visibleRolePermissions = (rolePermissions ?? []).filter(
       (rolePermission) =>
         !recruitmentAgentRoleIds.has(rolePermission.role_id) ||
@@ -520,6 +527,7 @@ export async function GET() {
       const role = Array.isArray(joinedRole)
         ? joinedRole[0]?.name
         : joinedRole?.name
+      const branchId = membership.branch_id ?? mainBranch?.id ?? null
 
       return {
         id: membership.user_id,
@@ -532,11 +540,12 @@ export async function GET() {
 
         phone: profileById.get(membership.user_id)?.phone ?? "",
 
-        branch: profileById.get(membership.user_id)?.branch ?? "",
+        branch:
+          (branchId && branchNameById.get(branchId)) ||
+          profileById.get(membership.user_id)?.branch ||
+          "",
 
-        branchId:
-          (membership as unknown as Record<string, unknown>)
-            .branch_id as string | null ?? null,
+        branchId,
 
         roleId: membership.role_id,
 
@@ -844,6 +853,205 @@ export async function POST(request: Request) {
         )
       }
 
+      return NextResponse.json({ success: true }, { headers: responseHeaders })
+    }
+
+    if (body.action === "change-user-type") {
+      const userId = typeof body.userId === "string" ? body.userId : ""
+      const userType = body.userType
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          userId,
+        ) ||
+        (userType !== "staff" && userType !== "member")
+      ) {
+        return NextResponse.json(
+          { error: "Select a valid company user and user type." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const { data: company, error: companyError } = await admin
+        .from("companies")
+        .select("primary_admin_user_id")
+        .eq("id", access.companyId)
+        .maybeSingle()
+      if (companyError || !company) {
+        console.error("User type edit company lookup failed", companyError)
+        return NextResponse.json(
+          { error: "Unable to verify company ownership." },
+          { status: 500, headers: responseHeaders },
+        )
+      }
+      if (company.primary_admin_user_id !== access.userId)
+        return NextResponse.json(
+          { error: "Only the Chairman can change a user's type." },
+          { status: 403, headers: responseHeaders },
+        )
+      if (userId === access.userId)
+        return NextResponse.json(
+          { error: "You cannot change your own user type." },
+          { status: 400, headers: responseHeaders },
+        )
+
+      const { data: membership, error: membershipError } = await admin
+        .from("company_memberships")
+        .select("user_id, branch_id, role:company_roles(name)")
+        .eq("company_id", access.companyId)
+        .eq("user_id", userId)
+        .maybeSingle()
+      if (membershipError || !membership) {
+        return NextResponse.json(
+          { error: "Selected user is not a member of this company." },
+          { status: 404, headers: responseHeaders },
+        )
+      }
+
+      const joinedRole = membership.role as { name: string } | {
+        name: string
+      }[] | null
+      const roleName = Array.isArray(joinedRole)
+        ? joinedRole[0]?.name
+        : joinedRole?.name
+      if (
+        userId === company.primary_admin_user_id ||
+        isPrimaryAdministratorRole(roleName ?? "")
+      ) {
+        return NextResponse.json(
+          { error: "Protected administrator accounts cannot be changed." },
+          { status: 403, headers: responseHeaders },
+        )
+      }
+
+      const { data: linkedStaff, error: linkedStaffError } = await admin
+        .from("company_staff_members")
+        .select("id")
+        .eq("company_id", access.companyId)
+        .eq("linked_user_id", userId)
+        .limit(2)
+      if (linkedStaffError) throw linkedStaffError
+      if ((linkedStaff ?? []).length > 1)
+        return NextResponse.json(
+          { error: "This user has multiple linked staff records. Contact support." },
+          { status: 409, headers: responseHeaders },
+        )
+
+      const currentlyStaff = Boolean(linkedStaff?.length)
+      if ((userType === "staff") === currentlyStaff)
+        return NextResponse.json({ success: true }, { headers: responseHeaders })
+
+      if (userType === "member") {
+        const staffId = linkedStaff?.[0]?.id
+        if (!staffId)
+          return NextResponse.json({ success: true }, { headers: responseHeaders })
+
+        const { count, error: reportsError } = await admin
+          .from("company_staff_members")
+          .select("id", { count: "exact", head: true })
+          .eq("company_id", access.companyId)
+          .eq("line_manager_staff_id", staffId)
+          .neq("status", "Inactive")
+        if (reportsError) throw reportsError
+        if (count)
+          return NextResponse.json(
+            {
+              error:
+                "Reassign this staff member's direct reports before changing their type.",
+            },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const { error: unlinkError } = await admin
+          .from("company_staff_members")
+          .update({ linked_user_id: null, status: "Inactive" })
+          .eq("id", staffId)
+          .eq("company_id", access.companyId)
+          .eq("linked_user_id", userId)
+        if (unlinkError) {
+          console.error("Staff user-type change failed", unlinkError)
+          return NextResponse.json(
+            { error: "Unable to change this user to Member." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+        return NextResponse.json({ success: true }, { headers: responseHeaders })
+      }
+
+      const staffBody =
+        body.staff && typeof body.staff === "object" && !Array.isArray(body.staff)
+          ? (body.staff as Record<string, unknown>)
+          : null
+      if (!staffBody)
+        return NextResponse.json(
+          { error: "Enter the required staff details." },
+          { status: 400, headers: responseHeaders },
+        )
+
+      const { data: profile, error: profileError } = await admin
+        .from("profiles")
+        .select("display_name")
+        .eq("id", userId)
+        .maybeSingle()
+      if (profileError) throw profileError
+      const name = profile?.display_name?.trim() ?? ""
+      if (!name)
+        return NextResponse.json(
+          { error: "This user needs a profile name before becoming Staff." },
+          { status: 400, headers: responseHeaders },
+        )
+
+      let branchQuery = admin
+        .from("company_branches")
+        .select("id")
+        .eq("company_id", access.companyId)
+        .eq("status", "active")
+      branchQuery = membership.branch_id
+        ? branchQuery.eq("id", membership.branch_id)
+        : branchQuery.eq("is_main_branch", true)
+      const { data: branch, error: branchError } =
+        await branchQuery.maybeSingle()
+      if (branchError || !branch) {
+        console.error("Staff type branch lookup failed", branchError)
+        return NextResponse.json(
+          { error: "The user's assigned active branch could not be found." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const staffInput = parseStaffInput({
+        name,
+        position: staffBody.position,
+        status: "Active",
+        dateJoined: staffBody.dateJoined,
+        branchId: branch.id,
+        linkedUserId: null,
+        payType: "no_payroll",
+        baseSalary: 0,
+        weeklyTransportAllowance: 0,
+        transportAccountId: null,
+        lineManagerStaffId: null,
+      })
+      if (!staffInput)
+        return NextResponse.json(
+          { error: "Enter a valid staff position and joining date." },
+          { status: 400, headers: responseHeaders },
+        )
+
+      try {
+        await insertInvitedStaffRecord(
+          admin,
+          access.companyId,
+          access.userId,
+          userId,
+          staffInput,
+        )
+      } catch (insertError) {
+        console.error("Staff user-type record creation failed", insertError)
+        return NextResponse.json(
+          { error: "Unable to create the staff record." },
+          { status: 500, headers: responseHeaders },
+        )
+      }
       return NextResponse.json({ success: true }, { headers: responseHeaders })
     }
 

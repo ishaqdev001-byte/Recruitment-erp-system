@@ -18,13 +18,15 @@ async function getEmployerAccess(permission: "employers.view" | "employers.creat
     .eq("status", "active")
     .limit(1)
     .maybeSingle();
-  if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
+  if (membershipError) throw membershipError;
+  if (!membership) return { error: "Active company membership not found.", status: 403 as const };
 
   const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
     requested_company_id: membership.company_id,
     requested_permission: permission,
   });
-  if (permissionError || !allowed) return { error: "You do not have permission to access employers. Workspace administrators should apply the latest Supabase migration if employer setup is incomplete.", status: 403 as const };
+  if (permissionError) throw permissionError;
+  if (!allowed) return { error: "You do not have permission to access employers. Workspace administrators should apply the latest Supabase migration if employer setup is incomplete.", status: 403 as const };
 
   return { companyId: membership.company_id, userId: user.id, supabase };
 }

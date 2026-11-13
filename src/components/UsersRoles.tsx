@@ -687,7 +687,20 @@ export default function UsersRoles({
   const [userTypeFilter, setUserTypeFilter] =
     useState<"all" | "staff" | "member">("all")
 
+  const [userBranchFilter, setUserBranchFilter] = useState("all")
+
   const [userSearch, setUserSearch] = useState("")
+
+  const [editingUserType, setEditingUserType] = useState<UserRecord | null>(
+    null,
+  )
+
+  const [editUserType, setEditUserType] =
+    useState<"staff" | "member">("member")
+
+  const [editStaffPosition, setEditStaffPosition] = useState("")
+
+  const [editStaffDateJoined, setEditStaffDateJoined] = useState("")
 
   const [invitedStaffForm, setInvitedStaffForm] = useState(
     emptyInvitedStaffForm,
@@ -1008,6 +1021,79 @@ export default function UsersRoles({
       )
     } finally {
       setSaving(false)
+    }
+  }
+
+  const openEditUserType = (user: UserRecord) => {
+    setEditingUserType(user)
+    setEditUserType(user.userType)
+    setEditStaffPosition("")
+    setEditStaffDateJoined("")
+    setError("")
+    setNotice("")
+  }
+
+  const submitUserType = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!editingUserType) return
+
+    if (editUserType === editingUserType.userType) {
+      setEditingUserType(null)
+      return
+    }
+
+    if (
+      editingUserType.userType === "staff" &&
+      editUserType === "member" &&
+      !window.confirm(
+        `Change ${editingUserType.name} to Member? Their staff record will be unlinked and marked inactive; historical HR and payroll records will be retained.`,
+      )
+    ) {
+      return
+    }
+
+    setSaving(true)
+    setUserActionPending(editingUserType.id)
+    setError("")
+    setNotice("")
+    try {
+      const response = await fetch("/api/workspace/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "change-user-type",
+          userId: editingUserType.id,
+          userType: editUserType,
+          ...(editUserType === "staff"
+            ? {
+                staff: {
+                  position: editStaffPosition,
+                  dateJoined: editStaffDateJoined,
+                },
+              }
+            : {}),
+        }),
+      })
+      const result = (await response.json()) as { error?: string }
+      if (!response.ok)
+        throw new Error(result.error ?? "Unable to update the user type.")
+
+      setEditingUserType(null)
+      setNotice(
+        editUserType === "staff"
+          ? `${editingUserType.name} is now Staff. Add compensation details from the Staff tab if needed.`
+          : `${editingUserType.name} is now a Member. Staff history was retained.`,
+      )
+      setReloadKey((key) => key + 1)
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to update the user type.",
+      )
+    } finally {
+      setSaving(false)
+      setUserActionPending("")
     }
   }
 
@@ -1560,6 +1646,16 @@ export default function UsersRoles({
         user.role === "General Manager"),
   )
 
+  const currentUser = data.users.find((user) => user.id === currentUserId)
+  const canEditUserType = Boolean(currentUser?.isPrimaryAdmin)
+  const canViewBranchMembers = Boolean(
+    currentUser &&
+      (currentUser.isPrimaryAdmin ||
+        ["Chairman", "General Manager", "Supervisor"].includes(
+          currentUser.role,
+        )),
+  )
+
   const canManageRoles =
     data.users.some(
       (user) =>
@@ -1574,6 +1670,8 @@ export default function UsersRoles({
   const visibleUsers = data.users.filter((user) => {
     const matchesType =
       userTypeFilter === "all" || user.userType === userTypeFilter
+    const matchesBranch =
+      userBranchFilter === "all" || user.branchId === userBranchFilter
 
     const matchesSearch =
       !searchTerm ||
@@ -1583,7 +1681,7 @@ export default function UsersRoles({
 
         .includes(searchTerm)
 
-    return matchesType && matchesSearch
+    return matchesType && matchesBranch && matchesSearch
   })
 
   return (
@@ -1740,6 +1838,58 @@ export default function UsersRoles({
                 <option value="member">Members</option>
               </select>
             </label>
+          </div>
+        )}
+
+        {!loading && tab === "users" && canViewBranchMembers && (
+          <div className="flex flex-wrap items-center gap-2 px-6 pt-3">
+            <span
+              className="mr-1 text-xs font-600"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              View members by branch
+            </span>
+            <button
+              type="button"
+              aria-pressed={userBranchFilter === "all"}
+              onClick={() => setUserBranchFilter("all")}
+              className="rounded border px-3 py-1.5 text-xs font-600"
+              style={{
+                borderColor:
+                  userBranchFilter === "all"
+                    ? "var(--primary)"
+                    : "var(--border)",
+                color:
+                  userBranchFilter === "all"
+                    ? "var(--primary)"
+                    : "var(--muted-foreground)",
+              }}
+            >
+              All visible ({data.users.length})
+            </button>
+            {branches.map((branch) => {
+              const memberCount = data.users.filter(
+                (user) => user.branchId === branch.id,
+              ).length
+              const selected = userBranchFilter === branch.id
+              return (
+                <button
+                  key={branch.id}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => setUserBranchFilter(branch.id)}
+                  className="rounded border px-3 py-1.5 text-xs font-600"
+                  style={{
+                    borderColor: selected ? "var(--primary)" : "var(--border)",
+                    color: selected
+                      ? "var(--primary)"
+                      : "var(--muted-foreground)",
+                  }}
+                >
+                  {branch.name} ({memberCount})
+                </button>
+              )
+            })}
           </div>
         )}
 
@@ -1962,6 +2112,22 @@ export default function UsersRoles({
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
+                          {canEditUserType &&
+                            !user.isPrimaryAdmin &&
+                            user.id !== currentUserId && (
+                              <button
+                                type="button"
+                                disabled={userActionPending === user.id}
+                                onClick={() => openEditUserType(user)}
+                                className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "var(--primary)",
+                                }}
+                              >
+                                Edit
+                              </button>
+                            )}
                           {user.isPrimaryAdmin ? (
                             <span
                               className="text-xs"
@@ -3179,6 +3345,140 @@ export default function UsersRoles({
                 }}
               >
                 Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {editingUserType && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !saving)
+              setEditingUserType(null)
+          }}
+        >
+          <form
+            onSubmit={submitUserType}
+            className="w-full max-w-md rounded border p-6"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <h2
+              className="mb-1 text-lg font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Edit user
+            </h2>
+            <p
+              className="mb-5 text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              {editingUserType.name} · {editingUserType.email}
+            </p>
+            <label
+              className="block text-xs font-700 uppercase tracking-wider"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              User type
+              <select
+                value={editUserType}
+                onChange={(event) =>
+                  setEditUserType(event.target.value as "staff" | "member")
+                }
+                className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                style={fieldStyle}
+              >
+                <option value="member">Member — Users table only</option>
+                <option value="staff">Staff — Staff roster and HR</option>
+              </select>
+            </label>
+
+            {editUserType === "staff" &&
+              editingUserType.userType === "member" && (
+                <div className="mt-4 space-y-3">
+                  <label
+                    className="block text-xs font-700 uppercase tracking-wider"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Position
+                    <input
+                      required
+                      maxLength={150}
+                      value={editStaffPosition}
+                      onChange={(event) =>
+                        setEditStaffPosition(event.target.value)
+                      }
+                      className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                      style={fieldStyle}
+                    />
+                  </label>
+                  <label
+                    className="block text-xs font-700 uppercase tracking-wider"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Date joined
+                    <input
+                      required
+                      type="date"
+                      value={editStaffDateJoined}
+                      onChange={(event) =>
+                        setEditStaffDateJoined(event.target.value)
+                      }
+                      className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal"
+                      style={fieldStyle}
+                    />
+                  </label>
+                  <p
+                    className="text-xs"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    The user keeps their current branch. The new staff record
+                    starts with no payroll; compensation can be added from the
+                    Staff tab.
+                  </p>
+                </div>
+              )}
+
+            {editingUserType.userType === "staff" &&
+              editUserType === "member" && (
+                <p
+                  className="mt-4 rounded border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600"
+                  role="status"
+                >
+                  The staff record will be unlinked and marked inactive.
+                  Historical HR and payroll records are retained.
+                </p>
+              )}
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setEditingUserType(null)}
+                className="rounded border px-4 py-2 text-sm disabled:opacity-50"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--muted-foreground)",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={
+                  saving ||
+                  (editUserType === "staff" &&
+                    editingUserType.userType === "member" &&
+                    (!editStaffPosition.trim() || !editStaffDateJoined))
+                }
+                className="rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                {saving ? "Saving…" : "Save"}
               </button>
             </div>
           </form>

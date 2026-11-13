@@ -45,6 +45,7 @@ export default function Branches() {
   const [branches, setBranches] = useState<Branch[]>([])
   const [users, setUsers] = useState<WorkspaceUser[]>([])
   const [canManage, setCanManage] = useState(false)
+  const [canEditMainBranch, setCanEditMainBranch] = useState(false)
   const [isMainBranchUser, setIsMainBranchUser] = useState(false)
   const [myBranchId, setMyBranchId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -75,6 +76,7 @@ export default function Branches() {
       const branchData = (await branchRes.json()) as {
         branches?: Branch[]
         canManage?: boolean
+        canEditMainBranch?: boolean
         isMainBranchUser?: boolean
         myBranchId?: string | null
         error?: string
@@ -87,6 +89,7 @@ export default function Branches() {
         throw new Error(branchData.error ?? "Unable to load branches.")
       setBranches(branchData.branches ?? [])
       setCanManage(Boolean(branchData.canManage))
+      setCanEditMainBranch(Boolean(branchData.canEditMainBranch))
       setIsMainBranchUser(Boolean(branchData.isMainBranchUser))
       setMyBranchId(branchData.myBranchId ?? null)
       if (usersRes.ok) {
@@ -415,7 +418,7 @@ export default function Branches() {
                       </button>
                     </div>
                   )}
-                  {canManage && b.isMainBranch && (
+                  {canEditMainBranch && b.isMainBranch && (
                     <div className="mt-3">
                       <button
                         type="button"
@@ -583,7 +586,9 @@ export default function Branches() {
                   className={inputClass}
                   style={fieldStyle}
                   placeholder="e.g. KLA"
-                  disabled={editingBranch?.isMainBranch}
+                  disabled={
+                    editingBranch?.isMainBranch && !canEditMainBranch
+                  }
                 />
               </label>
               <label

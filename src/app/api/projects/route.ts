@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { getProjectAccess, hasProjectPermission, projectToDatabase, parseProjectInput } from "@/lib/server/projects";
+import {
+  getProjectAccess,
+  hasProjectPermission,
+  listProjectAccounts,
+  projectToDatabase,
+  parseProjectInput,
+} from "@/lib/server/projects";
 
 export const runtime = "nodejs";
 
@@ -24,7 +30,14 @@ export async function GET() {
       hasProjectPermission(access, "projects.delete"),
       hasProjectPermission(access, "projects.status"),
     ]);
-    return NextResponse.json({ projects: data ?? [], permissions: { canCreate, canEdit, canDelete, canChangeStatus } }, { headers: responseHeaders });
+    const accountOptions = canCreate
+      ? (await listProjectAccounts(access)).map(({ id, name }) => ({ id, name }))
+      : [];
+    return NextResponse.json({
+      projects: data ?? [],
+      accountOptions,
+      permissions: { canCreate, canEdit, canDelete, canChangeStatus },
+    }, { headers: responseHeaders });
   } catch (error) {
     console.error("Project list request failed", error);
     return NextResponse.json({ error: "Project data is unavailable." }, { status: 503, headers: responseHeaders });
@@ -39,14 +52,18 @@ export async function POST(request: Request) {
 
     const input = parseProjectInput(await request.json().catch(() => null));
     if (!input) return NextResponse.json({ error: "Enter valid project details and at least one vacancy." }, { status: 400, headers: responseHeaders });
+    const account = (await listProjectAccounts(access)).find(({ id }) => id === input.accountId);
+    if (!account) {
+      return NextResponse.json({ error: "Select an active company account available to your branch." }, { status: 400, headers: responseHeaders });
+    }
     const { data, error } = await access.supabase.from("projects").insert({
-      ...projectToDatabase(input),
+      ...projectToDatabase(input, account.branch_id),
       company_id: access.companyId,
       created_by: access.userId,
     }).select("*").single();
     if (error || !data) {
       console.error("Project creation failed", error);
-      return NextResponse.json({ error: "Unable to create this project." }, { status: 403, headers: responseHeaders });
+      return NextResponse.json({ error: "Unable to create this project." }, { status: 500, headers: responseHeaders });
     }
     return NextResponse.json({ project: data }, { status: 201, headers: responseHeaders });
   } catch (error) {

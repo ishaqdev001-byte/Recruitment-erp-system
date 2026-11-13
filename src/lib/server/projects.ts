@@ -10,7 +10,11 @@ export type ProjectAccess =
   | { error: string; status: 401 | 403 };
 
 export type ProjectAccount = { id: string; name: string; branch_id: string | null };
-export type ProjectManagerOption = { id: string; name: string };
+export type ProjectManagerOption = {
+  id: string;
+  name: string;
+  position: string;
+};
 export type ProjectStaffOption = { id: string; name: string; position: string; status: string };
 export type ProjectAssignmentContext = {
   isChairman: boolean;
@@ -160,14 +164,30 @@ export async function getProjectAssignmentContext(
     ]),
   );
   const managerIdsSet = new Set(managerIds);
+  const managers = (staff ?? [])
+    .filter(
+      (record) =>
+        record.status === "Active" &&
+        Boolean(record.linked_user_id) &&
+        managerIdsSet.has(record.linked_user_id ?? ""),
+    )
+    .map((record) => ({
+      id: record.linked_user_id ?? "",
+      name:
+        record.name ||
+        profileNameById.get(record.linked_user_id ?? "") ||
+        "Projects Manager",
+      position: record.position,
+    }))
+    .filter(
+      (manager, index, options) =>
+        options.findIndex((option) => option.id === manager.id) === index,
+    );
 
   return {
     isChairman: company.primary_admin_user_id === access.userId,
     isProjectManager: managerIdsSet.has(access.userId),
-    managers: managerIds.map((id) => ({
-      id,
-      name: profileNameById.get(id) || "Projects Manager",
-    })),
+    managers,
     staff: (staff ?? []).map((record) => ({
       id: record.id,
       name: record.name,

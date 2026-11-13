@@ -111,11 +111,40 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
       }
       const { data: updatedProject, error: assignmentError } =
         await assignmentQuery.select("*").maybeSingle();
-      if (assignmentError || !updatedProject) {
-        console.error("Project staff assignment failed", assignmentError);
+      if (assignmentError) {
+        console.error("Project staff assignment failed", {
+          code: assignmentError.code,
+          message: assignmentError.message,
+          details: assignmentError.details,
+          hint: assignmentError.hint,
+        });
+        if (["23503", "23514"].includes(assignmentError.code ?? "")) {
+          return NextResponse.json(
+            {
+              error:
+                "The selected staff record is no longer active or is not assigned to this company. Refresh the project list and try again.",
+            },
+            { status: 409, headers: responseHeaders },
+          );
+        }
+        if (["42703", "PGRST204", "42P01", "PGRST205"].includes(assignmentError.code ?? "")) {
+          return NextResponse.json(
+            {
+              error:
+                "Project staff assignment is not available in the database yet. Apply the latest project assignment migration.",
+            },
+            { status: 503, headers: responseHeaders },
+          );
+        }
         return NextResponse.json(
           { error: "Unable to assign staff to this project." },
           { status: 500, headers: responseHeaders },
+        );
+      }
+      if (!updatedProject) {
+        return NextResponse.json(
+          { error: "The project could not be found or assigned." },
+          { status: 404, headers: responseHeaders },
         );
       }
       return NextResponse.json(

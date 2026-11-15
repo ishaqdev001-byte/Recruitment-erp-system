@@ -1799,6 +1799,10 @@ export default function App() {
         currentUrl.searchParams.get("invitation_id") ??
         ""
 
+      const hasAuthCallback =
+        Boolean(currentUrl.searchParams.get("code")) ||
+        Boolean(hashParams.get("access_token") && hashParams.get("refresh_token"))
+
       if (inviteLink) setAuthView("invite")
 
       if (recoveryLink) {
@@ -1812,77 +1816,69 @@ export default function App() {
       try {
         const supabase = createSupabaseBrowserClient()
 
-        const accessToken = hashParams.get("access_token")
-
-        const refreshToken = hashParams.get("refresh_token")
-
-        const recoveryCode =
-          currentUrl.searchParams.get("code") ??
-          hashParams.get("code") ??
-          currentUrl.searchParams.get("token") ??
-          ""
-
-        if (
-          (inviteLink || recoveryLink || signupLink) &&
-          accessToken &&
-          refreshToken
-        ) {
-          const { error: sessionError } = await supabase.auth.setSession({
-            access_token: accessToken,
-
-            refresh_token: refreshToken,
-          })
-
-          if (sessionError) {
-            throw new Error(
-              recoveryLink
-                ? "This password reset link is invalid or expired. Request a new one from the login screen."
-                : signupLink
-                  ? "This email verification link is invalid or expired. Request a new registration link."
-                  : "This invitation link is invalid or expired. Ask the company administrator to send a new invitation.",
-            )
+        let recoveryUserId: string | null = null
+        const {
+          data: { subscription },
+        } = supabase.auth.onAuthStateChange((event, session) => {
+          if (event === "PASSWORD_RECOVERY") {
+            recoveryUserId = session?.user.id ?? null
           }
-
-          window.history.replaceState(
-            null,
-
-            "",
-
-            `${currentUrl.pathname}${currentUrl.search}`,
-          )
-        } else if ((recoveryLink || signupLink) && recoveryCode) {
+        })
+        let user: User | null = null
+        let authError: Error | null = null
+        try {
           const {
-            data: { session },
+            data: { user: authenticatedUser },
+            error,
+          } = await supabase.auth.getUser()
+          user = authenticatedUser
+          authError = error
+        } finally {
+          subscription.unsubscribe()
+        }
 
-            error: sessionError,
-          } = await supabase.auth.exchangeCodeForSession(recoveryCode)
+        if (authError) throw authError
 
-          if (sessionError || !session) {
-            throw new Error(
-              recoveryLink
-                ? "This password reset link is invalid or expired. Request a new one from the login screen."
-                : "This email verification link is invalid or expired. Request a new registration link.",
-            )
-          }
-
-          window.history.replaceState(
-            null,
-
-            "",
-
-            `${currentUrl.pathname}${currentUrl.search}`,
+        if (recoveryLink && (!user || recoveryUserId !== user.id)) {
+          throw new Error(
+            "This password reset link is invalid or expired. Request a new one from the login screen.",
           )
         }
 
-        const {
-          data: { user },
-
-          error,
-        } = await supabase.auth.getUser()
-
-        if (error) throw error
+        if (!user && hasAuthCallback) {
+          throw new Error(
+            recoveryLink
+              ? "This password reset link is invalid or expired. Request a new one from the login screen."
+              : signupLink
+                ? "This email verification link is invalid or expired. Request a new registration link."
+                : "This invitation link is invalid or expired. Ask the company administrator to send a new invitation.",
+          )
+        }
 
         if (user) {
+          if (hasAuthCallback) {
+            const cleanUrl = new URL(window.location.href)
+            for (const parameter of [
+              "code",
+              "token",
+              "access_token",
+              "refresh_token",
+              "expires_in",
+              "token_type",
+              "error",
+              "error_code",
+              "error_description",
+            ]) {
+              cleanUrl.searchParams.delete(parameter)
+            }
+            cleanUrl.hash = ""
+            window.history.replaceState(
+              null,
+              "",
+              `${cleanUrl.pathname}${cleanUrl.search}`,
+            )
+          }
+
           const needsGoogleMailLink =
             window.sessionStorage.getItem("kilax.googleConnectGmail") ===
             "gmail"

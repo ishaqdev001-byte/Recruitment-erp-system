@@ -162,7 +162,7 @@ export async function GET(request: Request) {
       .select("id, name, account_type, status")
       .eq("company_id", companyId)
     const ledgerQuery = admin.from("company_account_transactions")
-      .select("account_id, direction, amount")
+      .select("account_id, direction, amount, transaction_date")
       .eq("company_id", companyId)
     const receiptsQuery = admin.from("financial_receipts")
       .select("id, entry_type, amount, received_at, category, received_from, receipt_number")
@@ -348,13 +348,28 @@ export async function GET(request: Request) {
     }, 0)
 
     const accountBalances = new Map<string, number>()
+    const accountOpeningBalances = new Map<string, number>()
+    const accountClosingBalances = new Map<string, number>()
 
     for (const entry of ledger ?? []) {
+      const signedAmount =
+        (entry.direction === "credit" ? 1 : -1) * amount(entry.amount)
       accountBalances.set(
         entry.account_id,
-        (accountBalances.get(entry.account_id) ?? 0) +
-          (entry.direction === "credit" ? 1 : -1) * amount(entry.amount),
+        (accountBalances.get(entry.account_id) ?? 0) + signedAmount,
       )
+      if (period.start && entry.transaction_date < period.start) {
+        accountOpeningBalances.set(
+          entry.account_id,
+          (accountOpeningBalances.get(entry.account_id) ?? 0) + signedAmount,
+        )
+      }
+      if (entry.transaction_date <= period.end) {
+        accountClosingBalances.set(
+          entry.account_id,
+          (accountClosingBalances.get(entry.account_id) ?? 0) + signedAmount,
+        )
+      }
     }
 
     const accountSummary = (accounts ?? []).map((account) => ({
@@ -367,6 +382,10 @@ export async function GET(request: Request) {
       status: account.status,
 
       balance: accountBalances.get(account.id) ?? 0,
+
+      openingBalance: accountOpeningBalances.get(account.id) ?? 0,
+
+      closingBalance: accountClosingBalances.get(account.id) ?? 0,
     }))
 
     const filteredReceipts = (receipts ?? []).filter((receipt) =>
@@ -633,6 +652,14 @@ export async function GET(request: Request) {
           accountBalance: accountSummary
             .filter((account) => account.status === "active")
             .reduce((sum, account) => sum + account.balance, 0),
+
+          openingBalance: accountSummary
+            .filter((account) => account.status === "active")
+            .reduce((sum, account) => sum + account.openingBalance, 0),
+
+          closingBalance: accountSummary
+            .filter((account) => account.status === "active")
+            .reduce((sum, account) => sum + account.closingBalance, 0),
 
           invoiceDue,
 

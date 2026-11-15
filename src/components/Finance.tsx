@@ -26,6 +26,8 @@ type FinanceAccount = {
   type: string
   status: string
   balance: number
+  openingBalance: number
+  closingBalance: number
 }
 
 type FinanceActivity = {
@@ -57,6 +59,8 @@ type FinanceOverview = {
     expenses: number
     net: number
     accountBalance: number
+    openingBalance: number
+    closingBalance: number
     invoiceDue: number
     candidateDeposits: number
     invoicePayments: number
@@ -70,6 +74,8 @@ type FinanceOverview = {
     type: string
     status: string
     balance: number
+    openingBalance: number
+    closingBalance: number
   }[]
   requisitionDueByCurrency: FinanceCurrencyAmount[]
   incomeBreakdown: FinanceBreakdown[]
@@ -331,6 +337,53 @@ export default function Finance() {
                 ))}
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                {[
+                  {
+                    label: "Opening balance",
+                    value: overview.totals.openingBalance,
+                    detail: overview.period.start
+                      ? `Cash carried into the period before ${overview.period.start}`
+                      : "Starting balance for all recorded activity",
+                    color: "#2563eb",
+                  },
+                  {
+                    label: "Closing balance",
+                    value: overview.totals.closingBalance,
+                    detail: `Cash position through ${overview.period.end}; carried forward as the next period's opening balance`,
+                    color: "#7c3aed",
+                  },
+                ].map((card) => (
+                  <div
+                    key={card.label}
+                    className="rounded border p-5"
+                    style={{
+                      background: "var(--card)",
+                      borderColor: "var(--border)",
+                    }}
+                  >
+                    <div
+                      className="text-xs font-700 uppercase tracking-widest mb-2"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {card.label}
+                    </div>
+                    <div
+                      className="mono text-lg font-700"
+                      style={{ color: card.color }}
+                    >
+                      {UGX(card.value)}
+                    </div>
+                    <div
+                      className="text-xs mt-1"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {card.detail}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
                 {[
                   {
@@ -583,6 +636,13 @@ export default function Finance() {
                                   {UGX(account.balance)}
                                 </span>
                               </div>
+                              <p
+                                className="text-[11px] mb-1"
+                                style={{ color: "var(--muted-foreground)" }}
+                              >
+                                Opening {UGX(account.openingBalance)} · Closing{" "}
+                                {UGX(account.closingBalance)}
+                              </p>
                               <div
                                 className="h-1.5 rounded-full overflow-hidden"
                                 style={{ background: "var(--secondary)" }}

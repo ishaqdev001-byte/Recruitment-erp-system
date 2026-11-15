@@ -1,5 +1,7 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isRecruitmentAgentRole } from "@/lib/role-access-settings";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
@@ -16,6 +18,19 @@ type StaffActivity = {
 };
 
 type Period = { start: string; end: string; endExclusive: string };
+
+function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) return null;
+  return createClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
+function normalizeCandidateStage(stage: string) {
+  return stage === "Project Submission" ? "Submitted to Project" : stage;
+}
 
 function isCalendarDate(value: string | null): value is string {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -51,27 +66,14 @@ function isWithinPeriod(value: string, period: Period) {
 
 function staffActivityFor(
   activity: Map<string, StaffActivity>,
+  staffByUserId: Map<string, string>,
+  staffByName: Map<string, string | null>,
   id: string | null | undefined,
   name: string | null | undefined,
 ) {
-  const key = id || (name?.trim() ? `name:${name.trim()}` : "unassigned");
-  const resolvedName = name?.trim() || (id ? `Staff ${id.slice(0, 8)}` : "Unassigned");
-  let item = activity.get(key);
-  if (!item) {
-    item = {
-      id: key,
-      name: resolvedName,
-      candidatesRegistered: 0,
-      inquiriesReceived: 0,
-      inquiryReminders: 0,
-      tasksCreated: 0,
-      tasksCompleted: 0,
-    };
-    activity.set(key, item);
-  } else if (name?.trim() && item.name.startsWith("Staff ")) {
-    item.name = name.trim();
-  }
-  return item;
+  const staffId = (id ? staffByUserId.get(id) : undefined)
+    ?? (name?.trim() ? staffByName.get(name.trim().toLocaleLowerCase()) : undefined);
+  return staffId ? activity.get(staffId) : undefined;
 }
 
 async function loadAll<T>(
@@ -96,7 +98,7 @@ export async function GET(request: Request) {
 
     const { data: membership, error: membershipError } = await supabase
       .from("company_memberships")
-      .select("company_id")
+      .select("company_id, branch_id")
       .eq("user_id", user.id)
       .eq("status", "active")
       .limit(1)
@@ -173,6 +175,24 @@ export async function GET(request: Request) {
     const canReadSuppliers = Boolean(canViewSuppliers);
     const canReadEmployers = Boolean(canViewEmployers);
     const canReadProjects = Boolean(canViewProjects);
+    const canReadStaffActivity = canReadCandidates || canReadInquiries || canReadTasks;
+    const { data: canViewAllBranches, error: branchAccessError } = await supabase.rpc(
+      "current_user_is_main_branch_user",
+      { requested_company_id: membership.company_id },
+    );
+    if (branchAccessError) {
+      return NextResponse.json({ error: "Unable to verify your company branch." }, { status: 503, headers });
+    }
+    if (!canViewAllBranches && !membership.branch_id) {
+      return NextResponse.json({ error: "Your account must be assigned to a branch." }, { status: 403, headers });
+    }
+    const admin = canReadStaffActivity || canReadCandidates ? createAdminClient() : null;
+    if ((canReadStaffActivity || canReadCandidates) && !admin) {
+      return NextResponse.json(
+        { error: "Reports require SUPABASE_SERVICE_ROLE_KEY in the server environment to load company rosters." },
+        { status: 503, headers },
+      );
+    }
     const url = new URL(request.url);
     const requestedStart = url.searchParams.get("start");
     const requestedEnd = url.searchParams.get("end");
@@ -187,6 +207,59 @@ export async function GET(request: Request) {
     const companyId = membership.company_id;
     const activity = new Map<string, StaffActivity>();
     const [
+      staffRows,
+      agentMemberships,
+    ] = await Promise.all([
+      canReadStaffActivity
+        ? loadAll((from, to) => {
+            let query = admin!.from("company_staff_members")
+              .select("id, linked_user_id, name, branch_id")
+              .eq("company_id", companyId)
+              .eq("status", "Active")
+              .order("name", { ascending: true })
+              .range(from, to);
+            if (!canViewAllBranches) query = query.eq("branch_id", membership.branch_id!);
+            return query;
+          })
+        : Promise.resolve([]),
+      canReadStaffActivity
+        ? loadAll((from, to) => {
+            let query = admin!.from("company_memberships")
+              .select("user_id, branch_id, role:company_roles(name)")
+              .eq("company_id", companyId)
+              .eq("status", "active")
+              .order("user_id", { ascending: true })
+              .range(from, to);
+            if (!canViewAllBranches) query = query.eq("branch_id", membership.branch_id!);
+            return query;
+          })
+        : Promise.resolve([]),
+    ]);
+    const recruitmentAgentUserIds = new Set(agentMemberships.flatMap((agent) => {
+      const role = Array.isArray(agent.role) ? agent.role[0] : agent.role;
+      return role && isRecruitmentAgentRole(role.name) ? [agent.user_id] : [];
+    }));
+    const staffByUserId = new Map<string, string>();
+    const staffByName = new Map<string, string | null>();
+    for (const staff of staffRows) {
+      if (staff.linked_user_id && recruitmentAgentUserIds.has(staff.linked_user_id)) continue;
+      activity.set(staff.id, {
+        id: staff.id,
+        name: staff.name,
+        candidatesRegistered: 0,
+        inquiriesReceived: 0,
+        inquiryReminders: 0,
+        tasksCreated: 0,
+        tasksCompleted: 0,
+      });
+      if (staff.linked_user_id) staffByUserId.set(staff.linked_user_id, staff.id);
+      if (staff.name.trim()) {
+        const key = staff.name.trim().toLocaleLowerCase();
+        staffByName.set(key, staffByName.has(key) ? null : staff.id);
+      }
+    }
+    const agentUserIds = canReadCandidates ? [...recruitmentAgentUserIds] : [];
+    const [
       candidateResult,
       inquiryRows,
       taskRows,
@@ -200,7 +273,7 @@ export async function GET(request: Request) {
               .select("id", { count: "exact", head: true })
               .eq("company_id", companyId),
             loadAll((from, to) => supabase.from("candidates")
-              .select("created_at, created_by, agent_name, agent_user_id, details")
+              .select("created_at, created_by, agent_user_id, details")
               .eq("company_id", companyId)
               .order("created_at", { ascending: true })
               .order("id", { ascending: true })
@@ -251,8 +324,21 @@ export async function GET(request: Request) {
         : Promise.resolve([]),
     ]);
     if (candidateResult?.[0].error) throw candidateResult[0].error;
+    const agentProfilesResult = agentUserIds.length
+      ? await admin!.from("profiles").select("id, display_name").in("id", agentUserIds)
+      : { data: [], error: null };
+    if (agentProfilesResult.error) throw agentProfilesResult.error;
+    const agentNames = new Map((agentProfilesResult.data ?? []).map((profile) => [profile.id, profile.display_name]));
     const totalCandidates = candidateResult?.[0].count ?? null;
     const candidateRows = candidateResult?.[1] ?? [];
+    const agents = new Map(agentUserIds.map((id) => [id, {
+      id,
+      name: agentNames.get(id) || `Agent ${id.slice(0, 8)}`,
+      totalCandidates: 0,
+      newCandidates: 0,
+      previousCandidates: 0,
+      placements: 0,
+    }]));
     let inquirySummary: { received: number; reminders: number } | null = null;
     let taskSummary: { created: number; completed: number; overdue: number } | null = null;
 
@@ -261,11 +347,11 @@ export async function GET(request: Request) {
       for (const inquiry of inquiryRows) {
         if (!isWithinPeriod(inquiry.created_at, currentPeriod)) continue;
         inquirySummary.received += 1;
-        const item = staffActivityFor(activity, inquiry.handled_by_user_id, inquiry.handled_by_name);
-        item.inquiriesReceived += 1;
+        const item = staffActivityFor(activity, staffByUserId, staffByName, inquiry.handled_by_user_id, inquiry.handled_by_name);
+        if (item) item.inquiriesReceived += 1;
         if (inquiry.last_reminded_at && isWithinPeriod(inquiry.last_reminded_at, currentPeriod)) {
           inquirySummary.reminders += 1;
-          item.inquiryReminders += 1;
+          if (item) item.inquiryReminders += 1;
         }
       }
     }
@@ -274,11 +360,23 @@ export async function GET(request: Request) {
     if (canReadCandidates) {
       for (const candidate of candidateRows) {
         const stage = typeof candidate.details?.stage === "string" && candidate.details.stage.trim()
-          ? candidate.details.stage.trim()
+          ? normalizeCandidateStage(candidate.details.stage.trim())
           : "Registration";
         stageCounts.set(stage, (stageCounts.get(stage) ?? 0) + 1);
         if (isWithinPeriod(candidate.created_at, currentPeriod)) {
-          staffActivityFor(activity, candidate.created_by, null).candidatesRegistered += 1;
+          const item = staffActivityFor(activity, staffByUserId, staffByName, candidate.created_by, null);
+          if (item) item.candidatesRegistered += 1;
+        }
+        if (candidate.agent_user_id) {
+          const agent = agents.get(candidate.agent_user_id);
+          if (agent) {
+            agent.totalCandidates += 1;
+            if (isWithinPeriod(candidate.created_at, currentPeriod)) agent.newCandidates += 1;
+            if (previousPeriod && isWithinPeriod(candidate.created_at, previousPeriod)) agent.previousCandidates += 1;
+            if (candidate.details?.stage === "Travelled" || candidate.details?.travelStatus === "Travelled") {
+              agent.placements += 1;
+            }
+          }
         }
       }
     }
@@ -290,25 +388,14 @@ export async function GET(request: Request) {
         if (!task.is_completed && task.due_at && task.due_at < now) taskSummary.overdue += 1;
         if (isWithinPeriod(task.created_at, currentPeriod)) {
           taskSummary.created += 1;
-          staffActivityFor(activity, task.created_by, null).tasksCreated += 1;
+          const item = staffActivityFor(activity, staffByUserId, staffByName, task.created_by, null);
+          if (item) item.tasksCreated += 1;
         }
         if (task.is_completed && isWithinPeriod(task.updated_at, currentPeriod)) {
           taskSummary.completed += 1;
-          staffActivityFor(activity, task.assigned_to, null).tasksCompleted += 1;
+          const item = staffActivityFor(activity, staffByUserId, staffByName, task.assigned_to, null);
+          if (item) item.tasksCompleted += 1;
         }
-      }
-    }
-
-    const staffIds = [...new Set([...activity.keys()].filter((id) => !id.startsWith("name:") && id !== "unassigned"))];
-    if (staffIds.length) {
-      const { data: profiles, error: profilesError } = await supabase.from("profiles")
-        .select("id, display_name")
-        .in("id", staffIds);
-      if (profilesError) throw profilesError;
-      const names = new Map((profiles ?? []).map((profile) => [profile.id, profile.display_name]));
-      for (const item of activity.values()) {
-        const name = names.get(item.id);
-        if (name) item.name = name;
       }
     }
 
@@ -332,25 +419,7 @@ export async function GET(request: Request) {
               ? candidateRows.filter((candidate) => isWithinPeriod(candidate.created_at, previousPeriod)).length
               : null,
             stages: [...stageCounts].map(([stage, count]) => ({ stage, count })).sort((left, right) => right.count - left.count),
-            agents: [...candidateRows.reduce((agents, candidate) => {
-              const agentId = candidate.agent_user_id || `name:${candidate.agent_name || "unassigned"}`;
-              const current = agents.get(agentId) ?? {
-                id: agentId,
-                name: candidate.agent_name || "Unassigned",
-                totalCandidates: 0,
-                newCandidates: 0,
-                previousCandidates: 0,
-                placements: 0,
-              };
-              current.totalCandidates += 1;
-              if (isWithinPeriod(candidate.created_at, currentPeriod)) current.newCandidates += 1;
-              if (previousPeriod && isWithinPeriod(candidate.created_at, previousPeriod)) current.previousCandidates += 1;
-              const details = candidate.details ?? {};
-              if (details.stage === "Travelled" || details.travelStatus === "Travelled") current.placements += 1;
-              agents.set(agentId, current);
-              return agents;
-            }, new Map<string, { id: string; name: string; totalCandidates: number; newCandidates: number; previousCandidates: number; placements: number }>()).values()]
-              .sort((left, right) => right.newCandidates - left.newCandidates),
+            agents: [...agents.values()].sort((left, right) => right.newCandidates - left.newCandidates || left.name.localeCompare(right.name)),
           }
         : null,
       inquiries: inquirySummary,
@@ -420,9 +489,7 @@ export async function GET(request: Request) {
             : null,
         } : null,
       },
-      staffActivity: [...activity.values()].filter((item) =>
-        item.candidatesRegistered || item.inquiriesReceived || item.inquiryReminders || item.tasksCreated || item.tasksCompleted,
-      ).sort((left, right) => right.candidatesRegistered + right.inquiriesReceived + right.tasksCreated + right.tasksCompleted
+      staffActivity: [...activity.values()].sort((left, right) => right.candidatesRegistered + right.inquiriesReceived + right.tasksCreated + right.tasksCompleted
         - left.candidatesRegistered - left.inquiriesReceived - left.tasksCreated - left.tasksCompleted),
     }, { headers });
   } catch (error) {

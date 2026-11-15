@@ -924,7 +924,8 @@ export default function CandidateRoster({
 
   const candidateStage = (candidate: CandidateRecord) => {
     const stage = candidate.details?.stage
-    return typeof stage === "string" && stage ? stage : "Registration"
+    if (typeof stage !== "string" || !stage) return "Registration"
+    return stage === "Project Submission" ? "Submitted to Project" : stage
   }
 
   const candidateCreatorName = (candidate: CandidateRecord) =>
@@ -2113,10 +2114,7 @@ export default function CandidateRoster({
                         : "—"}
                   </td>
                   <td className="px-3 py-2">
-                    {typeof candidate.details?.stage === "string" &&
-                    candidate.details.stage
-                      ? candidate.details.stage
-                      : "Registration"}
+                    {candidateStage(candidate)}
                   </td>
                   <td className="px-3 py-2 text-xs">
                     <span className="block whitespace-nowrap">

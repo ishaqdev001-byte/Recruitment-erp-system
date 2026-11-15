@@ -29,6 +29,24 @@ type HrProfileSummary = {
   dateJoined: string
 
   branchName: string
+
+  lineManagerName: string
+
+  phone: string
+}
+
+type HrPaycheck = {
+  id: string
+
+  pay_period: string
+
+  payment_date: string
+
+  payment_reference: string
+
+  net_amount: number
+
+  payslipUrl: string
 }
 
 type HrProfileDetails = {
@@ -89,6 +107,12 @@ type HrProfileDetails = {
   bio: string
 
   branchName: string
+
+  lineManagerName: string
+
+  profilePhotoUrl: string | null
+
+  payslips: HrPaycheck[]
 
   documents: PersonalDocument[]
 }
@@ -260,6 +284,10 @@ export default function HumanResources({
 
   const [selectedHrProfile, setSelectedHrProfile] =
     useState<HrProfileDetails | null>(null)
+
+  const [exportingProfileId, setExportingProfileId] = useState("")
+
+  const [exportError, setExportError] = useState("")
 
   const [languagesText, setLanguagesText] = useState("")
 
@@ -466,6 +494,9 @@ export default function HumanResources({
       const result = (await response.json()) as {
         staff?: HrProfileDetails
         branchName?: string
+        lineManagerName?: string
+        profilePhotoUrl?: string | null
+        payslips?: HrPaycheck[]
         documents?: PersonalDocument[]
         error?: string
       }
@@ -478,6 +509,12 @@ export default function HumanResources({
 
         branchName: result.branchName ?? "Unassigned",
 
+        lineManagerName: result.lineManagerName ?? "Not assigned",
+
+        profilePhotoUrl: result.profilePhotoUrl ?? null,
+
+        payslips: result.payslips ?? [],
+
         documents: result.documents ?? [],
       })
     } catch (loadError) {
@@ -488,6 +525,74 @@ export default function HumanResources({
       )
     } finally {
       setDetailLoading(false)
+    }
+  }
+
+  const exportHrProfile = async (staff: HrProfileDetails) => {
+    setExportingProfileId(staff.id)
+    setExportError("")
+
+    try {
+      const body = new FormData()
+      if (staff.profilePhotoUrl) {
+        const photoResponse = await fetch(staff.profilePhotoUrl, {
+          cache: "no-store",
+        })
+        if (!photoResponse.ok)
+          throw new Error("Unable to load the staff member's profile photo.")
+
+        const photo = await photoResponse.blob()
+        if (photo.type.toLowerCase() === "image/webp") {
+          const bitmap = await createImageBitmap(photo)
+          const canvas = document.createElement("canvas")
+          const scale = Math.min(
+            1,
+            1200 / bitmap.width,
+            1200 / bitmap.height,
+          )
+          canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+          canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+          const context = canvas.getContext("2d")
+          if (!context) {
+            bitmap.close()
+            throw new Error("Unable to prepare the profile photo for PDF export.")
+          }
+          context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+          bitmap.close()
+          const png = await new Promise<Blob>((resolve, reject) => {
+            canvas.toBlob((result) => {
+              if (result) resolve(result)
+              else reject(new Error("Unable to prepare the profile photo for PDF export."))
+            }, "image/png")
+          })
+          body.set("photo", png, "profile-photo.png")
+        }
+      }
+
+      const response = await fetch(
+        `/api/workspace/staff/hr-profiles/${encodeURIComponent(staff.id)}/export?companyId=${encodeURIComponent(companyId)}`,
+        { method: "POST", body },
+      )
+      if (!response.ok) {
+        const result = (await response.json()) as { error?: string }
+        throw new Error(result.error ?? "Unable to export this HR profile.")
+      }
+
+      const file = await response.blob()
+      const downloadUrl = URL.createObjectURL(file)
+      const link = document.createElement("a")
+      link.href = downloadUrl
+      link.download = `hr-profile-${staff.staff_id}.pdf`
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000)
+    } catch (exportError) {
+      setExportError(
+        exportError instanceof Error
+          ? exportError.message
+          : "Unable to export this HR profile.",
+      )
+    } finally {
+      setExportingProfileId("")
     }
   }
 
@@ -811,6 +916,8 @@ export default function HumanResources({
 
             ["Assigned position", selectedHrProfile.position],
 
+            ["Line manager", selectedHrProfile.lineManagerName],
+
             ["Branch", selectedHrProfile.branchName],
 
             ["Date joined", selectedHrProfile.date_joined],
@@ -928,7 +1035,7 @@ export default function HumanResources({
               style={{ borderColor: "var(--border)" }}
             >
               <div className="app-table-scroll">
-                <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+                <table className="w-max min-w-max border-collapse text-left text-sm">
                   <thead
                     style={{
                       background: "var(--secondary)",
@@ -942,6 +1049,8 @@ export default function HumanResources({
                         "Branch",
                         "Date joined",
                         "Position",
+                        "Line manager",
+                        "Phone",
                         "Action",
                       ].map((heading) => (
                         <th
@@ -968,6 +1077,8 @@ export default function HumanResources({
                         <td className="px-4 py-3">{staff.branchName}</td>
                         <td className="px-4 py-3">{staff.dateJoined || "—"}</td>
                         <td className="px-4 py-3">{staff.position}</td>
+                        <td className="px-4 py-3">{staff.lineManagerName}</td>
+                        <td className="px-4 py-3">{staff.phone || "—"}</td>
                         <td className="px-4 py-3">
                           <button
                             type="button"
@@ -987,7 +1098,7 @@ export default function HumanResources({
                     {!hrProfiles.length && (
                       <tr>
                         <td
-                          colSpan={6}
+                          colSpan={8}
                           className="px-4 py-10 text-center"
                           style={{ color: "var(--muted-foreground)" }}
                         >
@@ -1020,34 +1131,73 @@ export default function HumanResources({
               }}
             >
               <div className="mb-5 flex items-start justify-between gap-4">
-                <div>
-                  <h2
-                    id="hr-profile-title"
-                    className="text-xl font-700"
-                    style={{ color: "var(--foreground)" }}
-                  >
-                    {selectedHrProfile.name}
-                  </h2>
-                  <p
-                    className="mt-1 text-sm"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    {selectedHrProfile.staff_id} · {selectedHrProfile.position}{" "}
-                    · {selectedHrProfile.branchName}
-                  </p>
+                <div className="flex items-start gap-4">
+                  {selectedHrProfile.profilePhotoUrl && (
+                    <img
+                      src={selectedHrProfile.profilePhotoUrl}
+                      alt={`${selectedHrProfile.name} profile`}
+                      className="h-20 w-20 rounded-lg border object-cover"
+                      style={{ borderColor: "var(--border)" }}
+                    />
+                  )}
+                  <div>
+                    <h2
+                      id="hr-profile-title"
+                      className="text-xl font-700"
+                      style={{ color: "var(--foreground)" }}
+                    >
+                      {selectedHrProfile.name}
+                    </h2>
+                    <p
+                      className="mt-1 text-sm"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {selectedHrProfile.staff_id} · {selectedHrProfile.position}{" "}
+                      · {selectedHrProfile.branchName}
+                    </p>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedHrProfile(null)}
-                  className="rounded border px-3 py-1.5 text-sm"
-                  style={{
-                    borderColor: "var(--border)",
-                    color: "var(--foreground)",
-                  }}
-                >
-                  Close
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={exportingProfileId === selectedHrProfile.id}
+                    onClick={() => void exportHrProfile(selectedHrProfile)}
+                    className="rounded border px-3 py-1.5 text-sm font-600 disabled:opacity-50"
+                    style={{
+                      borderColor: "var(--border)",
+                      color: "var(--primary)",
+                    }}
+                  >
+                    {exportingProfileId === selectedHrProfile.id
+                      ? "Preparing PDF…"
+                      : "Export PDF"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedHrProfile(null)}
+                    className="rounded border px-3 py-1.5 text-sm"
+                    style={{
+                      borderColor: "var(--border)",
+                      color: "var(--foreground)",
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
+              {!selectedHrProfile.profilePhotoUrl && (
+                <p className="mb-4 text-sm" style={{ color: "var(--muted-foreground)" }}>
+                  No profile photo has been uploaded.
+                </p>
+              )}
+              {exportError && (
+                <div
+                  role="alert"
+                  className="mb-4 rounded border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400"
+                >
+                  {exportError}
+                </div>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 {detailGroups.map(([label, value]) => (
                   <div
@@ -1128,6 +1278,74 @@ export default function HumanResources({
                   )}
                 </section>
               ))}
+              <section className="mt-6">
+                <h3
+                  className="mb-2 text-sm font-700"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  Previous monthly payslips
+                </h3>
+                {!selectedHrProfile.payslips.length ? (
+                  <p
+                    className="text-sm"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    No captured payslips.
+                  </p>
+                ) : (
+                  <div
+                    className="overflow-x-auto rounded border"
+                    style={{ borderColor: "var(--border)" }}
+                  >
+                    <div className="app-table-scroll">
+                      <table className="w-full min-w-[760px] text-left text-sm">
+                        <thead>
+                          <tr style={{ color: "var(--muted-foreground)" }}>
+                            <th className="p-2">Pay month</th>
+                            <th className="p-2">Paycheck number</th>
+                            <th className="p-2">Payslip ID</th>
+                            <th className="p-2">Payment date</th>
+                            <th className="p-2">Net pay</th>
+                            <th className="p-2">Payslip</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedHrProfile.payslips.map((payslip) => (
+                            <tr
+                              key={payslip.id}
+                              className="border-t"
+                              style={{
+                                borderColor: "var(--border)",
+                                color: "var(--foreground)",
+                              }}
+                            >
+                              <td className="p-2">{payslip.pay_period.slice(0, 7)}</td>
+                              <td className="p-2">{payslip.payment_reference || "—"}</td>
+                              <td className="p-2 font-mono text-xs">{payslip.id}</td>
+                              <td className="p-2">{payslip.payment_date || "—"}</td>
+                              <td className="p-2">
+                                UGX {Number(payslip.net_amount).toLocaleString("en-UG")}
+                              </td>
+                              <td className="p-2">
+                                <a
+                                  href={payslip.payslipUrl}
+                                  className="rounded border px-2 py-1 text-xs font-600"
+                                  style={{
+                                    borderColor: "var(--border)",
+                                    color: "var(--primary)",
+                                  }}
+                                >
+                                  Download
+                                </a>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </section>
               <section className="mt-6">
                 <h3
                   className="mb-2 text-sm font-700"

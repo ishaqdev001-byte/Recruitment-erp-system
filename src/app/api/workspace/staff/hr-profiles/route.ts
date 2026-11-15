@@ -12,31 +12,36 @@ export const runtime = "nodejs"
 
 const headers = { "Cache-Control": "private, no-store" }
 
-const columns = [
+type StaffSummary = {
+  id: string
+  staffId: string
+  name: string
+  position: string
+  dateJoined: string
+  branchName: string
+  lineManagerName: string
+  phone: string
+}
+
+const columns: Array<{
+  header: string
+  key: keyof StaffSummary
+  width: number
+}> = [
   { header: "Staff ID", key: "staffId", width: 18 },
 
   { header: "Full name", key: "name", width: 30 },
 
-  { header: "Branch", key: "branch", width: 28 },
+  { header: "Branch", key: "branchName", width: 28 },
 
   { header: "Date joined", key: "dateJoined", width: 18 },
 
   { header: "Position", key: "position", width: 30 },
+
+  { header: "Line manager", key: "lineManagerName", width: 30 },
+
+  { header: "Phone", key: "phone", width: 20 },
 ]
-
-type StaffSummary = {
-  id: string
-
-  staffId: string
-
-  name: string
-
-  position: string
-
-  dateJoined: string
-
-  branchName: string
-}
 
 async function loadStaff(companyId: string, admin: SupabaseClient) {
   const [
@@ -46,7 +51,7 @@ async function loadStaff(companyId: string, admin: SupabaseClient) {
     admin
       .from("company_staff_members")
 
-      .select("id, staff_id, name, position, date_joined, branch_id")
+      .select("id, staff_id, name, position, phone, date_joined, branch_id, line_manager_staff_id, status")
 
       .eq("company_id", companyId)
 
@@ -66,7 +71,11 @@ async function loadStaff(companyId: string, admin: SupabaseClient) {
     (branches ?? []).map((branch) => [branch.id, branch.name]),
   )
 
-  return (staff ?? []).map((record) => ({
+  const staffById = new Map(
+    (staff ?? []).map((record) => [record.id, record]),
+  )
+
+  return (staff ?? []).filter((record) => record.status === "Active").map((record) => ({
     id: record.id,
 
     staffId: record.staff_id,
@@ -78,6 +87,13 @@ async function loadStaff(companyId: string, admin: SupabaseClient) {
     dateJoined: record.date_joined,
 
     branchName: branchNames.get(record.branch_id) ?? "Unassigned",
+
+    lineManagerName:
+      (record.line_manager_staff_id &&
+        staffById.get(record.line_manager_staff_id)?.name) ||
+      "Not assigned",
+
+    phone: record.phone ?? "",
   })) satisfies StaffSummary[]
 }
 
@@ -137,7 +153,20 @@ async function createExcel(staff: StaffSummary[]) {
     },
   })
 
-  worksheet.columns = columns
+  worksheet.columns = columns.map((column) => ({
+    ...column,
+    width: Math.min(
+      50,
+      staff.reduce(
+        (maxLength, record) =>
+          Math.max(
+            maxLength,
+            String(record[column.key] ?? "").length + 2,
+          ),
+        Math.max(10, column.header.length + 2),
+      ),
+    ),
+  }))
 
   worksheet.addRows(
     staff.map((record) => ({
@@ -145,17 +174,21 @@ async function createExcel(staff: StaffSummary[]) {
 
       name: record.name,
 
-      branch: record.branchName,
+      branchName: record.branchName,
 
       dateJoined: record.dateJoined,
 
       position: record.position,
+
+      lineManagerName: record.lineManagerName,
+
+      phone: record.phone,
     })),
   )
 
   worksheet.views = [{ state: "frozen", ySplit: 1 }]
 
-  worksheet.autoFilter = { from: "A1", to: "E1" }
+  worksheet.autoFilter = { from: "A1", to: "G1" }
 
   worksheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } }
 
@@ -213,14 +246,14 @@ async function createPdf(staff: StaffSummary[]) {
 
   const margin = 24
 
-  const widths = [78, 160, 160, 100, pageSize[0] - margin * 2 - 498]
-
   const headings = [
     "Staff ID",
     "Full name",
     "Branch",
     "Date joined",
     "Position",
+    "Line manager",
+    "Phone",
   ]
 
   const fontSize = 8
@@ -228,6 +261,34 @@ async function createPdf(staff: StaffSummary[]) {
   const lineHeight = 10
 
   const bottom = margin
+  const rows = staff.map((record) => [
+    record.staffId,
+    record.name,
+    record.branchName,
+    record.dateJoined,
+    record.position,
+    record.lineManagerName,
+    record.phone,
+  ])
+  const availableWidth = pageSize[0] - margin * 2
+  const naturalWidths = headings.map((heading, columnIndex) => {
+    const headingWidth = bold.widthOfTextAtSize(heading, fontSize)
+    const contentWidth = rows.reduce(
+      (maxWidth, row) =>
+        Math.max(
+          maxWidth,
+          regular.widthOfTextAtSize(row[columnIndex] || "-", fontSize),
+        ),
+      0,
+    )
+    return Math.max(38, headingWidth, contentWidth) + 10
+  })
+  const widthScale = Math.min(
+    1,
+    availableWidth / naturalWidths.reduce((total, width) => total + width, 0),
+  )
+  const widths = naturalWidths.map((width) => width * widthScale)
+  const tableWidth = widths.reduce((total, width) => total + width, 0)
 
   let page = pdf.addPage(pageSize)
 
@@ -269,7 +330,7 @@ async function createPdf(staff: StaffSummary[]) {
 
       y: y - 5,
 
-      width: pageSize[0] - margin * 2,
+      width: tableWidth,
 
       height: 18,
 
@@ -289,6 +350,8 @@ async function createPdf(staff: StaffSummary[]) {
         font: bold,
 
         color: rgb(1, 1, 1),
+
+        maxWidth: widths[index] - 10,
       })
 
       x += widths[index]
@@ -299,15 +362,7 @@ async function createPdf(staff: StaffSummary[]) {
 
   drawHeader()
 
-  for (const [index, record] of staff.entries()) {
-    const values = [
-      record.staffId,
-      record.name,
-      record.branchName,
-      record.dateJoined,
-      record.position,
-    ]
-
+  for (const [index, values] of rows.entries()) {
     const cellLines = values.map((value, index) =>
       wrapText(value || "-", regular, fontSize, widths[index] - 10),
     )
@@ -331,7 +386,7 @@ async function createPdf(staff: StaffSummary[]) {
 
         y: y - rowHeight + 3,
 
-        width: pageSize[0] - margin * 2,
+        width: tableWidth,
 
         height: rowHeight,
 

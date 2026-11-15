@@ -202,6 +202,7 @@ export default function Sidebar({
       )
     : permissions
   const canAccessNavigationView = (view: View) => {
+    if (view === "agent-invoices" && role === "Chairman") return false
     if (view === "expense-requests" && role === "Administration Officer")
       return false
     return (

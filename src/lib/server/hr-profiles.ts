@@ -33,7 +33,7 @@ export async function getCompanyChairmanHrAccess(companyId: string | null) {
 
   const { data: membership, error: membershipError } = await supabase
     .from("company_memberships")
-    .select("company_id")
+    .select("company_id, role_id")
     .eq("user_id", user.id)
     .eq("company_id", companyId)
     .eq("status", "active")
@@ -74,5 +74,10 @@ export async function getCompanyChairmanHrAccess(companyId: string | null) {
     };
   }
 
-  return { admin, companyId: membership.company_id };
+  return {
+    admin,
+    companyId: membership.company_id,
+    userId: user.id,
+    roleId: membership.role_id,
+  };
 }

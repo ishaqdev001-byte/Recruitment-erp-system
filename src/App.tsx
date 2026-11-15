@@ -686,6 +686,12 @@ function canAccessSessionView(
 ) {
   if (!workspaceSession) return false
   if (
+    view === "agent-invoices" &&
+    workspaceSession.role === "Chairman"
+  ) {
+    return false
+  }
+  if (
     view === "expense-requests" &&
     workspaceSession.role === "Administration Officer"
   ) {

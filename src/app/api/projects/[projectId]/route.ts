@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import {
   getProjectAssignmentContext,
@@ -11,16 +10,6 @@ import {
 
 export const runtime = "nodejs";
 const responseHeaders = { "Cache-Control": "private, no-store" };
-
-function createAdminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceRoleKey) return null;
-
-  return createClient(url, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
 
 export async function PATCH(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
@@ -91,14 +80,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
         }
       }
 
-      const admin = createAdminClient();
-      if (!admin) {
-        return NextResponse.json(
-          { error: "Project assignment requires the server service-role configuration." },
-          { status: 503, headers: responseHeaders },
-        );
-      }
-      let assignmentQuery = admin
+      let assignmentQuery = access.supabase
         .from("projects")
         .update({ assigned_staff_id: staffId })
         .eq("id", projectId)
@@ -118,6 +100,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
           details: assignmentError.details,
           hint: assignmentError.hint,
         });
+        if (assignmentError.code === "42501") {
+          return NextResponse.json(
+            { error: "You do not have permission to assign staff to this project." },
+            { status: 403, headers: responseHeaders },
+          );
+        }
         if (["23503", "23514"].includes(assignmentError.code ?? "")) {
           return NextResponse.json(
             {

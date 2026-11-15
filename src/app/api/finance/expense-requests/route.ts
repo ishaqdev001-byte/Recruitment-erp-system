@@ -182,8 +182,14 @@ export async function GET() {
     const { data: requests, error } = await query
     if (error) {
       console.error("Expense request list failed", error)
+      const migrationMissing =
+        error.code === "42P01" || error.code === "PGRST205"
       return NextResponse.json(
-        { error: "Unable to load expense requests. Apply the expense requests migration first." },
+        {
+          error: migrationMissing
+            ? "Expense-request data is unavailable. Apply the expense requests migration first."
+            : "Unable to load expense requests. Please try again or contact an administrator.",
+        },
         { status: 503, headers },
       )
     }

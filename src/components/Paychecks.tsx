@@ -4,6 +4,12 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Download, Plus, Search } from "lucide-react";
 import { SearchableMultiSelect, SearchableSelect } from "./SearchableSelect";
 import { matchesSearch } from "@/lib/search";
+import {
+  calculateMonthlyTransportAllowance,
+  DEFAULT_WORK_SCHEDULE,
+  getWorkingDaysInMonth,
+  type CompanyWorkCalendar,
+} from "@/lib/payroll/transport-allowance";
 
 type StaffOption = {
   id: string;
@@ -13,6 +19,7 @@ type StaffOption = {
   pay_type: "payroll" | "project" | "no_payroll";
   base_salary: number;
   weekly_transport_allowance: number;
+  transport_account_mode: "fixed" | "random";
   transport_account_id: string | null;
   date_joined: string;
 };
@@ -50,7 +57,7 @@ type PayrollAdjustment = {
   employee: StaffOption;
   blockedByUnpaidLeave?: boolean;
 };
-type PayrollPayload = { paychecks?: PaycheckRecord[]; staff?: StaffOption[]; accounts?: AccountOption[]; company?: { name: string; logo_url: string | null }; permissions?: { canRecord?: boolean }; error?: string };
+type PayrollPayload = { paychecks?: PaycheckRecord[]; staff?: StaffOption[]; accounts?: AccountOption[]; company?: { name: string; logo_url: string | null }; workCalendar?: CompanyWorkCalendar; permissions?: { canRecord?: boolean }; error?: string };
 type AdjustmentsPayload = { adjustments?: PayrollAdjustment[]; referencePreview?: string; error?: string };
 
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
@@ -64,6 +71,10 @@ export default function Paychecks() {
   const [adjustments, setAdjustments] = useState<PayrollAdjustment[]>([]);
   const [staff, setStaff] = useState<StaffOption[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [workCalendar, setWorkCalendar] = useState<CompanyWorkCalendar>({
+    schedule: DEFAULT_WORK_SCHEDULE,
+    closureDates: [],
+  });
   const [referencePreview, setReferencePreview] = useState("");
   const [canRecord, setCanRecord] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -107,6 +118,10 @@ export default function Paychecks() {
           setPaychecks(payload.paychecks ?? []);
           setStaff(payload.staff ?? []);
           setAccounts(payload.accounts ?? []);
+          setWorkCalendar(payload.workCalendar ?? {
+            schedule: DEFAULT_WORK_SCHEDULE,
+            closureDates: [],
+          });
           setCanRecord(Boolean(payload.permissions?.canRecord));
           setAdjustments(adjustmentPayload.adjustments ?? []);
           setReferencePreview(adjustmentPayload.referencePreview ?? "");
@@ -135,7 +150,12 @@ export default function Paychecks() {
   const selectedAdjustments = adjustments.filter((adjustment) => adjustment.staff_member_id === staffMemberId && adjustment.pay_period === payPeriod && !adjustment.paycheck_id);
   const monthBenefits = selectedAdjustments.filter((adjustment) => adjustment.adjustment_type === "benefit").reduce((sum, item) => sum + Number(item.amount), 0);
   const monthDeductions = selectedAdjustments.filter((adjustment) => adjustment.adjustment_type === "deduction").reduce((sum, item) => sum + Number(item.amount), 0);
-  const monthlyTransportAllowance = Math.round((Number(selectedStaff?.weekly_transport_allowance ?? 0) * 52 / 12) * 100) / 100;
+  const monthlyTransportAllowance = calculateMonthlyTransportAllowance(
+    Number(selectedStaff?.weekly_transport_allowance ?? 0),
+    payPeriod,
+    workCalendar.schedule,
+    workCalendar.closureDates,
+  );
   const netEstimate = (Number(baseSalary) || 0) + monthBenefits + monthlyTransportAllowance - monthDeductions;
 
   const resetPayment = () => {
@@ -287,18 +307,18 @@ export default function Paychecks() {
 
       {showPayment && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setShowPayment(false); }}>
         <form onSubmit={recordPayment} className="max-h-[92dvh] w-full max-w-3xl overflow-y-auto rounded border p-5 sm:p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-          <div className="mb-5 flex items-start justify-between gap-4"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Record monthly payment</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Weekly transport allowance is converted to a monthly benefit and paid from its selected account.</p></div><button type="button" disabled={saving} onClick={() => setShowPayment(false)} aria-label="Close payment form" className="px-2 text-lg" style={{ color: "var(--muted-foreground)" }}>×</button></div>
+          <div className="mb-5 flex items-start justify-between gap-4"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Record monthly payment</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>The transport benefit is based on this month's scheduled working days, excluding company closures. Fixed accounts are preselected; Finance chooses a random account here.</p></div><button type="button" disabled={saving} onClick={() => setShowPayment(false)} aria-label="Close payment form" className="px-2 text-lg" style={{ color: "var(--muted-foreground)" }}>×</button></div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Employee<SearchableSelect required ariaLabel="Search payroll employee" value={staffMemberId} onChange={(id) => { const member = configuredPayrollStaff.find((staffMember) => staffMember.id === id); setStaffMemberId(id); setBaseSalary(member ? String(member.base_salary) : ""); setAccountId(member?.weekly_transport_allowance ? member.transport_account_id ?? "" : ""); }} options={paycheckStaffOptions} placeholder="Type a name or staff ID" className="mt-1 normal-case tracking-normal" /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Employee<SearchableSelect required ariaLabel="Search payroll employee" value={staffMemberId} onChange={(id) => { const member = configuredPayrollStaff.find((staffMember) => staffMember.id === id); setStaffMemberId(id); setBaseSalary(member ? String(member.base_salary) : ""); setAccountId(member?.weekly_transport_allowance && member.transport_account_mode === "fixed" ? member.transport_account_id ?? "" : ""); }} options={paycheckStaffOptions} placeholder="Type a name or staff ID" className="mt-1 normal-case tracking-normal" /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Pay month<input required type="month" value={payPeriod.slice(0, 7)} onChange={(event) => setPayPeriod(`${event.target.value}-01`)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Base salary (UGX/month)<input required readOnly type="number" min="0.01" step="0.01" value={baseSalary} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none read-only:opacity-80" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment date<input required type="date" max={today()} value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>{payMethods.map((method) => <option key={method}>{method}</option>)}</select></label>
-            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Pay from account<SearchableSelect required disabled={Boolean(selectedStaff?.weekly_transport_allowance)} ariaLabel="Choose payroll account" value={accountId} onChange={setAccountId} options={accounts.map((account) => ({ value: account.id, label: account.name, description: account.account_type.replace(/_/g, " "), searchText: account.account_number }))} placeholder="Select the account funding payroll" className="mt-1 normal-case tracking-normal" /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>{selectedStaff?.weekly_transport_allowance && selectedStaff.transport_account_mode === "fixed" ? "Fixed funding account" : "Pay from account"}<SearchableSelect required disabled={Boolean(selectedStaff?.weekly_transport_allowance && selectedStaff.transport_account_mode === "fixed")} ariaLabel="Choose payroll account" value={accountId} onChange={setAccountId} options={accounts.map((account) => ({ value: account.id, label: account.name, description: account.account_type.replace(/_/g, " "), searchText: account.account_number }))} placeholder="Select the account funding payroll" className="mt-1 normal-case tracking-normal" /></label>
           </div>
           <div className="mt-4 rounded border p-3 text-sm" style={{ borderColor: "var(--border)", background: "var(--secondary)" }}>
             <div className="flex flex-wrap justify-between gap-2"><span style={{ color: "var(--muted-foreground)" }}>Recorded benefits</span><span style={{ color: "#17845b" }}>{formatMoney(monthBenefits)}</span></div>
-            {monthlyTransportAllowance > 0 && <div className="mt-1 flex flex-wrap justify-between gap-2"><span style={{ color: "var(--muted-foreground)" }}>Weekly transport allowance ({formatMoney(Number(selectedStaff?.weekly_transport_allowance))}/week)</span><span style={{ color: "#17845b" }}>{formatMoney(monthlyTransportAllowance)}</span></div>}
+            {monthlyTransportAllowance > 0 && <div className="mt-1 flex flex-wrap justify-between gap-2"><span style={{ color: "var(--muted-foreground)" }}>Transport allowance ({formatMoney(Number(selectedStaff?.weekly_transport_allowance))}/week · {getWorkingDaysInMonth(payPeriod, workCalendar.schedule, workCalendar.closureDates)} working days)</span><span style={{ color: "#17845b" }}>{formatMoney(monthlyTransportAllowance)}</span></div>}
             <div className="mt-1 flex flex-wrap justify-between gap-2"><span style={{ color: "var(--muted-foreground)" }}>Recorded deductions</span><span style={{ color: "#c2413a" }}>{formatMoney(monthDeductions)}</span></div>
             <div className="mt-2 flex flex-wrap justify-between gap-2 border-t pt-2 font-700" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><span>Estimated net pay</span><span>{formatMoney(netEstimate)}</span></div>
           </div>

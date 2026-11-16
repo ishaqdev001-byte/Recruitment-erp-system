@@ -13,6 +13,14 @@ import { useEffect, useState, type FormEvent } from "react"
 import { SearchableSelect } from "./SearchableSelect"
 
 import {
+  calculateMonthlyTransportAllowance,
+  DEFAULT_WORK_SCHEDULE,
+  getCurrentPayPeriod,
+  getWorkingDaysInMonth,
+  type CompanyWorkCalendar,
+} from "@/lib/payroll/transport-allowance"
+
+import {
   DEFAULT_ROLE_ACCESS_SETTINGS,
   isPrimaryAdministratorRole,
   isRecruitmentAgentRestrictedPermission,
@@ -67,6 +75,8 @@ type RolePermissionRecord = { role_id: string; permission_code: string }
 
 type StaffPayType = "payroll" | "project" | "no_payroll"
 
+type TransportAccountMode = "fixed" | "random"
+
 type StaffAccount = {
   id: string
 
@@ -104,6 +114,8 @@ type StaffRecord = {
 
   weeklyTransportAllowance: number
 
+  transportAccountMode: TransportAccountMode
+
   transportAccountId: string
 }
 
@@ -122,6 +134,7 @@ type UserEditForm = {
   payType: StaffPayType
   baseSalary: string
   weeklyTransportAllowance: string
+  transportAccountMode: TransportAccountMode
   transportAccountId: string
 }
 
@@ -601,6 +614,8 @@ const emptyStaffForm = {
 
   weeklyTransportAllowance: "0",
 
+  transportAccountMode: "fixed" as TransportAccountMode,
+
   transportAccountId: "",
 }
 
@@ -614,6 +629,8 @@ const emptyInvitedStaffForm = {
   baseSalary: "",
 
   weeklyTransportAllowance: "0",
+
+  transportAccountMode: "fixed" as TransportAccountMode,
 
   transportAccountId: "",
 
@@ -635,6 +652,7 @@ const emptyUserEditForm = (): UserEditForm => ({
   payType: "no_payroll",
   baseSalary: "0",
   weeklyTransportAllowance: "0",
+  transportAccountMode: "fixed",
   transportAccountId: "",
 })
 
@@ -688,6 +706,11 @@ export default function UsersRoles({
 
   const [staffAccounts, setStaffAccounts] = useState<StaffAccount[]>([])
 
+  const [workCalendar, setWorkCalendar] = useState<CompanyWorkCalendar>({
+    schedule: DEFAULT_WORK_SCHEDULE,
+    closureDates: [],
+  })
+
   const [staffBranches, setStaffBranches] = useState<BranchOption[]>([])
 
   const [staffBranchSelectionRequired, setStaffBranchSelectionRequired] =
@@ -729,6 +752,9 @@ export default function UsersRoles({
     useState<"email-link" | "default-password">("email-link")
 
   const [userType, setUserType] = useState<"member" | "staff">("member")
+
+  const [inviteStep, setInviteStep] =
+    useState<"account-type" | "staff-search" | "details">("account-type")
 
   const [userTypeFilter, setUserTypeFilter] =
     useState<"all" | "staff" | "member">("all")
@@ -894,6 +920,8 @@ export default function UsersRoles({
 
           accounts?: StaffAccount[]
 
+          workCalendar?: CompanyWorkCalendar
+
           branches?: BranchOption[]
 
           branchSelectionRequired?: boolean
@@ -912,6 +940,13 @@ export default function UsersRoles({
           setStaffMembers(result.staff ?? [])
 
           setStaffAccounts(result.accounts ?? [])
+
+          setWorkCalendar(
+            result.workCalendar ?? {
+              schedule: DEFAULT_WORK_SCHEDULE,
+              closureDates: [],
+            },
+          )
 
           setStaffBranches(result.branches ?? [])
 
@@ -1145,6 +1180,7 @@ export default function UsersRoles({
         payType: staff?.payType ?? "no_payroll",
         baseSalary: String(staff?.baseSalary ?? 0),
         weeklyTransportAllowance: String(staff?.weeklyTransportAllowance ?? 0),
+        transportAccountMode: staff?.transportAccountMode ?? "fixed",
         transportAccountId: staff?.transportAccountId ?? "",
       })
       setEditingUserType(user)
@@ -1203,6 +1239,7 @@ export default function UsersRoles({
                   baseSalary: editUserForm.baseSalary,
                   weeklyTransportAllowance:
                     editUserForm.weeklyTransportAllowance,
+                  transportAccountMode: editUserForm.transportAccountMode,
                   transportAccountId: editUserForm.transportAccountId,
                 },
               }
@@ -1574,6 +1611,8 @@ export default function UsersRoles({
 
       weeklyTransportAllowance: String(member.weeklyTransportAllowance),
 
+      transportAccountMode: member.transportAccountMode,
+
       transportAccountId: member.transportAccountId,
     })
 
@@ -1880,6 +1919,24 @@ export default function UsersRoles({
   const selectedExistingStaff = staffMembers.find(
     (staff) => staff.id === selectedExistingStaffId,
   )
+  const currentPayrollPeriod = getCurrentPayPeriod()
+  const currentPayrollWorkingDays = getWorkingDaysInMonth(
+    currentPayrollPeriod,
+    workCalendar.schedule,
+    workCalendar.closureDates,
+  )
+  const staffMonthlyTransportBenefit = calculateMonthlyTransportAllowance(
+    Number(staffForm.weeklyTransportAllowance),
+    currentPayrollPeriod,
+    workCalendar.schedule,
+    workCalendar.closureDates,
+  )
+  const invitedMonthlyTransportBenefit = calculateMonthlyTransportAllowance(
+    Number(invitedStaffForm.weeklyTransportAllowance),
+    currentPayrollPeriod,
+    workCalendar.schedule,
+    workCalendar.closureDates,
+  )
   const staffNameMatches =
     userType === "staff" &&
     !selectedExistingStaff &&
@@ -1907,9 +1964,39 @@ export default function UsersRoles({
       payType: staff.payType,
       baseSalary: String(staff.baseSalary),
       weeklyTransportAllowance: String(staff.weeklyTransportAllowance),
+      transportAccountMode: staff.transportAccountMode,
       transportAccountId: staff.transportAccountId,
       lineManagerStaffId: staff.lineManagerStaffId,
     })
+    setInviteStep("details")
+  }
+
+  const openNewUser = () => {
+    setError("")
+    setUserName("")
+    setUserPhone("")
+    setUserEmail("")
+    setSelectedExistingStaffId("")
+    setUserDefaultPassword("")
+    setUserInviteMode("email-link")
+    setUserType("member")
+    setInviteStep("account-type")
+    setInvitedStaffForm(emptyInvitedStaffForm)
+    setShowNewUser(true)
+  }
+
+  const closeNewUser = () => {
+    setShowNewUser(false)
+    setError("")
+    setUserName("")
+    setUserPhone("")
+    setUserEmail("")
+    setSelectedExistingStaffId("")
+    setUserDefaultPassword("")
+    setUserInviteMode("email-link")
+    setUserType("member")
+    setInviteStep("account-type")
+    setInvitedStaffForm(emptyInvitedStaffForm)
   }
 
   return (
@@ -1935,7 +2022,7 @@ export default function UsersRoles({
         {tab === "users" ? (
           <button
             type="button"
-            onClick={() => setShowNewUser(true)}
+            onClick={openNewUser}
             disabled={!data.roles.length}
             className="rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
             style={{
@@ -3075,28 +3162,17 @@ export default function UsersRoles({
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) {
-              setShowNewUser(false)
-
-              setError("")
-
-              setUserDefaultPassword("")
-
-              setUserInviteMode("email-link")
-
-              setUserType("member")
-
-              setUserName("")
-              setUserPhone("")
-              setUserEmail("")
-              setSelectedExistingStaffId("")
-
-              setInvitedStaffForm(emptyInvitedStaffForm)
-            }
+            if (e.target === e.currentTarget) closeNewUser()
           }}
         >
           <form
-            onSubmit={submitUser}
+            onSubmit={(event) => {
+              if (inviteStep !== "details") {
+                event.preventDefault()
+                return
+              }
+              void submitUser(event)
+            }}
             className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded border p-6"
             style={{ background: "var(--card)", borderColor: "var(--border)" }}
           >
@@ -3105,28 +3181,15 @@ export default function UsersRoles({
                 className="text-lg font-700"
                 style={{ color: "var(--foreground)" }}
               >
-                Add company user
+                {inviteStep === "account-type"
+                  ? "Invite company user"
+                  : inviteStep === "staff-search"
+                    ? "Find staff member"
+                    : "Complete account details"}
               </h2>
               <button
                 type="button"
-                onClick={() => {
-                  setShowNewUser(false)
-
-                  setError("")
-
-                  setUserDefaultPassword("")
-
-                  setUserInviteMode("email-link")
-
-                  setUserType("member")
-
-                  setUserName("")
-                  setUserPhone("")
-                  setUserEmail("")
-                  setSelectedExistingStaffId("")
-
-                  setInvitedStaffForm(emptyInvitedStaffForm)
-                }}
+                onClick={closeNewUser}
                 className="rounded p-1 text-xs leading-none"
                 style={{ color: "var(--muted-foreground)" }}
               >
@@ -3134,87 +3197,152 @@ export default function UsersRoles({
               </button>
             </div>
 
-            {}
-            <div
-              className="mb-5 flex rounded border overflow-hidden text-xs font-600"
-              style={{ borderColor: "var(--border)" }}
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setUserInviteMode("email-link")
-
-                  setError("")
-                }}
-                className="flex-1 px-3 py-2 transition-colors"
-                style={{
-                  background:
-                    userInviteMode === "email-link"
-                      ? "var(--primary)"
-                      : "var(--secondary)",
-
-                  color:
-                    userInviteMode === "email-link"
-                      ? "var(--primary-foreground)"
-                      : "var(--muted-foreground)",
-                }}
+            {inviteStep === "account-type" && (
+              <section
+                className="space-y-4"
+                aria-labelledby="invite-account-type-heading"
               >
-                Send invite link
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setUserInviteMode("default-password")
-
-                  setError("")
-                }}
-                className="flex-1 px-3 py-2 transition-colors"
-                style={{
-                  background:
-                    userInviteMode === "default-password"
-                      ? "var(--primary)"
-                      : "var(--secondary)",
-
-                  color:
-                    userInviteMode === "default-password"
-                      ? "var(--primary-foreground)"
-                      : "var(--muted-foreground)",
-                }}
-              >
-                Set default password
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <label
-                className="block text-xs font-700 uppercase tracking-wider"
-                style={{ color: "var(--muted-foreground)" }}
-              >
-                Full name
-                <input
-                  required
-                  maxLength={200}
-                  value={userName}
-                  onChange={(e) => {
-                    const value = e.target.value
-                    if (
-                      selectedExistingStaffId &&
-                      value !== selectedExistingStaff?.name
-                    ) {
-                      setSelectedExistingStaffId("")
-                      setUserPhone("")
-                      setInvitedStaffForm(emptyInvitedStaffForm)
-                    }
-                    setUserName(value)
+                <div>
+                  <h3
+                    id="invite-account-type-heading"
+                    className="text-sm font-600"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    Choose the account type
+                  </h3>
+                  <p
+                    className="mt-1 text-xs"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Staff accounts link to a registered staff profile. Member
+                    accounts do not create or link a staff record.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserType("staff")
+                    setUserName("")
+                    setUserPhone("")
+                    setUserEmail("")
+                    setSelectedExistingStaffId("")
+                    setInvitedStaffForm(emptyInvitedStaffForm)
+                    setInviteStep("staff-search")
                   }}
-                  className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
-                  style={fieldStyle}
-                />
+                  className="w-full rounded border p-4 text-left"
+                  style={{
+                    borderColor: "var(--border)",
+                    background: "var(--secondary)",
+                  }}
+                >
+                  <span
+                    className="block text-sm font-600"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    Staff
+                  </span>
+                  <span
+                    className="mt-1 block text-xs"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Search the company staff roster and use the selected
+                    person’s saved details.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserType("member")
+                    setUserName("")
+                    setUserPhone("")
+                    setUserEmail("")
+                    setSelectedExistingStaffId("")
+                    setInvitedStaffForm(emptyInvitedStaffForm)
+                    setInviteStep("details")
+                  }}
+                  className="w-full rounded border p-4 text-left"
+                  style={{
+                    borderColor: "var(--border)",
+                    background: "var(--secondary)",
+                  }}
+                >
+                  <span
+                    className="block text-sm font-600"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    Member
+                  </span>
+                  <span
+                    className="mt-1 block text-xs"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Create a company user without a linked staff roster record.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={closeNewUser}
+                  className="w-full rounded border py-2 text-sm"
+                  style={{
+                    borderColor: "var(--border)",
+                    color: "var(--muted-foreground)",
+                  }}
+                >
+                  Cancel
+                </button>
+              </section>
+            )}
+
+            {inviteStep === "staff-search" && (
+              <section
+                className="space-y-4"
+                aria-labelledby="invite-staff-search-heading"
+              >
+                <div>
+                  <h3
+                    id="invite-staff-search-heading"
+                    className="text-sm font-600"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    Search for the registered staff member
+                  </h3>
+                  <p
+                    className="mt-1 text-xs"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Enter at least two characters of their full name. Selecting
+                    a result will fill in their staff details.
+                  </p>
+                </div>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Full name
+                  <input
+                    autoFocus
+                    autoComplete="off"
+                    maxLength={200}
+                    value={userName}
+                    onChange={(event) => setUserName(event.target.value)}
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                    style={fieldStyle}
+                    placeholder="Start typing a staff member’s name"
+                  />
+                </label>
+                {staffLoading && (
+                  <p
+                    className="text-xs"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Loading available staff…
+                  </p>
+                )}
                 {staffNameMatches.length > 0 && (
                   <div
                     role="listbox"
                     aria-label="Matching unlinked staff"
-                    className="mt-1 max-h-48 overflow-y-auto rounded border py-1 shadow-lg"
+                    className="max-h-56 overflow-y-auto rounded border py-1"
                     style={{
                       background: "var(--card)",
                       borderColor: "var(--border)",
@@ -3230,7 +3358,7 @@ export default function UsersRoles({
                         className="block w-full px-3 py-2 text-left hover:bg-black/5"
                       >
                         <span
-                          className="block text-sm"
+                          className="block text-sm font-600"
                           style={{ color: "var(--foreground)" }}
                         >
                           {staff.name}
@@ -3248,281 +3376,375 @@ export default function UsersRoles({
                     ))}
                   </div>
                 )}
-                {userType === "staff" && !selectedExistingStaff && (
-                  <span
-                    className="mt-1 block text-xs normal-case tracking-normal"
-                    style={{ color: "var(--muted-foreground)" }}
+                {userName.trim().length >= 2 &&
+                  !staffLoading &&
+                  !staffNameMatches.length && (
+                    <p
+                      className="text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      No available staff match found. You can create a new staff
+                      profile instead.
+                    </p>
+                  )}
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setInviteStep("account-type")}
+                    className="flex-1 rounded border py-2 text-sm"
+                    style={{
+                      borderColor: "var(--border)",
+                      color: "var(--muted-foreground)",
+                    }}
                   >
-                    Select an existing staff match to reuse its saved details,
-                    or continue to create a new staff profile.
-                  </span>
-                )}
-                {userType === "member" && (
-                  <span
-                    className="mt-1 block text-xs normal-case tracking-normal"
-                    style={{ color: "var(--muted-foreground)" }}
+                    Back
+                  </button>
+                  {!staffLoading && !staffNameMatches.length && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedExistingStaffId("")
+                        setUserPhone("")
+                        setInvitedStaffForm(emptyInvitedStaffForm)
+                        setInviteStep("details")
+                      }}
+                      className="flex-1 rounded border py-2 text-sm"
+                      style={{
+                        borderColor: "var(--border)",
+                        color: "var(--foreground)",
+                      }}
+                    >
+                      Add new staff profile
+                    </button>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {inviteStep === "details" && (
+              <>
+                <div
+                  className="mb-5 flex rounded border overflow-hidden text-xs font-600"
+                  style={{ borderColor: "var(--border)" }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserInviteMode("email-link")
+
+                      setError("")
+                    }}
+                    className="flex-1 px-3 py-2 transition-colors"
+                    style={{
+                      background:
+                        userInviteMode === "email-link"
+                          ? "var(--primary)"
+                          : "var(--secondary)",
+
+                      color:
+                        userInviteMode === "email-link"
+                          ? "var(--primary-foreground)"
+                          : "var(--muted-foreground)",
+                    }}
                   >
-                    Choose Staff as the account type below to search the staff
-                    roster by name.
-                  </span>
-                )}
-                {selectedExistingStaff && (
-                  <span
-                    className="mt-1 block text-xs normal-case tracking-normal"
-                    style={{ color: "var(--muted-foreground)" }}
+                    Send invite link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserInviteMode("default-password")
+
+                      setError("")
+                    }}
+                    className="flex-1 px-3 py-2 transition-colors"
+                    style={{
+                      background:
+                        userInviteMode === "default-password"
+                          ? "var(--primary)"
+                          : "var(--secondary)",
+
+                      color:
+                        userInviteMode === "default-password"
+                          ? "var(--primary-foreground)"
+                          : "var(--muted-foreground)",
+                    }}
                   >
-                    This account will be linked to the selected staff record.
-                  </span>
-                )}
-              </label>
-              <label
-                className="block text-xs font-700 uppercase tracking-wider"
-                style={{ color: "var(--muted-foreground)" }}
-              >
-                Email address
-                <input
-                  required
-                  type="email"
-                  value={userEmail}
-                  onChange={(e) => setUserEmail(e.target.value)}
-                  className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
-                  style={fieldStyle}
-                />
-              </label>
-              <label
-                className="block text-xs font-700 uppercase tracking-wider"
-                style={{ color: "var(--muted-foreground)" }}
-              >
-                Phone number
-                <input
-                  required={userInviteMode === "email-link"}
-                  type="tel"
-                  maxLength={100}
-                  value={userPhone}
-                  onChange={(event) => setUserPhone(event.target.value)}
-                  className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
-                  style={fieldStyle}
-                />
-              </label>
-              <label
-                className="block text-xs font-700 uppercase tracking-wider"
-                style={{ color: "var(--muted-foreground)" }}
-              >
-                Role
-                <select
-                  required
-                  value={userRoleId}
-                  onChange={(e) => setUserRoleId(e.target.value)}
-                  className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
-                  style={fieldStyle}
-                >
-                  {data.roles
+                    Set default password
+                  </button>
+                </div>
 
-                    .filter((role) => !isPrimaryAdministratorRole(role.name))
-
-                    .map((role) => (
-                      <option key={role.id} value={role.id}>
-                        {role.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label
-                className="block text-xs font-700 uppercase tracking-wider"
-                style={{ color: "var(--muted-foreground)" }}
-              >
-                Account type
-                <select
-                  required
-                  value={userType}
-                  onChange={(event) => {
-                    const value = event.target.value as typeof userType
-
-                    if (value !== "staff") {
-                      setSelectedExistingStaffId("")
-                      setInvitedStaffForm(emptyInvitedStaffForm)
-                    }
-                    setUserType(value)
-                  }}
-                  className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
-                  style={fieldStyle}
-                >
-                  <option value="member">Member — users table only</option>
-                  <option value="staff">Staff — users and staff tables</option>
-                </select>
-              </label>
-              <label
-                className="block text-xs font-700 uppercase tracking-wider"
-                style={{ color: "var(--muted-foreground)" }}
-              >
-                Branch
-                <select
-                  required
-                  value={userBranchId}
-                  disabled={Boolean(selectedExistingStaff)}
-                  onChange={(e) => {
-                    setUserBranchId(e.target.value)
-
-                    setInvitedStaffForm((current) => ({
-                      ...current,
-
-                      lineManagerStaffId: "",
-
-                      transportAccountId: "",
-                    }))
-                  }}
-                  className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
-                  style={fieldStyle}
-                >
-                  <option value="" disabled>
-                    Select a branch
-                  </option>
-                  {branches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {userType === "staff" && (
-                <>
+                <div className="space-y-4">
+                  {selectedExistingStaff ? (
+                    <section
+                      className="rounded border p-3"
+                      style={{ borderColor: "var(--border)" }}
+                      aria-label="Selected staff profile"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p
+                            className="text-sm font-600"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            {selectedExistingStaff.name}
+                          </p>
+                          <p
+                            className="mt-1 text-xs"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            {selectedExistingStaff.staffId} ·{" "}
+                            {selectedExistingStaff.position ||
+                              "Position not set"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedExistingStaffId("")
+                            setUserPhone("")
+                            setInvitedStaffForm(emptyInvitedStaffForm)
+                            setInviteStep("staff-search")
+                          }}
+                          className="shrink-0 text-xs font-600"
+                          style={{ color: "var(--primary)" }}
+                        >
+                          Change
+                        </button>
+                      </div>
+                      <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                        {[
+                          [
+                            "Phone",
+                            userPhone.trim() || "Not provided",
+                          ],
+                          [
+                            "Branch",
+                            branches.find(
+                              (branch) =>
+                                branch.id === selectedExistingStaff.branchId,
+                            )?.name ?? "Company branch",
+                          ],
+                          [
+                            "Line manager",
+                            staffMembers.find(
+                              (staff) =>
+                                staff.id ===
+                                selectedExistingStaff.lineManagerStaffId,
+                            )?.name ?? "None",
+                          ],
+                          [
+                            "Joined",
+                            selectedExistingStaff.dateJoined || "Not provided",
+                          ],
+                          [
+                            "Pay arrangement",
+                            selectedExistingStaff.payType.replace(/_/g, " "),
+                          ],
+                          [
+                            "Monthly salary",
+                            selectedExistingStaff.baseSalary
+                              ? `${selectedExistingStaff.baseSalary}`
+                              : "Not applicable",
+                          ],
+                          [
+                            "Weekly transport",
+                            selectedExistingStaff.weeklyTransportAllowance
+                              ? `${selectedExistingStaff.weeklyTransportAllowance}`
+                              : "0",
+                          ],
+                        ].map(([label, value]) => (
+                          <div key={label}>
+                            <dt style={{ color: "var(--muted-foreground)" }}>
+                              {label}
+                            </dt>
+                            <dd
+                              className="mt-0.5 font-500"
+                              style={{ color: "var(--foreground)" }}
+                            >
+                              {value}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </section>
+                  ) : (
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Full name
+                      <input
+                        required
+                        maxLength={200}
+                        value={userName}
+                        onChange={(event) => setUserName(event.target.value)}
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                        style={fieldStyle}
+                      />
+                    </label>
+                  )}
                   <label
                     className="block text-xs font-700 uppercase tracking-wider"
                     style={{ color: "var(--muted-foreground)" }}
                   >
-                    Position
+                    Email address
                     <input
                       required
-                      maxLength={150}
-                      value={invitedStaffForm.position}
-                      disabled={Boolean(selectedExistingStaff)}
-                      onChange={(event) =>
-                        setInvitedStaffForm((current) => ({
-                          ...current,
-
-                          position: event.target.value,
-                        }))
-                      }
+                      type="email"
+                      value={userEmail}
+                      onChange={(e) => setUserEmail(e.target.value)}
                       className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                       style={fieldStyle}
-                      placeholder="Position"
                     />
                   </label>
+                  {(!selectedExistingStaff || !userPhone.trim()) && (
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Phone number
+                      <input
+                        required={userInviteMode === "email-link"}
+                        type="tel"
+                        maxLength={100}
+                        value={userPhone}
+                        onChange={(event) => setUserPhone(event.target.value)}
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                        style={fieldStyle}
+                      />
+                    </label>
+                  )}
                   <label
                     className="block text-xs font-700 uppercase tracking-wider"
                     style={{ color: "var(--muted-foreground)" }}
                   >
-                    Line manager
+                    Role
                     <select
-                      value={invitedStaffForm.lineManagerStaffId}
-                      disabled={Boolean(selectedExistingStaff)}
-                      onChange={(event) =>
-                        setInvitedStaffForm((current) => ({
-                          ...current,
-
-                          lineManagerStaffId: event.target.value,
-                        }))
-                      }
+                      required
+                      value={userRoleId}
+                      onChange={(e) => setUserRoleId(e.target.value)}
                       className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                       style={fieldStyle}
                     >
-                      <option value="">No line manager</option>
-                      {staffMembers
+                      {data.roles
+
                         .filter(
-                          (manager) =>
-                            manager.status === "Active" ||
-                            manager.id === invitedStaffForm.lineManagerStaffId,
+                          (role) => !isPrimaryAdministratorRole(role.name),
                         )
 
-                        .map((manager) => (
-                          <option key={manager.id} value={manager.id}>
-                            {manager.staffId} — {manager.name} (
-                            {manager.position})
+                        .map((role) => (
+                          <option key={role.id} value={role.id}>
+                            {role.name}
                           </option>
                         ))}
                     </select>
                   </label>
-                  <label
-                    className="block text-xs font-700 uppercase tracking-wider"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    Date joined
-                    <input
-                      required
-                      type="date"
-                      value={invitedStaffForm.dateJoined}
-                      disabled={Boolean(selectedExistingStaff)}
-                      onChange={(event) =>
-                        setInvitedStaffForm((current) => ({
-                          ...current,
-
-                          dateJoined: event.target.value,
-                        }))
-                      }
-                      className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
-                      style={fieldStyle}
-                    />
-                  </label>
-                  <label
-                    className="block text-xs font-700 uppercase tracking-wider"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    Pay arrangement
-                    <select
-                      value={invitedStaffForm.payType}
-                      disabled={Boolean(selectedExistingStaff)}
-                      onChange={(event) => {
-                        const payType = event.target.value as StaffPayType
-
-                        setInvitedStaffForm((current) => ({
-                          ...current,
-
-                          payType,
-
-                          ...(payType === "payroll"
-                            ? {
-                                baseSalary:
-                                  current.baseSalary === "0"
-                                    ? ""
-                                    : current.baseSalary,
-                              }
-                            : {
-                                baseSalary: "0",
-
-                                weeklyTransportAllowance: "0",
-
-                                transportAccountId: "",
-                              }),
-                        }))
-                      }}
-                      className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
-                      style={fieldStyle}
+                  {(!selectedExistingStaff || userType === "member") && (
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
+                      style={{ color: "var(--muted-foreground)" }}
                     >
-                      <option value="payroll">Payroll</option>
-                      <option value="project">Project based</option>
-                      <option value="no_payroll">No payroll</option>
-                    </select>
-                  </label>
-                  {invitedStaffForm.payType === "payroll" && (
+                      Branch
+                      <select
+                        required
+                        value={userBranchId}
+                        onChange={(e) => {
+                          setUserBranchId(e.target.value)
+                          setInvitedStaffForm((current) => ({
+                            ...current,
+                            lineManagerStaffId: "",
+                            transportAccountId: "",
+                          }))
+                        }}
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                        style={fieldStyle}
+                      >
+                        <option value="" disabled>
+                          Select a branch
+                        </option>
+                        {branches.map((branch) => (
+                          <option key={branch.id} value={branch.id}>
+                            {branch.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+
+                  {userType === "staff" && !selectedExistingStaff && (
                     <>
                       <label
                         className="block text-xs font-700 uppercase tracking-wider"
                         style={{ color: "var(--muted-foreground)" }}
                       >
-                        Basic salary per month
+                        Position
                         <input
                           required
-                          min="0.01"
-                          max="999999999999.99"
-                          step="0.01"
-                          type="number"
-                          value={invitedStaffForm.baseSalary}
+                          maxLength={150}
+                          value={invitedStaffForm.position}
                           disabled={Boolean(selectedExistingStaff)}
                           onChange={(event) =>
                             setInvitedStaffForm((current) => ({
                               ...current,
-                              baseSalary: event.target.value,
+
+                              position: event.target.value,
+                            }))
+                          }
+                          className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                          style={fieldStyle}
+                          placeholder="Position"
+                        />
+                      </label>
+                      <label
+                        className="block text-xs font-700 uppercase tracking-wider"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        Line manager
+                        <select
+                          value={invitedStaffForm.lineManagerStaffId}
+                          disabled={Boolean(selectedExistingStaff)}
+                          onChange={(event) =>
+                            setInvitedStaffForm((current) => ({
+                              ...current,
+
+                              lineManagerStaffId: event.target.value,
+                            }))
+                          }
+                          className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                          style={fieldStyle}
+                        >
+                          <option value="">No line manager</option>
+                          {staffMembers
+                            .filter(
+                              (manager) =>
+                                manager.status === "Active" ||
+                                manager.id ===
+                                  invitedStaffForm.lineManagerStaffId,
+                            )
+
+                            .map((manager) => (
+                              <option key={manager.id} value={manager.id}>
+                                {manager.staffId} — {manager.name} (
+                                {manager.position})
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <label
+                        className="block text-xs font-700 uppercase tracking-wider"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        Date joined
+                        <input
+                          required
+                          type="date"
+                          value={invitedStaffForm.dateJoined}
+                          disabled={Boolean(selectedExistingStaff)}
+                          onChange={(event) =>
+                            setInvitedStaffForm((current) => ({
+                              ...current,
+
+                              dateJoined: event.target.value,
                             }))
                           }
                           className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
@@ -3533,178 +3755,342 @@ export default function UsersRoles({
                         className="block text-xs font-700 uppercase tracking-wider"
                         style={{ color: "var(--muted-foreground)" }}
                       >
-                        Transport allowance per week
-                        <input
-                          min="0"
-                          max="999999999999.99"
-                          step="0.01"
-                          type="number"
-                          value={invitedStaffForm.weeklyTransportAllowance}
+                        Pay arrangement
+                        <select
+                          value={invitedStaffForm.payType}
                           disabled={Boolean(selectedExistingStaff)}
-                          onChange={(event) =>
+                          onChange={(event) => {
+                            const payType = event.target.value as StaffPayType
+
                             setInvitedStaffForm((current) => ({
                               ...current,
 
-                              weeklyTransportAllowance: event.target.value,
+                              payType,
 
-                              transportAccountId:
-                                Number(event.target.value) > 0
-                                  ? current.transportAccountId
-                                  : "",
+                              ...(payType === "payroll"
+                                ? {
+                                    baseSalary:
+                                      current.baseSalary === "0"
+                                        ? ""
+                                        : current.baseSalary,
+                                  }
+                                : {
+                                    baseSalary: "0",
+
+                                    weeklyTransportAllowance: "0",
+
+                                    transportAccountMode: "fixed",
+
+                                    transportAccountId: "",
+                                  }),
                             }))
-                          }
+                          }}
                           className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                           style={fieldStyle}
-                        />
+                        >
+                          <option value="payroll">Payroll</option>
+                          <option value="project">Project based</option>
+                          <option value="no_payroll">No payroll</option>
+                        </select>
                       </label>
-                      {Number(invitedStaffForm.weeklyTransportAllowance) > 0 &&
-                        (staffAccounts.length ? (
+                      {invitedStaffForm.payType === "payroll" && (
+                        <>
                           <label
                             className="block text-xs font-700 uppercase tracking-wider"
                             style={{ color: "var(--muted-foreground)" }}
                           >
-                            Transport allowance funding account
-                            <select
+                            Basic salary per month
+                            <input
                               required
-                              value={invitedStaffForm.transportAccountId}
+                              min="0.01"
+                              max="999999999999.99"
+                              step="0.01"
+                              type="number"
+                              value={invitedStaffForm.baseSalary}
                               disabled={Boolean(selectedExistingStaff)}
                               onChange={(event) =>
                                 setInvitedStaffForm((current) => ({
                                   ...current,
-                                  transportAccountId: event.target.value,
+                                  baseSalary: event.target.value,
                                 }))
                               }
                               className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                               style={fieldStyle}
-                            >
-                              <option value="">Select funding account</option>
-                              {staffAccounts.map((account) => (
-                                <option key={account.id} value={account.id}>
-                                  {account.name} —{" "}
-                                  {account.account_type.replace(/_/g, " ")}
-                                </option>
-                              ))}
-                            </select>
+                            />
                           </label>
-                        ) : (
-                          <p role="alert" className="text-sm text-red-500">
-                            Add an active company account before setting a
-                            transport allowance.
-                          </p>
-                        ))}
+                          <label
+                            className="block text-xs font-700 uppercase tracking-wider"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            Transport allowance per week
+                            <input
+                              min="0"
+                              max="999999999999.99"
+                              step="0.01"
+                              type="number"
+                              value={invitedStaffForm.weeklyTransportAllowance}
+                              disabled={Boolean(selectedExistingStaff)}
+                              onChange={(event) =>
+                                setInvitedStaffForm((current) => ({
+                                  ...current,
+
+                                  weeklyTransportAllowance: event.target.value,
+
+                                  transportAccountMode:
+                                    Number(event.target.value) > 0
+                                      ? current.transportAccountMode
+                                      : "fixed",
+
+                                  transportAccountId:
+                                    Number(event.target.value) > 0
+                                      ? current.transportAccountId
+                                      : "",
+                                }))
+                              }
+                              className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                              style={fieldStyle}
+                            />
+                          </label>
+                          {Number(invitedStaffForm.weeklyTransportAllowance) >
+                            0 && (
+                              <>
+                                <label
+                                  className="block text-xs font-700 uppercase tracking-wider"
+                                  style={{ color: "var(--muted-foreground)" }}
+                                >
+                                  Transport allowance account selection
+                                  <select
+                                    value={
+                                      invitedStaffForm.transportAccountMode
+                                    }
+                                    disabled={Boolean(selectedExistingStaff)}
+                                    onChange={(event) =>
+                                      setInvitedStaffForm((current) => ({
+                                        ...current,
+                                        transportAccountMode:
+                                          event.target.value as TransportAccountMode,
+                                        transportAccountId:
+                                          event.target.value === "fixed"
+                                            ? current.transportAccountId
+                                            : "",
+                                      }))
+                                    }
+                                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                                    style={fieldStyle}
+                                  >
+                                    <option value="fixed">
+                                      Fixed account (selected now)
+                                    </option>
+                                    <option value="random">
+                                      Random account (Finance selects at payout)
+                                    </option>
+                                  </select>
+                                </label>
+                                {invitedStaffForm.transportAccountMode ===
+                                "fixed" ? (
+                                  staffAccounts.length ? (
+                                    <label
+                                      className="block text-xs font-700 uppercase tracking-wider"
+                                      style={{
+                                        color: "var(--muted-foreground)",
+                                      }}
+                                    >
+                                      Fixed funding account
+                                      <SearchableSelect
+                                        required
+                                        ariaLabel="Choose fixed account funding weekly transport allowance"
+                                        inlineOptions
+                                        value={
+                                          invitedStaffForm.transportAccountId
+                                        }
+                                        disabled={Boolean(selectedExistingStaff)}
+                                        onChange={(transportAccountId) =>
+                                          setInvitedStaffForm((current) => ({
+                                            ...current,
+                                            transportAccountId,
+                                          }))
+                                        }
+                                        options={staffAccounts.map(
+                                          (account) => ({
+                                            value: account.id,
+                                            label: account.name,
+                                            description: `${account.account_type.replace(/_/g, " ")} · ${account.account_number}`,
+                                            searchText: account.account_number,
+                                          }),
+                                        )}
+                                        placeholder="Select fixed funding account"
+                                        className="mt-1 normal-case tracking-normal"
+                                      />
+                                    </label>
+                                  ) : (
+                                    <p
+                                      role="alert"
+                                      className="text-sm text-red-500"
+                                    >
+                                      Add an active company account before
+                                      setting a fixed transport allowance.
+                                    </p>
+                                  )
+                                ) : (
+                                  <p
+                                    className="text-xs md:col-span-2"
+                                    style={{
+                                      color: "var(--muted-foreground)",
+                                    }}
+                                  >
+                                    Finance will select an active company
+                                    account when this allowance is paid.
+                                  </p>
+                                )}
+                                <p
+                                  className="text-xs md:col-span-2"
+                                  style={{
+                                    color: "var(--muted-foreground)",
+                                  }}
+                                >
+                                  Estimated monthly benefit (
+                                  {currentPayrollWorkingDays} working days):{" "}
+                                  UGX{" "}
+                                  {invitedMonthlyTransportBenefit.toLocaleString(
+                                    "en-UG",
+                                    {
+                                      minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2,
+                                    },
+                                  )}
+                                </p>
+                              </>
+                            )}
+                        </>
+                      )}
+                      {staffLoading && (
+                        <p
+                          className="text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          Loading staff and funding accounts…
+                        </p>
+                      )}
                     </>
                   )}
-                  {staffLoading && (
-                    <p
-                      className="text-xs"
+
+                  {userInviteMode === "default-password" && (
+                    <label
+                      className="block text-xs font-700 uppercase tracking-wider"
                       style={{ color: "var(--muted-foreground)" }}
                     >
-                      Loading staff and funding accounts…
-                    </p>
+                      Default password
+                      <div className="relative mt-1">
+                        <input
+                          required
+                          minLength={8}
+                          type={userShowPassword ? "text" : "password"}
+                          autoComplete="new-password"
+                          value={userDefaultPassword}
+                          onChange={(e) =>
+                            setUserDefaultPassword(e.target.value)
+                          }
+                          className="w-full rounded border px-3 py-2 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
+                          style={fieldStyle}
+                          placeholder="Min. 8 characters"
+                        />
+                        <button
+                          type="button"
+                          aria-label={
+                            userShowPassword ? "Hide password" : "Show password"
+                          }
+                          onClick={() => setUserShowPassword((v) => !v)}
+                          className="absolute inset-y-0 right-0 flex items-center px-3 text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {userShowPassword ? "Hide" : "Show"}
+                        </button>
+                      </div>
+                    </label>
                   )}
-                </>
-              )}
+                </div>
 
-              {userInviteMode === "default-password" && (
-                <label
-                  className="block text-xs font-700 uppercase tracking-wider"
+                <p
+                  className="mt-4 text-xs"
                   style={{ color: "var(--muted-foreground)" }}
                 >
-                  Default password
-                  <div className="relative mt-1">
-                    <input
-                      required
-                      minLength={8}
-                      type={userShowPassword ? "text" : "password"}
-                      autoComplete="new-password"
-                      value={userDefaultPassword}
-                      onChange={(e) => setUserDefaultPassword(e.target.value)}
-                      className="w-full rounded border px-3 py-2 pr-10 text-sm font-normal normal-case tracking-normal outline-none"
-                      style={fieldStyle}
-                      placeholder="Min. 8 characters"
-                    />
-                    <button
-                      type="button"
-                      aria-label={
-                        userShowPassword ? "Hide password" : "Show password"
-                      }
-                      onClick={() => setUserShowPassword((v) => !v)}
-                      className="absolute inset-y-0 right-0 flex items-center px-3 text-xs"
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      {userShowPassword ? "Hide" : "Show"}
-                    </button>
+                  {userInviteMode === "email-link"
+                    ? "An invitation email will be sent. The user sets their own password from the link."
+                    : "The user is created immediately and must change this password when they first log in."}
+                </p>
+
+                {error && (
+                  <div
+                    role="alert"
+                    className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400"
+                  >
+                    {error}
                   </div>
-                </label>
-              )}
-            </div>
+                )}
 
-            <p
-              className="mt-4 text-xs"
-              style={{ color: "var(--muted-foreground)" }}
-            >
-              {userInviteMode === "email-link"
-                ? "An invitation email will be sent. The user sets their own password from the link."
-                : "The user is created immediately and must change this password when they first log in."}
-            </p>
+                <div className="mt-5 flex gap-3">
+                  <button
+                    type="submit"
+                    disabled={
+                      saving ||
+                      (userType === "staff" &&
+                        !selectedExistingStaff &&
+                        (staffLoading ||
+                          (Number(invitedStaffForm.weeklyTransportAllowance) >
+                            0 &&
+                            invitedStaffForm.transportAccountMode ===
+                              "fixed" &&
+                            staffAccounts.length === 0)))
+                    }
+                    className="flex-1 rounded py-2 text-sm font-600 disabled:opacity-50"
+                    style={{
+                      background: "var(--primary)",
 
-            {error && (
-              <div
-                role="alert"
-                className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400"
-              >
-                {error}
-              </div>
+                      color: "var(--primary-foreground)",
+                    }}
+                  >
+                    {saving
+                      ? "Saving…"
+                      : userInviteMode === "email-link"
+                        ? "Send invitation"
+                        : "Create user"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (userType === "staff") {
+                        if (selectedExistingStaff) {
+                          setSelectedExistingStaffId("")
+                          setUserPhone("")
+                          setInvitedStaffForm(emptyInvitedStaffForm)
+                        }
+                        setInviteStep("staff-search")
+                      } else {
+                        setInviteStep("account-type")
+                      }
+                    }}
+                    className="flex-1 rounded border py-2 text-sm"
+                    style={{
+                      borderColor: "var(--border)",
+                      color: "var(--muted-foreground)",
+                    }}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeNewUser}
+                    className="flex-1 rounded border py-2 text-sm"
+                    style={{
+                      borderColor: "var(--border)",
+                      color: "var(--muted-foreground)",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
             )}
-
-            <div className="mt-5 flex gap-3">
-              <button
-                type="submit"
-                disabled={
-                  saving ||
-                  (userType === "staff" &&
-                    (staffLoading ||
-                      (Number(invitedStaffForm.weeklyTransportAllowance) > 0 &&
-                        staffAccounts.length === 0)))
-                }
-                className="flex-1 rounded py-2 text-sm font-600 disabled:opacity-50"
-                style={{
-                  background: "var(--primary)",
-
-                  color: "var(--primary-foreground)",
-                }}
-              >
-                {saving
-                  ? "Saving…"
-                  : userInviteMode === "email-link"
-                    ? "Send invitation"
-                    : "Create user"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowNewUser(false)
-
-                  setError("")
-
-                  setUserDefaultPassword("")
-
-                  setUserInviteMode("email-link")
-
-                  setUserType("member")
-
-                  setInvitedStaffForm(emptyInvitedStaffForm)
-                }}
-                className="flex-1 rounded border py-2 text-sm"
-                style={{
-                  borderColor: "var(--border)",
-
-                  color: "var(--muted-foreground)",
-                }}
-              >
-                Cancel
-              </button>
-            </div>
           </form>
         </div>
       )}
@@ -4719,6 +5105,8 @@ export default function UsersRoles({
 
                             weeklyTransportAllowance: "0",
 
+                            transportAccountMode: "fixed",
+
                             transportAccountId: "",
                           }),
                     }))
@@ -4773,6 +5161,11 @@ export default function UsersRoles({
 
                           weeklyTransportAllowance: event.target.value,
 
+                          transportAccountMode:
+                            Number(event.target.value) > 0
+                              ? current.transportAccountMode
+                              : "fixed",
+
                           transportAccountId:
                             Number(event.target.value) > 0
                               ? current.transportAccountId
@@ -4789,51 +5182,85 @@ export default function UsersRoles({
                         className="text-xs md:col-span-2"
                         style={{ color: "var(--muted-foreground)" }}
                       >
-                        Estimated monthly payroll benefit: UGX{" "}
-                        {(
-                          (Number(staffForm.weeklyTransportAllowance) * 52) /
-                            12 || 0
-                        )
-
-                          .toLocaleString("en-UG", {
-                            minimumFractionDigits: 2,
-
-                            maximumFractionDigits: 2,
-                          })}
+                        Estimated monthly payroll benefit (
+                        {currentPayrollWorkingDays} working days): UGX{" "}
+                        {staffMonthlyTransportBenefit.toLocaleString("en-UG", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </p>
                       <label
                         className="block text-xs font-700 uppercase tracking-wider md:col-span-2"
                         style={{ color: "var(--muted-foreground)" }}
                       >
-                        Transport allowance funding account
-                        <SearchableSelect
-                          required
-                          ariaLabel="Choose account funding weekly transport allowance"
-                          value={staffForm.transportAccountId}
-                          onChange={(transportAccountId) =>
+                        Transport allowance account selection
+                        <select
+                          value={staffForm.transportAccountMode}
+                          onChange={(event) =>
                             setStaffForm((current) => ({
                               ...current,
-
-                              transportAccountId,
+                              transportAccountMode:
+                                event.target.value as TransportAccountMode,
+                              transportAccountId:
+                                event.target.value === "fixed"
+                                  ? current.transportAccountId
+                                  : "",
                             }))
                           }
-                          options={staffAccounts.map((account) => ({
-                            value: account.id,
-
-                            label: account.name,
-
-                            description: account.account_type.replace(
-                              /_/g,
-
-                              " ",
-                            ),
-
-                            searchText: account.account_number,
-                          }))}
-                          placeholder="Select the account to fund this benefit"
-                          className="mt-1 normal-case tracking-normal"
-                        />
+                          className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none"
+                          style={fieldStyle}
+                        >
+                          <option value="fixed">
+                            Fixed account (selected now)
+                          </option>
+                          <option value="random">
+                            Random account (Finance selects at payout)
+                          </option>
+                        </select>
                       </label>
+                      {staffForm.transportAccountMode === "fixed" ? (
+                        staffAccounts.length ? (
+                          <label
+                            className="block text-xs font-700 uppercase tracking-wider md:col-span-2"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            Fixed funding account
+                            <SearchableSelect
+                              required
+                              ariaLabel="Choose fixed account funding weekly transport allowance"
+                              inlineOptions
+                              value={staffForm.transportAccountId}
+                              onChange={(transportAccountId) =>
+                                setStaffForm((current) => ({
+                                  ...current,
+                                  transportAccountId,
+                                }))
+                              }
+                              options={staffAccounts.map((account) => ({
+                                value: account.id,
+                                label: account.name,
+                                description: `${account.account_type.replace(/_/g, " ")} · ${account.account_number}`,
+                                searchText: account.account_number,
+                              }))}
+                              placeholder="Select fixed funding account"
+                              className="mt-1 normal-case tracking-normal"
+                            />
+                          </label>
+                        ) : (
+                          <p role="alert" className="text-sm text-red-500">
+                            Add an active company account before setting a
+                            fixed transport allowance.
+                          </p>
+                        )
+                      ) : (
+                        <p
+                          className="text-xs md:col-span-2"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          Finance will select an active company account when
+                          this allowance is paid.
+                        </p>
+                      )}
                     </>
                   )}
                 </>
@@ -4904,7 +5331,10 @@ export default function UsersRoles({
                   saving ||
                   (!editingStaffId &&
                     staffBranchSelectionRequired &&
-                    staffBranches.length === 0)
+                    staffBranches.length === 0) ||
+                  (Number(staffForm.weeklyTransportAllowance) > 0 &&
+                    staffForm.transportAccountMode === "fixed" &&
+                    staffAccounts.length === 0)
                 }
                 className="flex-1 rounded py-2.5 text-sm font-600 disabled:opacity-50"
                 style={{

@@ -6,6 +6,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 
 import { parseStaffInput } from "@/lib/server/staff-input"
 
+import { loadCompanyWorkCalendar } from "@/lib/server/company-work-calendar"
+
 export const runtime = "nodejs"
 
 const headers = { "Cache-Control": "private, no-store" }
@@ -190,6 +192,8 @@ function mapStaff(record: Record<string, unknown>) {
 
     weeklyTransportAllowance: Number(record.weekly_transport_allowance ?? 0),
 
+    transportAccountMode: String(record.transport_account_mode ?? "fixed"),
+
     transportAccountId: String(record.transport_account_id ?? ""),
   }
 }
@@ -274,13 +278,15 @@ export async function GET() {
       { data: accounts, error: accountsError },
 
       { data: branches, error: branchesError },
+
+      workCalendar,
     ] = await Promise.all([
       (() => {
         let q = access.admin
           .from("company_staff_members")
 
           .select(
-            "id, staff_id, name, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id",
+            "id, staff_id, name, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id",
           )
 
           .eq("company_id", access.companyId)
@@ -319,6 +325,8 @@ export async function GET() {
 
         return q.order("name")
       })(),
+
+      loadCompanyWorkCalendar(access.admin, access.companyId),
     ])
 
     if (staffError || accountsError || branchesError)
@@ -331,6 +339,8 @@ export async function GET() {
         ),
 
         accounts: accounts ?? [],
+
+        workCalendar,
 
         branches: (branches ?? []).map((branch) => ({
           id: branch.id,
@@ -626,13 +636,15 @@ export async function POST(request: Request) {
 
           weekly_transport_allowance: input.weeklyTransportAllowance,
 
+          transport_account_mode: input.transportAccountMode,
+
           transport_account_id: input.transportAccountId,
 
           created_by: access.userId,
         },
       })
       .select(
-        "id, staff_id, name, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id",
+        "id, staff_id, name, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id",
       )
       .single()
 
@@ -1043,6 +1055,8 @@ export async function PATCH(request: Request) {
 
         weekly_transport_allowance: input.weeklyTransportAllowance,
 
+        transport_account_mode: input.transportAccountMode,
+
         transport_account_id: input.transportAccountId,
 
         updated_by: access.userId,
@@ -1056,7 +1070,7 @@ export async function PATCH(request: Request) {
     const { data: staff, error } = await updateQuery
 
       .select(
-        "id, staff_id, name, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id",
+        "id, staff_id, name, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id",
       )
 
       .maybeSingle()

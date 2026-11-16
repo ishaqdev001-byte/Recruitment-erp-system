@@ -2,7 +2,11 @@ export const staffStatuses = ["Active", "On Leave", "Inactive"] as const
 
 export const staffPayTypes = ["payroll", "project", "no_payroll"] as const
 
+export const transportAccountModes = ["fixed", "random"] as const
+
 export type StaffPayType = typeof staffPayTypes[number]
+
+export type TransportAccountMode = typeof transportAccountModes[number]
 
 export type StaffInput = {
   name: string
@@ -22,6 +26,8 @@ export type StaffInput = {
   baseSalary: number
 
   weeklyTransportAllowance: number
+
+  transportAccountMode: TransportAccountMode
 
   transportAccountId: string | null
 
@@ -49,6 +55,9 @@ export function parseStaffInput(
   const baseSalary = Number(body.baseSalary ?? 0)
 
   const weeklyTransportAllowance = Number(body.weeklyTransportAllowance ?? 0)
+
+  const transportAccountMode =
+    body.transportAccountMode === undefined ? "fixed" : body.transportAccountMode
 
   const linkedUserId =
     typeof body.linkedUserId === "string" && body.linkedUserId
@@ -83,13 +92,18 @@ export function parseStaffInput(
     !Number.isFinite(weeklyTransportAllowance) ||
     weeklyTransportAllowance < 0 ||
     weeklyTransportAllowance > 999999999999.99 ||
+    !transportAccountModes.includes(
+      transportAccountMode as TransportAccountMode,
+    ) ||
     (payType === "payroll" && baseSalary <= 0) ||
     (payType !== "payroll" &&
       (baseSalary !== 0 ||
         weeklyTransportAllowance !== 0 ||
         transportAccountId !== null)) ||
     (weeklyTransportAllowance > 0 &&
-      (payType !== "payroll" || !transportAccountId)) ||
+      (payType !== "payroll" ||
+        (transportAccountMode === "fixed" && !transportAccountId) ||
+        (transportAccountMode === "random" && transportAccountId !== null))) ||
     (transportAccountId !== null && !isUuid(transportAccountId)) ||
     (branchId !== null && !isUuid(branchId)) ||
     (linkedUserId !== null && !isUuid(linkedUserId)) ||
@@ -116,6 +130,11 @@ export function parseStaffInput(
     baseSalary: Math.round(baseSalary * 100) / 100,
 
     weeklyTransportAllowance: Math.round(weeklyTransportAllowance * 100) / 100,
+
+    transportAccountMode:
+      weeklyTransportAllowance > 0
+        ? (transportAccountMode as TransportAccountMode)
+        : "fixed",
 
     transportAccountId:
       weeklyTransportAllowance > 0 ? transportAccountId : null,

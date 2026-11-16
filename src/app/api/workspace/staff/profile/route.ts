@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server"
 
+import {
+  calculateMonthlyTransportAllowance,
+  getCurrentPayPeriod,
+} from "@/lib/payroll/transport-allowance"
+
+import { loadCompanyWorkCalendar } from "@/lib/server/company-work-calendar"
+
 import { getLinkedStaffAccess } from "@/lib/server/staff-profile"
 
 import {
@@ -454,6 +461,13 @@ export async function GET() {
       access,
       personalDetailsComplete,
     )
+    const workCalendar = await loadCompanyWorkCalendar(
+      access.admin,
+      access.companyId,
+    )
+    const weeklyTransportAllowance = Number(
+      employmentRecord.weekly_transport_allowance ?? 0,
+    )
 
     return NextResponse.json(
       {
@@ -474,13 +488,14 @@ export async function GET() {
 
           baseSalary: Number(employmentRecord.base_salary ?? 0),
 
-          weeklyTransportAllowance: Number(
-            employmentRecord.weekly_transport_allowance ?? 0,
-          ),
+          weeklyTransportAllowance,
 
-          monthlyTransportAllowance:
-            (Number(employmentRecord.weekly_transport_allowance ?? 0) * 52) /
-            12,
+          monthlyTransportAllowance: calculateMonthlyTransportAllowance(
+            weeklyTransportAllowance,
+            getCurrentPayPeriod(),
+            workCalendar.schedule,
+            workCalendar.closureDates,
+          ),
         },
 
         personalDetailsComplete,

@@ -21,6 +21,7 @@ export function SearchableSelect({
   required = false,
   disabled = false,
   allowCustom = false,
+  inlineOptions = false,
   className = "",
   style,
   ariaLabel,
@@ -32,6 +33,7 @@ export function SearchableSelect({
   required?: boolean;
   disabled?: boolean;
   allowCustom?: boolean;
+  inlineOptions?: boolean;
   className?: string;
   style?: CSSProperties;
   ariaLabel?: string;
@@ -124,7 +126,7 @@ export function SearchableSelect({
         {query && <button type="button" tabIndex={-1} disabled={disabled} aria-label="Clear selection" onClick={() => { queryEdited.current = allowCustom || Boolean(value); setQuery(""); onChange(""); inputRef.current?.setCustomValidity(""); setOpen(true); inputRef.current?.focus(); }} className="shrink-0" style={{ color: "var(--muted-foreground)" }}><X size={14} aria-hidden="true" /></button>}
         <ChevronDown size={14} aria-hidden="true" className="shrink-0" style={{ color: "var(--muted-foreground)" }} />
       </div>
-      {open && !disabled && <div id={listboxId} role="listbox" className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded border py-1 shadow-xl" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+      {open && !disabled && <div id={listboxId} role="listbox" className={`${inlineOptions ? "relative mt-2" : "absolute z-50 mt-1"} max-h-60 w-full overflow-y-auto rounded border py-1 shadow-xl`} style={{ background: "var(--card)", borderColor: "var(--border)" }}>
         {visibleOptions.map((option, index) => <button
           key={option.value}
           id={`${listboxId}-option-${option.value}`}
@@ -135,7 +137,7 @@ export function SearchableSelect({
           onClick={() => choose(option)}
           className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-black/5"
           style={{ background: index === activeIndex ? "var(--secondary)" : "transparent" }}
-        ><span className="min-w-0"><span className="block truncate text-sm" style={{ color: "var(--foreground)" }}>{option.label}</span>{option.description && <span className="block truncate text-xs" style={{ color: "var(--muted-foreground)" }}>{option.description}</span>}</span>{option.value === value && <Check size={14} aria-hidden="true" style={{ color: "var(--primary)" }} />}</button>)}
+        ><span className="min-w-0"><span className={`block text-sm ${inlineOptions ? "break-words" : "truncate"}`} style={{ color: "var(--foreground)" }}>{option.label}</span>{option.description && <span className={`block text-xs ${inlineOptions ? "break-words" : "truncate"}`} style={{ color: "var(--muted-foreground)" }}>{option.description}</span>}</span>{option.value === value && <Check size={14} aria-hidden="true" style={{ color: "var(--primary)" }} />}</button>)}
         {!visibleOptions.length && <p className="px-3 py-3 text-sm" style={{ color: "var(--muted-foreground)" }}>{options.length ? "No matching results." : "No results available."}</p>}
       </div>}
     </div>

@@ -151,6 +151,7 @@ async function insertInvitedStaffRecord(
       pay_type: staffInput.payType,
       base_salary: staffInput.baseSalary,
       weekly_transport_allowance: staffInput.weeklyTransportAllowance,
+      transport_account_mode: staffInput.transportAccountMode,
       transport_account_id: staffInput.transportAccountId,
       created_by: createdBy,
     })
@@ -890,7 +891,7 @@ export async function POST(request: Request) {
         admin
           .from("company_staff_members")
           .select(
-            "id, staff_id, name, phone, position, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_id, updated_by",
+            "id, staff_id, name, phone, position, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id, updated_by",
           )
           .eq("company_id", access.companyId)
           .eq("linked_user_id", userId)
@@ -1134,6 +1135,8 @@ export async function POST(request: Request) {
                   base_salary: currentStaff.base_salary,
                   weekly_transport_allowance:
                     currentStaff.weekly_transport_allowance,
+                  transport_account_mode:
+                    currentStaff.transport_account_mode,
                   transport_account_id: currentStaff.transport_account_id,
                   updated_by: currentStaff.updated_by,
                 })
@@ -1217,6 +1220,7 @@ export async function POST(request: Request) {
                 pay_type: staffInput.payType,
                 base_salary: staffInput.baseSalary,
                 weekly_transport_allowance: staffInput.weeklyTransportAllowance,
+                transport_account_mode: staffInput.transportAccountMode,
                 transport_account_id: staffInput.transportAccountId,
                 updated_by: access.userId,
               })
@@ -1770,6 +1774,7 @@ export async function POST(request: Request) {
         payType: "no_payroll",
         baseSalary: 0,
         weeklyTransportAllowance: 0,
+        transportAccountMode: "fixed",
         transportAccountId: null,
         lineManagerStaffId: null,
       })

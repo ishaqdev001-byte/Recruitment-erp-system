@@ -3,6 +3,11 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  calculateMonthlyTransportAllowance,
+  getWorkingDaysInMonth,
+} from "@/lib/payroll/transport-allowance";
+import { loadCompanyWorkCalendar } from "@/lib/server/company-work-calendar";
 import { deleteCompanyDriveFile, uploadCompanyDriveFile } from "@/lib/storage/interserver";
 import {
   getUnpaidLeavePayPeriods,
@@ -193,7 +198,7 @@ export async function GET() {
       .select("id, staff_member_id, pay_period, base_salary, earnings, benefits, deductions, gross_amount, benefits_total, deductions_total, net_amount, payment_date, payment_method, payment_reference, created_at")
       .eq("company_id", access.companyId).order("pay_period", { ascending: false }).order("payment_date", { ascending: false });
     const staffQuery = access.admin.from("company_staff_members")
-      .select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined, linked_user_id")
+      .select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id, date_joined, linked_user_id")
       .eq("company_id", access.companyId).order("name");
     const accountsQuery = access.admin.from("company_accounts")
       .select("id, name, account_type, account_number")
@@ -214,7 +219,8 @@ export async function GET() {
       access.companyId,
       (staff ?? []).map((member) => member.linked_user_id).filter((id): id is string => Boolean(id)),
     );
-    const [{ data: company, error: companyError }, { data: allowed, error: createPermissionError }] = await Promise.all([
+    const [workCalendar, { data: company, error: companyError }, { data: allowed, error: createPermissionError }] = await Promise.all([
+      loadCompanyWorkCalendar(access.admin, access.companyId),
       access.admin.from("companies").select("name, logo_url").eq("id", access.companyId).maybeSingle(),
       (await createSupabaseServerClient()).rpc("current_user_has_company_permission", { requested_company_id: access.companyId, requested_permission: "finance.create" }),
     ]);
@@ -273,7 +279,7 @@ export async function GET() {
       || a.employee.name.localeCompare(b.employee.name),
     );
     const publicStaff = [...staffById.values()].sort((a, b) => a.name.localeCompare(b.name));
-    return NextResponse.json({ paychecks: rows, staff: publicStaff, accounts: accounts ?? [], company, permissions: { canRecord: Boolean(allowed) } }, { headers });
+    return NextResponse.json({ paychecks: rows, staff: publicStaff, accounts: accounts ?? [], company, workCalendar, permissions: { canRecord: Boolean(allowed) } }, { headers });
   } catch (error) {
     console.error("Paycheck list request failed", error);
     return NextResponse.json({ error: "Payroll data is unavailable. Apply the staff payroll migration and try again." }, { status: 503, headers });
@@ -301,7 +307,7 @@ export async function POST(request: Request) {
       || !earnings || !submittedBenefits || !submittedDeductions) {
       return NextResponse.json({ error: "Enter a valid employee, month, salary, payment method, and payroll items." }, { status: 400, headers });
     }
-    let employeeQuery = access.admin.from("company_staff_members").select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_id, date_joined, linked_user_id").eq("id", staffMemberId).eq("company_id", access.companyId);
+    let employeeQuery = access.admin.from("company_staff_members").select("id, staff_id, name, position, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id, date_joined, linked_user_id").eq("id", staffMemberId).eq("company_id", access.companyId);
     let accountQuery = access.admin.from("company_accounts").select("id").eq("id", accountId).eq("company_id", access.companyId).eq("status", "active");
     if (!access.isMainBranch) {
       employeeQuery = employeeQuery.eq("branch_id", access.branchId!);
@@ -330,7 +336,9 @@ export async function POST(request: Request) {
     if (employeeLeaves.some((leave) => leaveCoversDate(leave, paymentDate) || leaveCoversDate(leave, today))) {
       return NextResponse.json({ error: "Payroll payments are blocked during approved unpaid leave." }, { status: 409, headers });
     }
-    if (Number(employee.weekly_transport_allowance) > 0 && employee.transport_account_id !== account.id) {
+    if (Number(employee.weekly_transport_allowance) > 0
+      && (employee.transport_account_mode ?? "fixed") === "fixed"
+      && employee.transport_account_id !== account.id) {
       return NextResponse.json({ error: "Use the funding account selected for this staff member's transport allowance." }, { status: 400, headers });
     }
     const salary = Math.round(Number(employee.base_salary) * 100) / 100;
@@ -341,9 +349,15 @@ export async function POST(request: Request) {
       .eq("company_id", access.companyId).eq("staff_member_id", employee.id).eq("pay_period", payPeriod).is("paycheck_id", null);
     if (adjustmentsError) throw adjustmentsError;
     const weeklyTransportAllowance = Number(employee.weekly_transport_allowance ?? 0);
-    const monthlyTransportAllowance = Math.round((weeklyTransportAllowance * 52 / 12) * 100) / 100;
+    const workCalendar = await loadCompanyWorkCalendar(access.admin, access.companyId);
+    const monthlyTransportAllowance = calculateMonthlyTransportAllowance(
+      weeklyTransportAllowance,
+      payPeriod,
+      workCalendar.schedule,
+      workCalendar.closureDates,
+    );
     const recurringBenefits = monthlyTransportAllowance > 0 ? [{
-      description: `Weekly transport allowance (UGX ${weeklyTransportAllowance.toLocaleString("en-UG", { minimumFractionDigits: 2 })}/week)`,
+      description: `Transport allowance for ${getWorkingDaysInMonth(payPeriod, workCalendar.schedule, workCalendar.closureDates)} working days (UGX ${weeklyTransportAllowance.toLocaleString("en-UG", { minimumFractionDigits: 2 })}/week)`,
       amount: monthlyTransportAllowance,
     }] : [];
     const benefits = [

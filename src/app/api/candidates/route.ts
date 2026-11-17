@@ -11,7 +11,7 @@ import { isPassportNumberValid, normalizePassportNumber, passportNumberRule } fr
 export const runtime = "nodejs";
 
 const candidateDetailFields = new Set([
-  "otherNames", "secondaryPhone", "otherPhone", "age", "gender", "maritalStatus", "abroadStatus", "abroadExperience", "source", "mediaChannel", "nationality",
+  "otherNames", "secondaryPhone", "otherPhone", "age", "gender", "maritalStatus", "abroadStatus", "abroadExperience", "source", "mediaChannel", "nationality", "referralPartnerId", "referralPartnerName",
   "nin", "passportNumber", "passportIssue", "passportExpiry", "passportStatus", "passportBranch", "passportStorageLocation", "height", "weight", "shirtSize", "shoeSize", "waistSize", "preferredCities",
   "physicalAddress", "residenceCountry", "residenceState", "district", "county", "subCounty", "parish", "fatherPhone", "fatherStatus", "motherPhone", "motherStatus",
   "kinFirstName", "kinLastName", "kinPhone", "kinRelationship", "emergencyFirstName", "emergencyLastName", "emergencyPhone", "emergencyRelationship",
@@ -170,7 +170,7 @@ export async function GET() {
 
     let query = supabase
       .from("candidates")
-      .select("id, source_row_number, branch_id, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
+      .select("id, source_row_number, branch_id, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
       .eq("company_id", membership.company_id)
       .order("created_at", { ascending: false });
 
@@ -184,6 +184,14 @@ export async function GET() {
     }
     if (peopleError) console.error("Candidate staff-name lookup failed", peopleError);
     const names = new Map((people ?? []).map((person: { user_id: string; display_name: string }) => [person.user_id, person.display_name]));
+    const agentOptions = (people ?? [])
+      .filter((person: { role_name?: string | null }) =>
+        person.role_name?.toLocaleLowerCase().includes("agent"),
+      )
+      .map((person: { user_id: string; display_name: string }) => ({
+        userId: person.user_id,
+        displayName: person.display_name,
+      }));
 
     return NextResponse.json({
       candidates: (data ?? []).map((candidate) => ({
@@ -191,6 +199,7 @@ export async function GET() {
         created_by_name: candidate.created_by ? names.get(candidate.created_by) ?? "Former team member" : null,
         updated_by_name: candidate.updated_by ? names.get(candidate.updated_by) ?? "Former team member" : null,
       })),
+      agentOptions,
       ...(peopleError ? { warning: "Some candidate creator and updater names are unavailable." } : {}),
       permissions: {
         canViewFinance: Boolean(canViewFinance),
@@ -223,12 +232,16 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Candidate information is required." }, { status: 400, headers });
-    const fileNumber = typeof body.fileNumber === "string" ? body.fileNumber.trim() : "";
+    if ("file_number" in body || (body.fileNumber !== undefined && (
+      typeof body.fileNumber !== "string" || body.fileNumber.trim()
+    ))) {
+      return NextResponse.json({ error: "File numbers are assigned automatically and cannot be supplied." }, { status: 400, headers });
+    }
     const firstName = typeof body.firstName === "string" ? body.firstName.trim() : "";
     const lastName = typeof body.lastName === "string" ? body.lastName.trim() : "";
     const phone = typeof body.phone === "string" ? body.phone.trim() : "";
-    if (!fileNumber || fileNumber.length > 100 || !firstName || firstName.length > 200 || !lastName || lastName.length > 200 || !phone || phone.length > 100) {
-      return NextResponse.json({ error: "File number, first name, last name, and phone are required." }, { status: 400, headers });
+    if (!firstName || firstName.length > 200 || !lastName || lastName.length > 200 || !phone || phone.length > 100) {
+      return NextResponse.json({ error: "First name, last name, and phone are required." }, { status: 400, headers });
     }
     const details = readCandidateDetails(body.details);
     if (!details) return NextResponse.json({ error: "One or more extended candidate details are invalid." }, { status: 400, headers });
@@ -301,6 +314,7 @@ export async function POST(request: Request) {
       }
     }
     const source = typeof details.source === "string" ? details.source.trim() : "";
+    const sourceType = source.toLocaleLowerCase();
     if (candidateScope !== "assigned" && !source) {
       return NextResponse.json({ error: "Select a candidate source before registering." }, { status: 400, headers });
     }
@@ -372,6 +386,9 @@ export async function POST(request: Request) {
     }
     const agentUserId = assignedAgent?.user_id ?? null;
     const agentName = assignedAgent?.display_name ?? requestedAgentName;
+    if (sourceType === "recruitment agent" && !assignedAgent) {
+      return NextResponse.json({ error: "Select an active company Recruitment Agent for this referral." }, { status: 400, headers });
+    }
     const passportError = passportSetupError(details, agentName);
     if (passportError) return NextResponse.json({ error: passportError }, { status: 400, headers });
 
@@ -394,6 +411,32 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Select an active branch registered by this company." }, { status: 400, headers });
     }
     details.branch = selectedBranch.name;
+    if (sourceType === "partner") {
+      const referralPartnerId = typeof details.referralPartnerId === "string"
+        ? details.referralPartnerId.trim()
+        : "";
+      if (!isUuid(referralPartnerId)) {
+        return NextResponse.json({ error: "Select a registered partner for this referral." }, { status: 400, headers });
+      }
+      const { data: partner, error: partnerError } = await admin.from("suppliers")
+        .select("id, supplier_name")
+        .eq("id", referralPartnerId)
+        .eq("company_id", membership.company_id)
+        .eq("status", "active")
+        .maybeSingle();
+      if (partnerError) {
+        console.error("Candidate referral partner validation failed", partnerError);
+        return NextResponse.json({ error: "Unable to verify the selected referral partner." }, { status: 503, headers });
+      }
+      if (!partner) {
+        return NextResponse.json({ error: "Select an active partner registered by this company." }, { status: 400, headers });
+      }
+      details.referralPartnerId = partner.id;
+      details.referralPartnerName = partner.supplier_name;
+    } else {
+      details.referralPartnerId = "";
+      details.referralPartnerName = "";
+    }
     if (details.passportStatus === "Available" && details.passportBranch !== selectedBranch.name) {
       return NextResponse.json({ error: "Passport storage branch must be selected from this company's active branches." }, { status: 400, headers });
     }
@@ -417,7 +460,7 @@ export async function POST(request: Request) {
       branch_id: branchId,
       created_by: user.id,
       inquiry_id: inquiryId,
-      file_number: fileNumber,
+      file_number: "",
       first_name: firstName,
       last_name: lastName,
       phone,
@@ -431,11 +474,18 @@ export async function POST(request: Request) {
       father_name: typeof body.fatherName === "string" ? body.fatherName.trim() : "",
       mother_name: typeof body.motherName === "string" ? body.motherName.trim() : "",
       details,
-    }).select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by").single();
+    }).select("id, source_row_number, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by").single();
 
     if (error || !data) {
       console.error("Candidate registration failed", error);
       const duplicateError = `${error?.message ?? ""} ${error?.details ?? ""}`.toLocaleLowerCase();
+      if (duplicateError.includes("daily candidate number limit")) {
+        return NextResponse.json({ error: "This company has reached today's generated candidate number limit. Try again tomorrow." }, { status: 409, headers });
+      }
+      const duplicateFileNumber = error?.code === "23505" && duplicateError.includes("file_number");
+      if (duplicateFileNumber) {
+        return NextResponse.json({ error: "That file number is already assigned to another candidate." }, { status: 409, headers });
+      }
       const duplicatePassport = error?.code === "23505" && (
         duplicateError.includes("passportnumber") ||
         duplicateError.includes("passport_number_unique_idx")
@@ -459,7 +509,7 @@ export async function POST(request: Request) {
       }
       return NextResponse.json({
         error: error?.code === "23505"
-            ? "That file number already exists in this company."
+            ? "A conflicting candidate record already exists."
             : "Unable to register this candidate. Check your create permission.",
       }, { status: error?.code === "23505" ? 409 : 403, headers });
     }

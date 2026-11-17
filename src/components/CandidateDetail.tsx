@@ -7,7 +7,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import type { Candidate } from "./Candidates";
+import type { Candidate, CandidateAgentOption } from "./Candidates";
 import { SearchableSelect } from "./SearchableSelect";
 import { getCountries, getCountryByShort, getStatesByShort } from "countrycitystatejson/client";
 import { isPassportNumberValid, normalizePassportNumber, passportNumberRule } from "@/lib/passport-number";
@@ -18,9 +18,8 @@ interface Props {
   isAgent?: boolean; // Whether user is an agent registering a candidate
   onSave: (c: Candidate) => void | Promise<void>;
   onBack: () => void;
-  agentOptions?: string[];
+  agentOptions?: CandidateAgentOption[];
   canViewFinance?: boolean;
-  canManageSources?: boolean;
   canViewActivityLogs?: boolean;
   canViewActivityByRole?: boolean; // Chairman, GM, Supervisor visibility
   canManagePassportStatus?: boolean;
@@ -142,6 +141,7 @@ function formatAttributionDate(value?: string) {
 
 type CandidateSourceOption = { id: string; source: string };
 type BranchOption = { id: string; name: string };
+type PartnerOption = { id: string; name: string };
 type CandidateStageEvent = {
   id: string;
   event_type: "stage" | "medical_appointment";
@@ -184,7 +184,7 @@ function calculateAge(dateOfBirth: string): number | null {
   return age;
 }
 
-export default function CandidateDetail({ candidate, isNew, isAgent = false, onSave, onBack, agentOptions = [], canViewFinance = false, canManageSources = false, canViewActivityLogs = false, canViewActivityByRole = false, canManagePassportStatus = false }: Props) {
+export default function CandidateDetail({ candidate, isNew, isAgent = false, onSave, onBack, agentOptions = [], canViewFinance = false, canViewActivityLogs = false, canViewActivityByRole = false, canManagePassportStatus = false }: Props) {
   // Agents registering candidates see the required personal, passport, kin, and job information.
   // Staff completing registration see all tabs based on permissions
   const agentRegisteringTabs = ["Personal", "Passport Info", "Residence", "Parents & Kin", "Job Info"] as const;
@@ -196,14 +196,15 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
   
   const [form, setForm] = useState<Candidate>({ ...candidate });
   const [activeTab, setActiveTab] = useState<Tab>(availableTabs[0]);
-  const [viewMode, setViewMode] = useState<"details" | "content">("details");
+  const [viewMode, setViewMode] = useState<"details" | "content">(isNew ? "content" : "details");
   const [contentSectionIndex, setContentSectionIndex] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [candidateSources, setCandidateSources] = useState<CandidateSourceOption[]>([]);
-  const [sourceDraft, setSourceDraft] = useState("");
-  const [addingSource, setAddingSource] = useState(false);
   const [sourceError, setSourceError] = useState("");
+  const [partnerOptions, setPartnerOptions] = useState<PartnerOption[]>([]);
+  const [partnerOptionsError, setPartnerOptionsError] = useState("");
+  const [partnerOptionsLoading, setPartnerOptionsLoading] = useState(true);
   const [financeData, setFinanceData] = useState<CandidateFinancePayload | null>(null);
   const [financeLoading, setFinanceLoading] = useState(false);
   const [financeError, setFinanceError] = useState("");
@@ -234,6 +235,27 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/candidates/referral-options", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json() as { partners?: PartnerOption[]; error?: string };
+        if (!response.ok) throw new Error(payload.error ?? "Unable to load registered partners.");
+        if (!cancelled) setPartnerOptions(payload.partners ?? []);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setPartnerOptionsError(
+            error instanceof Error ? error.message : "Unable to load registered partners.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPartnerOptionsLoading(false);
+      });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -372,33 +394,10 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
     setForm((current) => ({ ...current, dob: dateOfBirth, age: age ?? 0 }));
   };
 
-  const addCandidateSource = async () => {
-    const source = sourceDraft.trim();
-    if (!source || addingSource) return;
-    setAddingSource(true);
-    setSourceError("");
-    try {
-      const response = await fetch("/api/candidates/sources", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source }),
-      });
-      const payload = await response.json() as { source?: CandidateSourceOption; error?: string };
-      if (!response.ok || !payload.source) throw new Error(payload.error ?? "Unable to add this candidate source.");
-      setCandidateSources((current) =>
-        [...current, payload.source!].sort((a, b) => a.source.localeCompare(b.source)),
-      );
-      set("source", payload.source.source);
-      setSourceDraft("");
-    } catch (error) {
-      setSourceError(error instanceof Error ? error.message : "Unable to add this candidate source.");
-    } finally {
-      setAddingSource(false);
-    }
-  };
-
+  const sourceType = form.source.trim().toLocaleLowerCase();
+  const isPartnerSource = sourceType === "partner";
+  const isRecruitmentAgentSource = sourceType === "recruitment agent";
   const personalSectionComplete = Boolean(
-      form.fileNumber.trim() &&
       form.firstName.trim() &&
       form.lastName.trim() &&
       form.phone.trim() &&
@@ -410,7 +409,9 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
           form.abroadStatus.trim() &&
           form.abroadExperience.trim() &&
           candidateSources.some((option) => option.source === form.source) &&
-          form.agent.trim())),
+          form.agent.trim() &&
+          (!isPartnerSource || form.referralPartnerId?.trim()) &&
+          (!isRecruitmentAgentSource || form.agentUserId))),
     );
   const kinSectionComplete = Boolean(
       form.kinFirstName.trim() &&
@@ -642,7 +643,27 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                 </p>
               </div>
             )}
-            <Field label="File Number" value={form.fileNumber} onChange={(v) => set("fileNumber", v)} required invalid={showValidationErrors && !form.fileNumber.trim()} />
+            <Field
+              label="Inquiry No."
+              value={form.inquiryNumber}
+              onChange={() => {}}
+              readOnly
+              placeholder={isNew && !form.inquiryNumber ? "Assigned when saved" : ""}
+            />
+            <div>
+              <Field
+                label="File Number"
+                value={form.fileNumber}
+                onChange={() => {}}
+                readOnly
+                placeholder={isNew ? "Assigned after registration is saved" : ""}
+              />
+              {isNew && (
+                <p className="mt-1 text-[11px]" style={{ color: "var(--muted-foreground)" }}>
+                  Assigned automatically after you finish and save registration.
+                </p>
+              )}
+            </div>
             <Field label="First Name" value={form.firstName} onChange={(v) => set("firstName", v)} required invalid={showValidationErrors && !form.firstName.trim()} />
             <Field label="Last Name" value={form.lastName} onChange={(v) => set("lastName", v)} required invalid={showValidationErrors && !form.lastName.trim()} />
             {!(isAgent && isNew) && <Field label="Other Names" value={form.otherNames} onChange={(v) => set("otherNames", v)} />}
@@ -669,7 +690,9 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                 value={form.nationality ?? ""}
                 onChange={(value) => set("nationality", value)}
                 options={countryOptions}
-                placeholder="Type a nationality"
+                placeholder="Type at least 3 characters"
+                minQueryLength={3}
+                inlineOptions
                 style={{ borderColor: showValidationErrors && !form.nationality?.trim() ? "#dc2626" : "var(--border)" }}
               />
             </div>
@@ -686,7 +709,9 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                   setForm((current) => ({ ...current, branchId, branch: selectedBranch?.name ?? "" }));
                 }}
                 options={branches.map((branch) => ({ value: branch.id, label: branch.name }))}
-                placeholder="Select a company branch"
+                placeholder="Type at least 3 characters to search branches"
+                minQueryLength={3}
+                inlineOptions
                 style={{ borderColor: showValidationErrors && !form.branchId?.trim() ? "#dc2626" : "var(--border)" }}
               />
               {branchError && <p role="alert" className="mt-1 text-xs text-red-500">{branchError}</p>}
@@ -704,7 +729,16 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                 <select
                   id="candidate-source"
                   value={form.source}
-                  onChange={(event) => set("source", event.target.value)}
+                  onChange={(event) => {
+                    const source = event.target.value;
+                    setForm((current) => ({
+                      ...current,
+                      source,
+                      ...(source.trim().toLocaleLowerCase() === "partner"
+                        ? {}
+                        : { referralPartnerId: "", referralPartnerName: "" }),
+                    }));
+                  }}
                   required
                   className="w-full rounded border px-3 py-2 text-sm outline-none"
                   aria-invalid={showValidationErrors && !form.source.trim() || undefined}
@@ -716,35 +750,92 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                   )}
                   {candidateSources.map((option) => <option key={option.id} value={option.source}>{option.source}</option>)}
                 </select>
-                {canManageSources && (
-                  <div className="mt-2 flex gap-2">
-                    <input
-                      aria-label="New candidate source"
-                      value={sourceDraft}
-                      maxLength={80}
-                      onChange={(event) => setSourceDraft(event.target.value)}
-                      placeholder="Add a source"
-                      className="min-w-0 flex-1 rounded border px-2 py-1.5 text-xs"
-                      style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void addCandidateSource()}
-                      disabled={addingSource || !sourceDraft.trim()}
-                      className="shrink-0 rounded px-3 py-1.5 text-xs font-600 disabled:opacity-50"
-                      style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
-                    >
-                      {addingSource ? "Adding…" : "Add"}
-                    </button>
-                  </div>
+                {!candidateSources.length && !sourceError && (
+                  <p role="status" className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                    No sources are configured yet. Ask an administrator to configure them in Settings.
+                  </p>
                 )}
                 {sourceError && <p role="alert" className="mt-1 text-xs text-red-500">{sourceError}</p>}
               </div>
             )}
 
+            {!(isAgent && isNew) && isPartnerSource && (
+              <div>
+                <label className="mb-1 block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>
+                  Referring Partner<span style={{ color: "#ef4444" }}> *</span>
+                </label>
+                <SearchableSelect
+                  required
+                  ariaLabel="Select referring partner"
+                  value={form.referralPartnerId ?? ""}
+                  onChange={(partnerId) => {
+                    const partner = partnerOptions.find((option) => option.id === partnerId);
+                    setForm((current) => ({
+                      ...current,
+                      referralPartnerId: partnerId,
+                      referralPartnerName: partner?.name ?? "",
+                    }));
+                  }}
+                  options={[
+                    ...partnerOptions.map((partner) => ({ value: partner.id, label: partner.name })),
+                    ...(form.referralPartnerId && !partnerOptions.some((partner) => partner.id === form.referralPartnerId)
+                      ? [{ value: form.referralPartnerId, label: form.referralPartnerName || "Current partner" }]
+                      : []),
+                  ]}
+                  placeholder="Type at least 3 characters to search partners"
+                  minQueryLength={3}
+                  inlineOptions
+                  style={{
+                    borderColor: showValidationErrors && !form.referralPartnerId?.trim()
+                      ? "#dc2626"
+                      : "var(--border)",
+                  }}
+                />
+                {partnerOptionsLoading && (
+                  <p role="status" className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                    Loading registered partners…
+                  </p>
+                )}
+                {!partnerOptionsLoading && !partnerOptionsError && !partnerOptions.length && (
+                  <p role="status" className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                    No active partners are registered yet. Add one in the Partners module.
+                  </p>
+                )}
+                {partnerOptionsError && <p role="alert" className="mt-1 text-xs text-red-500">{partnerOptionsError}</p>}
+              </div>
+            )}
+
             {!(isAgent && isNew) && <div className="col-span-2">
-              <label className="text-xs font-600 block mb-1" style={{ color: "var(--muted-foreground)" }}>Agent<span style={{ color: "#ef4444" }}> *</span></label>
-              <SearchableSelect required ariaLabel="Search agent" value={form.agent} onChange={(value) => set("agent", value)} options={[...new Set([...agentOptions, ...(form.agent ? [form.agent] : [])])].map((name) => ({ value: name, label: name }))} placeholder="Type an agent name" style={{ borderColor: showValidationErrors && !form.agent.trim() ? "#dc2626" : "var(--border)" }} />
+              <label className="text-xs font-600 block mb-1" style={{ color: "var(--muted-foreground)" }}>
+                {isRecruitmentAgentSource ? "Recruitment Agent (also assigned)" : "Agent"}
+                <span style={{ color: "#ef4444" }}> *</span>
+              </label>
+              <SearchableSelect
+                required
+                ariaLabel="Search agent"
+                value={form.agentUserId || (!isNew ? form.agent : "")}
+                onChange={(value) => {
+                  const selectedAgent = agentOptions.find((option) => option.userId === value);
+                  setForm((current) => ({
+                    ...current,
+                    agentUserId: selectedAgent?.userId,
+                    agent: selectedAgent?.displayName ?? (isNew ? "" : value),
+                  }));
+                }}
+                options={[
+                  ...agentOptions.map((option) => ({ value: option.userId, label: option.displayName })),
+                  ...(form.agentUserId && !agentOptions.some((option) => option.userId === form.agentUserId)
+                    ? [{ value: form.agentUserId, label: form.agent || "Current agent" }]
+                    : []),
+                  ...(!isNew && !form.agentUserId && form.agent
+                    ? [{ value: form.agent, label: form.agent }]
+                    : []),
+                ]}
+                placeholder="Type at least 3 characters to search agents"
+                minQueryLength={3}
+                inlineOptions
+                style={{ borderColor: showValidationErrors && !form.agent.trim() ? "#dc2626" : "var(--border)" }}
+              />
             </div>}
           </div>
         )}

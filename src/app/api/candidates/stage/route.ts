@@ -194,7 +194,7 @@ export async function POST(request: Request) {
         }
         const { data, error } = await supabase.from("candidates").update({ details: { ...details, ...answers } as never })
           .eq("id", candidate.id).eq("company_id", membership.company_id)
-          .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
+          .select("id, source_row_number, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
           .maybeSingle();
         if (error || !data) {
           rejected.push({ candidateId: candidate.id, name, reasons: ["stage details could not be saved; verify edit access and try again"], kind: "transition" });
@@ -261,7 +261,7 @@ export async function POST(request: Request) {
           continue;
         }
         const { data, error } = await supabase.from("candidates")
-          .select("id, source_row_number, branch_id, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
+          .select("id, source_row_number, branch_id, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
           .eq("id", candidate.id)
           .eq("company_id", membership.company_id)
           .maybeSingle();
@@ -329,7 +329,7 @@ export async function POST(request: Request) {
         const { data: saved, error: saveError } = await supabase.from("candidates")
           .update({ details: nextDetails as never, visa_locked: true })
           .eq("id", candidate.id).eq("company_id", membership.company_id)
-          .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details, visa_locked, created_at, created_by, updated_at, updated_by")
+          .select("id, source_row_number, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details, visa_locked, created_at, created_by, updated_at, updated_by")
           .maybeSingle();
         if (saveError || !saved) {
           rejected.push({ candidateId: candidate.id, name, reasons: [saveError?.message ?? "Visa status could not be saved."], kind: "transition" });
@@ -461,7 +461,7 @@ export async function POST(request: Request) {
         const { data: saved, error: saveError } = await supabase.from("candidates")
           .update({ details: nextDetails as never })
           .eq("id", candidate.id).eq("company_id", membership.company_id)
-          .select("id, source_row_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details, visa_locked, created_at, created_by, updated_at, updated_by")
+          .select("id, source_row_number, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, religion, position, nationality, father_name, mother_name, details, visa_locked, created_at, created_by, updated_at, updated_by")
           .maybeSingle();
         if (saveError || !saved) {
           rejected.push({ candidateId: candidate.id, name, reasons: [saveError?.message ?? "Ticket details could not be saved."], kind: "transition" });

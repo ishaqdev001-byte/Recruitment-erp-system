@@ -25,7 +25,13 @@ export async function GET() {
     }
 
     const permissionChecks = await Promise.all(
-      ["candidates.view", "candidates.register", "candidates.edit"].map(
+      [
+        "candidates.view",
+        "candidates.register",
+        "candidates.create",
+        "candidates.edit",
+        "candidates.sources.manage",
+      ].map(
         (requested_permission) =>
           supabase.rpc("current_user_has_company_permission", {
             requested_company_id: membership.company_id,
@@ -36,7 +42,7 @@ export async function GET() {
     if (permissionChecks.some(({ error }) => error)) {
       return NextResponse.json({ error: "Unable to verify candidate source access." }, { status: 503, headers });
     }
-    if (!permissionChecks.some(({ data }) => data)) {
+    if (!permissionChecks.slice(0, 4).some(({ data }) => data)) {
       return NextResponse.json({ error: "You do not have permission to view candidate sources." }, { status: 403, headers });
     }
 
@@ -50,7 +56,10 @@ export async function GET() {
       return NextResponse.json({ error: "Unable to load candidate sources." }, { status: 503, headers });
     }
 
-    return NextResponse.json({ sources: data ?? [] }, { headers });
+    return NextResponse.json({
+      sources: data ?? [],
+      canManageSources: Boolean(permissionChecks[4].data),
+    }, { headers });
   } catch (error) {
     console.error("Candidate sources request failed", error);
     return NextResponse.json({ error: "Candidate sources are unavailable." }, { status: 503, headers });

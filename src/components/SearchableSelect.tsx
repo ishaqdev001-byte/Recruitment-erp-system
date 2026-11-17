@@ -22,6 +22,7 @@ export function SearchableSelect({
   disabled = false,
   allowCustom = false,
   inlineOptions = false,
+  minQueryLength = 0,
   className = "",
   style,
   ariaLabel,
@@ -34,6 +35,7 @@ export function SearchableSelect({
   disabled?: boolean;
   allowCustom?: boolean;
   inlineOptions?: boolean;
+  minQueryLength?: number;
   className?: string;
   style?: CSSProperties;
   ariaLabel?: string;
@@ -46,7 +48,14 @@ export function SearchableSelect({
   const queryEdited = useRef(false);
   const listboxId = useId();
   const selected = options.find((option) => option.value === value);
-  const visibleOptions = useMemo(() => filteredOptions(options, query, []), [options, query]);
+  const queryMeetsMinimum = minQueryLength === 0 || (
+    query.trim().length >= minQueryLength && (!selected || query !== selected.label)
+  );
+  const visibleOptions = useMemo(
+    () => queryMeetsMinimum ? filteredOptions(options, query, []) : [],
+    [options, query, queryMeetsMinimum],
+  );
+  const showOptions = open && !disabled && queryMeetsMinimum;
 
   useEffect(() => {
     if (queryEdited.current) {
@@ -100,10 +109,10 @@ export function SearchableSelect({
           ref={inputRef}
           role="combobox"
           aria-label={ariaLabel}
-          aria-expanded={open}
+          aria-expanded={showOptions}
           aria-autocomplete="list"
           aria-controls={listboxId}
-          aria-activedescendant={open && visibleOptions[activeIndex] ? `${listboxId}-option-${visibleOptions[activeIndex].value}` : undefined}
+          aria-activedescendant={showOptions && visibleOptions[activeIndex] ? `${listboxId}-option-${visibleOptions[activeIndex].value}` : undefined}
           required={required}
           disabled={disabled}
           autoComplete="off"
@@ -126,7 +135,7 @@ export function SearchableSelect({
         {query && <button type="button" tabIndex={-1} disabled={disabled} aria-label="Clear selection" onClick={() => { queryEdited.current = allowCustom || Boolean(value); setQuery(""); onChange(""); inputRef.current?.setCustomValidity(""); setOpen(true); inputRef.current?.focus(); }} className="shrink-0" style={{ color: "var(--muted-foreground)" }}><X size={14} aria-hidden="true" /></button>}
         <ChevronDown size={14} aria-hidden="true" className="shrink-0" style={{ color: "var(--muted-foreground)" }} />
       </div>
-      {open && !disabled && <div id={listboxId} role="listbox" className={`${inlineOptions ? "relative mt-2" : "absolute z-50 mt-1"} max-h-60 w-full overflow-y-auto rounded border py-1 shadow-xl`} style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+      {showOptions && <div id={listboxId} role="listbox" className={`${inlineOptions ? "relative mt-2" : "absolute z-50 mt-1"} max-h-60 w-full overflow-y-auto rounded border py-1 shadow-xl`} style={{ background: "var(--card)", borderColor: "var(--border)" }}>
         {visibleOptions.map((option, index) => <button
           key={option.value}
           id={`${listboxId}-option-${option.value}`}

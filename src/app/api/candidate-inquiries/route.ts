@@ -150,6 +150,9 @@ export async function POST(request: Request) {
     }).select("*").single();
     if (error || !inquiry) {
       console.error("Candidate inquiry creation failed", error);
+      if (error?.message.toLocaleLowerCase().includes("daily candidate number limit")) {
+        return NextResponse.json({ error: "This company has reached today's generated candidate number limit. Try again tomorrow." }, { status: 409, headers });
+      }
       return NextResponse.json({ error: "Unable to save this candidate inquiry." }, { status: 403, headers });
     }
     return NextResponse.json({ inquiry }, { status: 201, headers });

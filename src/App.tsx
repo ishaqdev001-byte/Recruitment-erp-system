@@ -365,6 +365,12 @@ const ExpenseCategoriesSettings = dynamic(
   { loading: PageLoading },
 )
 
+const CandidateSourcesSettings = dynamic(
+  () => import("./components/settings/CandidateSourcesSettings"),
+
+  { loading: PageLoading },
+)
+
 const AttendanceSettings = dynamic(
   () => import("./components/AttendanceSettings"),
 
@@ -451,6 +457,8 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
       import("./components/settings/ServiceProvidersSettings"),
 
       import("./components/settings/ExpenseCategoriesSettings"),
+
+      import("./components/settings/CandidateSourcesSettings"),
     ]),
 }
 
@@ -7032,7 +7040,7 @@ function SettingsPage({
   const isChairman = user?.role === "Chairman"
 
   const [settingsTab, setSettingsTab] =
-    useState<"general" | "departments" | "currencies" | "service-providers" | "expense-categories" | "attendance">(
+    useState<"general" | "candidate-sources" | "departments" | "currencies" | "service-providers" | "expense-categories" | "attendance">(
       "general",
     )
 
@@ -7050,6 +7058,8 @@ function SettingsPage({
 
   const tabs: { id: typeof settingsTab; label: string }[] = [
     { id: "general", label: "General" },
+
+    { id: "candidate-sources", label: "Candidate Sources" },
 
     { id: "departments", label: "Departments" },
 
@@ -7349,6 +7359,7 @@ function SettingsPage({
         )}
 
         {settingsTab === "departments" && <DepartmentsSettings />}
+        {settingsTab === "candidate-sources" && <CandidateSourcesSettings />}
         {settingsTab === "currencies" && <CurrenciesSettings />}
         {settingsTab === "service-providers" && <ServiceProvidersSettings />}
         {settingsTab === "expense-categories" && <ExpenseCategoriesSettings />}

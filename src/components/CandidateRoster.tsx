@@ -24,12 +24,14 @@ import CandidateDetail from "./CandidateDetail"
 
 import CandidateReadOnlyDetails from "./CandidateReadOnlyDetails"
 
-import type { Candidate } from "./Candidates"
+import type { Candidate, CandidateAgentOption } from "./Candidates"
 
 interface CandidateRecord {
   id: string
 
   source_row_number: number | null
+
+  inquiry_number: string
 
   branch_id?: string | null
 
@@ -86,6 +88,8 @@ type InquiryPerson = {
 
 interface InquiryRecord {
   id: string
+
+  inquiry_number: string
 
   first_name: string
 
@@ -260,6 +264,8 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
   return {
     id: record.id,
 
+    inquiryNumber: record.inquiry_number,
+
     fileNumber: record.file_number,
 
     firstName: record.first_name,
@@ -291,7 +297,8 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
     abroadExperience: text("abroadExperience"),
 
     source: text("source"),
-
+    referralPartnerId: text("referralPartnerId"),
+    referralPartnerName: text("referralPartnerName"),
     agent: record.agent_name,
 
     agentUserId: record.agent_user_id ?? undefined,
@@ -431,6 +438,7 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
 function newCandidate(): Candidate {
   return candidateFromRecord({
     id: crypto.randomUUID(),
+    inquiry_number: "",
     source_row_number: null,
     file_number: "",
     first_name: "",
@@ -507,10 +515,12 @@ function candidateFromInquiry(inquiry: InquiryRecord): Candidate {
             ? "Television Advert"
             : inquiry.discovery_source === "radio"
               ? "Radio"
-              : "Agent Referral"
+              : "Recruitment Agent"
 
   return candidateFromRecord({
     id: crypto.randomUUID(),
+
+    inquiry_number: inquiry.inquiry_number,
 
     source_row_number: null,
 
@@ -1502,6 +1512,7 @@ export default function CandidateRoster({
   const saveCandidate = async (form: Candidate) => {
     const {
       id,
+      inquiryNumber,
       fileNumber,
       firstName,
       lastName,
@@ -1519,20 +1530,20 @@ export default function CandidateRoster({
       jobOfInterest,
       ...details
     } = form
+    void inquiryNumber;
+    void fileNumber;
 
     const selectedAgentUserId =
-      inquiryPeople.find(
+      agentUserId ||
+      (inquiryPeople.find(
         (person) =>
           person.role_name.toLocaleLowerCase().includes("agent") &&
           person.display_name.trim().toLocaleLowerCase() ===
             agent.trim().toLocaleLowerCase(),
       )?.user_id ??
-      agentUserId ??
-      ""
+        "")
 
     const requestBody = {
-      fileNumber,
-
       firstName,
 
       lastName,
@@ -1568,8 +1579,6 @@ export default function CandidateRoster({
       ...(isNewCandidate
         ? {}
         : {
-            file_number: fileNumber,
-
             first_name: firstName,
 
             last_name: lastName,
@@ -1639,9 +1648,11 @@ export default function CandidateRoster({
           .filter((person) =>
             person.role_name.toLocaleLowerCase().includes("agent"),
           )
-          .map((person) => person.display_name)}
+          .map((person): CandidateAgentOption => ({
+            userId: person.user_id,
+            displayName: person.display_name,
+          }))}
         canViewFinance={canViewFinance}
-        canManageSources={permissions?.canManageCandidateSources}
         canManagePassportStatus={permissions?.canManagePassportStatus}
         canViewActivityLogs={canViewActivityLogs}
         canViewActivityByRole={permissions?.canViewActivityByRole || false}
@@ -2179,7 +2190,7 @@ export default function CandidateRoster({
             className="overflow-x-auto border"
             style={{ borderColor: "var(--border)", background: "var(--card)" }}
           >
-            <div className="app-table-scroll"><table className="w-full min-w-280 text-sm">
+            <div className="app-table-scroll"><table className="w-full min-w-300 text-sm">
               <thead
                 className="sticky top-0"
                 style={{ background: "var(--card)" }}
@@ -2189,6 +2200,7 @@ export default function CandidateRoster({
                   style={{ borderColor: "var(--border)" }}
                 >
                   {[
+                    "Inq No.",
                     "Candidate",
                     "Phone",
                     "Source",
@@ -2220,7 +2232,7 @@ export default function CandidateRoster({
                 {inquiriesLoading && (
                   <tr>
                     <td
-                      colSpan={11}
+                      colSpan={12}
                       className="px-4 py-10 text-center"
                       style={{ color: "var(--muted-foreground)" }}
                     >
@@ -2233,7 +2245,7 @@ export default function CandidateRoster({
                   filteredInquiries.length === 0 && (
                     <tr>
                       <td
-                        colSpan={11}
+                        colSpan={12}
                         className="px-4 py-10 text-center"
                         style={{ color: "var(--muted-foreground)" }}
                       >
@@ -2250,6 +2262,12 @@ export default function CandidateRoster({
                       className="border-b"
                       style={{ borderColor: "var(--border)" }}
                     >
+                      <td
+                        className="whitespace-nowrap px-3 py-3 font-mono text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {inquiry.inquiry_number}
+                      </td>
                       <td
                         className="whitespace-nowrap px-3 py-3 font-600"
                         style={{ color: "var(--foreground)" }}

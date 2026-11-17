@@ -6,6 +6,7 @@ import { matchesSearch } from "@/lib/search";
 
 export interface Candidate {
   id: string;
+  inquiryNumber: string;
   fileNumber: string;
   firstName: string;
   lastName: string;
@@ -23,6 +24,8 @@ export interface Candidate {
   source: string;
   agent: string;
   agentUserId?: string;
+  referralPartnerId?: string;
+  referralPartnerName?: string;
   mediaChannel: string[];
   // Passport
   nin: string;
@@ -95,6 +98,11 @@ export interface Candidate {
   recruiterNotes?: string;
 }
 
+export interface CandidateAgentOption {
+  userId: string;
+  displayName: string;
+}
+
 const stageColor: Record<string, string> = {
   Registration: "#f59e0b",
   "Medical Booked": "#0ea5e9",
@@ -115,6 +123,7 @@ function candidateFromRecord(value: Record<string, unknown>): Candidate {
     : [];
   return {
     id: typeof value.id === "string" ? value.id : crypto.randomUUID(),
+    inquiryNumber: typeof value.inquiry_number === "string" ? value.inquiry_number : "",
     fileNumber: typeof value.file_number === "string" ? value.file_number : "",
     firstName: typeof value.first_name === "string" ? value.first_name : "",
     lastName: typeof value.last_name === "string" ? value.last_name : "",
@@ -130,6 +139,8 @@ function candidateFromRecord(value: Record<string, unknown>): Candidate {
     abroadStatus: text("abroadStatus"),
     abroadExperience: text("abroadExperience"),
     source: text("source"),
+    referralPartnerId: text("referralPartnerId"),
+    referralPartnerName: text("referralPartnerName"),
     agent: typeof value.agent_name === "string" ? value.agent_name : "",
     agentUserId: typeof value.agent_user_id === "string" ? value.agent_user_id : undefined,
     mediaChannel: list("mediaChannel"),
@@ -195,7 +206,6 @@ function candidateFromRecord(value: Record<string, unknown>): Candidate {
 
 function candidatePayload(candidate: Candidate) {
   return {
-    fileNumber: candidate.fileNumber,
     firstName: candidate.firstName,
     lastName: candidate.lastName,
     phone: candidate.phone,
@@ -221,6 +231,8 @@ function candidatePayload(candidate: Candidate) {
       abroadExperience: candidate.abroadExperience,
       source: candidate.source,
       nationality: candidate.nationality ?? "",
+      referralPartnerId: candidate.referralPartnerId ?? "",
+      referralPartnerName: candidate.referralPartnerName ?? "",
       mediaChannel: candidate.mediaChannel,
       nin: candidate.nin,
       passportNumber: candidate.passportNumber,
@@ -279,11 +291,11 @@ function candidatePayload(candidate: Candidate) {
 
 export default function Candidates() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [agentOptions, setAgentOptions] = useState<CandidateAgentOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [canViewFinance, setCanViewFinance] = useState(false);
   const [canViewActivityLogs, setCanViewActivityLogs] = useState(false);
-  const [canManageCandidateSources, setCanManageCandidateSources] = useState(false);
   const [canManagePassportStatus, setCanManagePassportStatus] = useState(false);
   const [isAgent, setIsAgent] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
@@ -307,9 +319,9 @@ export default function Candidates() {
         const records = payload.candidates as Record<string, unknown>[];
         if (cancelled) return;
         setCandidates(records.map(candidateFromRecord));
+        setAgentOptions(payload.agentOptions ?? []);
         setCanViewFinance(Boolean(payload.permissions?.canViewFinance));
         setCanViewActivityLogs(Boolean(payload.permissions?.canViewActivityLogs));
-        setCanManageCandidateSources(Boolean(payload.permissions?.canManageCandidateSources));
         setCanManagePassportStatus(Boolean(payload.permissions?.canManagePassportStatus));
         setIsAgent(Boolean(payload.permissions?.isAgent));
       })
@@ -331,10 +343,11 @@ export default function Candidates() {
   });
 
   const blankCandidate = (): Candidate => ({
-    id: crypto.randomUUID(), fileNumber: "",
+    id: crypto.randomUUID(), inquiryNumber: "", fileNumber: "",
     firstName: "", lastName: "", otherNames: "", phone: "", secondaryPhone: "", otherPhone: "",
     dob: "", age: 0, gender: "", maritalStatus: "", religion: "", abroadStatus: "", abroadExperience: "",
     source: "", agent: "", mediaChannel: [],
+    referralPartnerId: "", referralPartnerName: "",
     nin: "", passportNumber: "", passportIssue: "", passportExpiry: "", passportStatus: "Available", passportBranch: "", passportStorageLocation: "",
     preferredCities: "",
     placeOfBirth: "", physicalAddress: "", district: "", county: "", subCounty: "", parish: "",
@@ -352,7 +365,6 @@ export default function Candidates() {
     const requestBody = isNew
       ? values
       : {
-          file_number: values.fileNumber,
           first_name: values.firstName,
           last_name: values.lastName,
           phone: values.phone,
@@ -402,11 +414,11 @@ export default function Candidates() {
         candidate={editing}
         isNew={isNew}
         isAgent={isAgent}
+        agentOptions={agentOptions}
         onSave={handleSave}
         onBack={() => { setEditingId(null); setIsNew(false); }}
         canViewFinance={canViewFinance}
         canViewActivityLogs={canViewActivityLogs}
-        canManageSources={canManageCandidateSources}
         canManagePassportStatus={canManagePassportStatus}
       />
     );

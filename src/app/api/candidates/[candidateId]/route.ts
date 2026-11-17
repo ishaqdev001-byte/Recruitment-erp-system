@@ -7,13 +7,13 @@ import { isPassportNumberValid, normalizePassportNumber, passportNumberRule } fr
 export const runtime = "nodejs";
 
 const candidateFields = [
-  "file_number", "first_name", "last_name", "phone", "date_of_birth",
+  "first_name", "last_name", "phone", "date_of_birth",
   "place_of_birth", "agent_name", "religion", "position", "nationality",
   "father_name", "mother_name",
 ] as const;
 
 const candidateDetailFields = new Set([
-  "otherNames", "secondaryPhone", "otherPhone", "age", "gender", "maritalStatus", "abroadStatus", "abroadExperience", "source", "mediaChannel",
+  "otherNames", "secondaryPhone", "otherPhone", "age", "gender", "maritalStatus", "abroadStatus", "abroadExperience", "source", "mediaChannel", "referralPartnerId", "referralPartnerName",
   "nin", "passportNumber", "passportIssue", "passportExpiry", "passportStatus", "passportBranch", "passportStorageLocation", "height", "weight", "shirtSize", "shoeSize", "waistSize", "preferredCities",
   "physicalAddress", "residenceCountry", "residenceState", "district", "county", "subCounty", "parish", "fatherPhone", "fatherStatus", "motherPhone", "motherStatus",
   "kinFirstName", "kinLastName", "kinPhone", "kinRelationship", "emergencyFirstName", "emergencyLastName", "emergencyPhone", "emergencyRelationship",
@@ -86,10 +86,13 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
 
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Invalid candidate update." }, { status: 400, headers });
+    if ("file_number" in body || "fileNumber" in body) {
+      return NextResponse.json({ error: "File numbers are assigned automatically and cannot be changed." }, { status: 400, headers });
+    }
 
     const { data: currentCandidate, error: currentCandidateError } = await supabase
       .from("candidates")
-      .select("company_id, details")
+      .select("company_id, details, agent_user_id")
       .eq("id", candidateId)
       .maybeSingle();
     if (currentCandidateError || !currentCandidate) {
@@ -107,7 +110,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
         updates[field] = value as string | null;
         continue;
       }
-      if (typeof value !== "string" || value.length > (field === "file_number" ? 100 : 200)) {
+      if (typeof value !== "string" || value.length > 200) {
         return NextResponse.json({ error: `The ${field.replace(/_/g, " ")} value is invalid.` }, { status: 400, headers });
       }
       updates[field] = value.trim();
@@ -119,6 +122,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       const passportError = passportSetupError(details, assignedAgent);
       if (passportError) return NextResponse.json({ error: passportError }, { status: 400, headers });
       const source = typeof details.source === "string" ? details.source.trim() : "";
+      const sourceType = source.toLocaleLowerCase();
       if (source) {
         const { data: sourceOption, error: sourceError } = await supabase
           .from("candidate_source_options")
@@ -137,6 +141,61 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       const currentDetails = currentCandidate.details && typeof currentCandidate.details === "object" && !Array.isArray(currentCandidate.details)
         ? currentCandidate.details as Record<string, unknown>
         : {};
+      if (sourceType === "partner") {
+        const referralPartnerId = typeof details.referralPartnerId === "string"
+          ? details.referralPartnerId.trim()
+          : "";
+        if (!isUuid(referralPartnerId)) {
+          return NextResponse.json({ error: "Select a registered partner for this referral." }, { status: 400, headers });
+        }
+        const serviceUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (!serviceUrl || !serviceRoleKey) {
+          return NextResponse.json({ error: "Partner verification is not configured on the server." }, { status: 503, headers });
+        }
+        const admin = createClient(serviceUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+        const { data: partner, error: partnerError } = await admin.from("suppliers")
+          .select("id, supplier_name, status")
+          .eq("id", referralPartnerId)
+          .eq("company_id", currentCandidate.company_id)
+          .maybeSingle();
+        if (partnerError) {
+          console.error("Candidate referral partner validation failed", partnerError);
+          return NextResponse.json({ error: "Unable to verify the selected referral partner." }, { status: 503, headers });
+        }
+        const existingPartnerId = typeof currentDetails.referralPartnerId === "string"
+          ? currentDetails.referralPartnerId
+          : "";
+        if (!partner || (partner.status !== "active" && referralPartnerId !== existingPartnerId)) {
+          return NextResponse.json({ error: "Select an active partner registered by this company." }, { status: 400, headers });
+        }
+        details.referralPartnerId = partner.id;
+        details.referralPartnerName = partner.supplier_name;
+      } else {
+        details.referralPartnerId = "";
+        details.referralPartnerName = "";
+      }
+      if (sourceType === "recruitment agent") {
+        const assignedAgentUserId = Object.prototype.hasOwnProperty.call(updates, "agent_user_id")
+          ? updates.agent_user_id
+          : currentCandidate.agent_user_id;
+        if (typeof assignedAgentUserId !== "string" || !assignedAgentUserId) {
+          return NextResponse.json({ error: "Select an active company Recruitment Agent for this referral." }, { status: 400, headers });
+        }
+        const { data: agentMembership, error: agentMembershipError } = await supabase
+          .from("company_memberships")
+          .select("user_id, role:company_roles!company_memberships_role_id_fkey(name)")
+          .eq("user_id", assignedAgentUserId)
+          .eq("company_id", currentCandidate.company_id)
+          .eq("status", "active")
+          .limit(1)
+          .maybeSingle();
+        const agentRole = agentMembership?.role as { name: string } | { name: string }[] | null;
+        const agentRoleName = Array.isArray(agentRole) ? agentRole[0]?.name : agentRole?.name;
+        if (agentMembershipError || !agentMembership || !agentRoleName?.toLocaleLowerCase().includes("agent")) {
+          return NextResponse.json({ error: "Select an active company Recruitment Agent for this referral." }, { status: 400, headers });
+        }
+      }
       const mergedDetails: Record<string, unknown> = { ...details }
       for (const field of candidateWorkflowDetailFields) {
         if (Object.prototype.hasOwnProperty.call(currentDetails, field)) {
@@ -208,7 +267,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
       .from("candidates")
       .update(updates as never)
       .eq("id", candidateId)
-      .select("id, source_row_number, branch_id, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
+      .select("id, source_row_number, branch_id, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
       .maybeSingle();
     if (error || !data) {
       console.error("Candidate update failed", error);
@@ -216,6 +275,9 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
         return NextResponse.json({ error: error.message }, { status: 400, headers });
       }
       const duplicateError = `${error?.message ?? ""} ${error?.details ?? ""}`.toLocaleLowerCase();
+      if (error?.code === "23505" && duplicateError.includes("file_number")) {
+        return NextResponse.json({ error: "That file number is already assigned to another candidate." }, { status: 409, headers });
+      }
       if (error?.code === "23505" && (
         duplicateError.includes("passportnumber") ||
         duplicateError.includes("passport_number_unique_idx")

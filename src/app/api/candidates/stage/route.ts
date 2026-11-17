@@ -132,6 +132,42 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "One or more selected candidates could not be found in this company." }, { status: 404, headers });
     }
 
+    const [{ data: people, error: peopleError }, { data: actorProfile, error: profileError }] = await Promise.all([
+      supabase.rpc("list_candidate_inquiry_people", {
+        requested_company_id: membership.company_id,
+      }),
+      supabase.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
+    ]);
+    if (peopleError) console.error("Candidate editor name lookup failed", peopleError);
+    if (profileError) console.error("Current candidate editor profile lookup failed", profileError);
+    const editorNames = new Map(
+      (people ?? []).map((person: { user_id: string; display_name: string }) => [
+        person.user_id,
+        person.display_name,
+      ]),
+    );
+    const actorName =
+      actorProfile?.display_name?.trim() ||
+      (typeof user.user_metadata?.full_name === "string"
+        ? user.user_metadata.full_name.trim()
+        : "") ||
+      user.email ||
+      "Company user";
+    const withAttribution = <
+      T extends { created_by: string | null; updated_by: string | null },
+    >(
+      candidate: T,
+    ) => ({
+      ...candidate,
+      created_by_name: candidate.created_by
+        ? editorNames.get(candidate.created_by) ?? "Former team member"
+        : null,
+      updated_by_name: candidate.updated_by
+        ? editorNames.get(candidate.updated_by) ??
+          (candidate.updated_by === user.id ? actorName : "Former team member")
+        : null,
+    });
+
     // ── save-additional-stages ──────────────────────────────────────────────
     if (body?.action === "save-additional-stages") {
       const fields = ["offerLetter", "wakalaReceived", "molReceived", "enjaz"] as const;
@@ -164,7 +200,7 @@ export async function POST(request: Request) {
           rejected.push({ candidateId: candidate.id, name, reasons: ["stage details could not be saved; verify edit access and try again"], kind: "transition" });
           continue;
         }
-        updated.push(data);
+        updated.push(withAttribution(data));
       }
       return NextResponse.json({ updated, rejected }, { headers });
     }
@@ -234,7 +270,7 @@ export async function POST(request: Request) {
           rejected.push({ candidateId: candidate.id, name, reasons: ["Project submission was recorded, but the updated candidate could not be reloaded."], kind: "transition" });
           continue;
         }
-        updated.push(data);
+        updated.push(withAttribution(data));
       }
       return NextResponse.json({ updated, rejected }, { headers });
     }
@@ -299,7 +335,7 @@ export async function POST(request: Request) {
           rejected.push({ candidateId: candidate.id, name, reasons: [saveError?.message ?? "Visa status could not be saved."], kind: "transition" });
           continue;
         }
-        updated.push(saved);
+        updated.push(withAttribution(saved));
 
         // Fetch the auto-created invoice + any deposit balance
         if (admin) {
@@ -431,7 +467,7 @@ export async function POST(request: Request) {
           rejected.push({ candidateId: candidate.id, name, reasons: [saveError?.message ?? "Ticket details could not be saved."], kind: "transition" });
           continue;
         }
-        updated.push(saved);
+        updated.push(withAttribution(saved));
 
         if (!admin) continue;
 

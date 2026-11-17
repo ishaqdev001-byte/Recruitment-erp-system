@@ -247,6 +247,7 @@ export async function POST(request: Request) {
                 stage: "Medical Booked",
                 medicalBookedAt: new Date().toISOString(),
               } as never,
+              updated_by: access.userId,
             })
             .eq("id", candidateId)
             .eq("company_id", access.companyId);

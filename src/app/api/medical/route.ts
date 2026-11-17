@@ -375,7 +375,10 @@ export async function POST(request: Request) {
 
           await access.admin
             .from("candidates")
-            .update({ details: updatedDetails as never })
+            .update({
+              details: updatedDetails as never,
+              updated_by: access.userId,
+            })
             .eq("id", appt.candidate_id)
             .eq("company_id", access.companyId);
         }
@@ -504,6 +507,7 @@ export async function POST(request: Request) {
             stage: "Medical Booked",
             medicalBookedAt: new Date().toISOString(),
           } as never,
+          updated_by: access.userId,
         })
         .eq("id", candidateId)
         .eq("company_id", access.companyId);

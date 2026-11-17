@@ -669,19 +669,19 @@ function getDefaultViewByPermissions(
     return "medical-management"
   }
 
-  if (permissions.some((p) => p.startsWith("finance."))) {
+  if (canAccessView("finance", permissions)) {
     return "finance"
   }
 
-  if (permissions.some((p) => p.startsWith("candidates."))) {
+  if (canAccessView("candidates", permissions)) {
     return "candidates"
   }
 
-  if (permissions.includes("users.view")) {
+  if (canAccessView("users", permissions)) {
     return "users"
   }
 
-  if (permissions.includes("tasks.view")) {
+  if (canAccessView("tasks", permissions)) {
     return "tasks"
   }
 

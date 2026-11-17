@@ -3514,14 +3514,31 @@ export async function POST(request: Request) {
 
       // Replace permissions: delete all existing, insert new set
 
-      const { data: savedPermissions, error: savePermissionsError } =
-        await admin.rpc("replace_company_role_permissions", {
-          requested_role_id: roleId,
+      const permissionSave = access.isPrimaryAdmin
+        ? await admin.rpc(
+            "replace_company_role_permissions_for_primary_admin",
+            {
+              requested_role_id: roleId,
+              requested_company_id: access.companyId,
+              requested_permissions: requestedPermissions,
+              requested_actor_id: access.userId,
+            },
+          )
+        : await admin.rpc(
+            "replace_company_role_permissions",
+            {
+              requested_role_id: roleId,
 
-          requested_company_id: access.companyId,
+              requested_company_id: access.companyId,
 
-          requested_permissions: requestedPermissions,
-        })
+              requested_permissions: requestedPermissions,
+            },
+          )
+
+      const {
+        data: savedPermissions,
+        error: savePermissionsError,
+      } = permissionSave
 
       if (savePermissionsError || !savedPermissions) {
         console.error(
@@ -3531,7 +3548,11 @@ export async function POST(request: Request) {
         )
 
         return NextResponse.json(
-          { error: "Unable to update role permissions." },
+          {
+            error: savePermissionsError
+              ? `Unable to update role permissions: ${savePermissionsError.message}`
+              : "Unable to update role permissions.",
+          },
 
           { status: 500, headers: responseHeaders },
         )

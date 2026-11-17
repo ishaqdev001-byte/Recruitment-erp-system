@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isUuid } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { normalizePassportNumber, passportRegistrationDuplicateMessage } from "@/lib/passport-number";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
@@ -54,9 +55,11 @@ export async function GET() {
   try {
     const access = await getInquiryAccess("candidate_inquiries.view");
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
+    let inquiriesQuery = access.supabase.from("candidate_inquiries").select("*")
+      .eq("company_id", access.companyId).eq("status", "inquiry").order("created_at", { ascending: false });
+    if (access.inquiryScope === "created") inquiriesQuery = inquiriesQuery.eq("created_by", access.userId);
     const [{ data: inquiries, error: inquiryError }, { data: people, error: peopleError }] = await Promise.all([
-      access.supabase.from("candidate_inquiries").select("*")
-        .eq("company_id", access.companyId).eq("status", "inquiry").order("created_at", { ascending: false }),
+      inquiriesQuery,
       access.supabase.rpc("list_candidate_inquiry_people", { requested_company_id: access.companyId }),
     ]);
     if (inquiryError || peopleError) throw inquiryError ?? peopleError;
@@ -85,6 +88,9 @@ export async function POST(request: Request) {
     const firstName = typeof body?.firstName === "string" ? body.firstName.trim() : "";
     const lastName = typeof body?.lastName === "string" ? body.lastName.trim() : "";
     const phone = typeof body?.phone === "string" ? body.phone.trim() : "";
+    const passportNumber = typeof body?.passportNumber === "string"
+      ? normalizePassportNumber(body.passportNumber)
+      : "";
     const discoverySource = typeof body?.discoverySource === "string" ? body.discoverySource : "";
     const agentUserId = typeof body?.agentUserId === "string" ? body.agentUserId : "";
     const countries = Array.isArray(body?.desiredCountries)
@@ -102,6 +108,7 @@ export async function POST(request: Request) {
     const remarks = typeof body?.remarks === "string" ? body.remarks.trim() : "";
 
     if (!firstName || firstName.length > 200 || !lastName || lastName.length > 200
+      || !passportNumber || passportNumber.length > 100 || !/^[A-Z0-9]+$/.test(passportNumber)
       || !phone || phone.length > 100 || !sources.has(discoverySource)
       || countries.length < 1 || countries.length > 20 || countries.some((country) => !country || country.length > 100)
       || jobOfInterest.length < 1 || jobOfInterest.length > 20 || jobOfInterest.some((job) => job.length > 200)
@@ -129,6 +136,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Choose an active handler and a registered agent for agent referrals." }, { status: 400, headers });
     }
 
+    const { data: passportCheck, error: passportCheckError } = await access.supabase.rpc(
+      "lookup_candidate_passport_registration",
+      {
+        requested_passport_number: passportNumber,
+        requested_exclude_inquiry_id: null,
+      },
+    );
+    if (passportCheckError || !passportCheck?.length) {
+      console.error("Candidate inquiry passport check failed", passportCheckError);
+      return NextResponse.json({ error: "Unable to validate this passport number." }, { status: 503, headers });
+    }
+    if (passportCheck[0].is_registered) {
+      return NextResponse.json({
+        error: passportRegistrationDuplicateMessage(passportCheck[0]),
+      }, { status: 409, headers });
+    }
+
     const { data: inquiry, error } = await access.supabase.from("candidate_inquiries").insert({
       company_id: access.companyId,
       branch_id: access.branchId,
@@ -136,6 +160,7 @@ export async function POST(request: Request) {
       first_name: firstName,
       last_name: lastName,
       phone,
+      passport_number: passportNumber,
       discovery_source: discoverySource,
       agent_user_id: agent?.user_id ?? null,
       agent_name: agent?.display_name ?? "",
@@ -150,12 +175,30 @@ export async function POST(request: Request) {
     }).select("*").single();
     if (error || !inquiry) {
       console.error("Candidate inquiry creation failed", error);
+      if (error?.code === "23505" && error.message.toLocaleLowerCase().includes("passport")) {
+        const { data: duplicateCheck, error: duplicateCheckError } = await access.supabase.rpc(
+          "lookup_candidate_passport_registration",
+          {
+            requested_passport_number: passportNumber,
+            requested_exclude_inquiry_id: null,
+          },
+        );
+        if (duplicateCheckError) throw duplicateCheckError;
+        if (duplicateCheck?.[0]?.is_registered) {
+          return NextResponse.json({
+            error: passportRegistrationDuplicateMessage(duplicateCheck[0]),
+          }, { status: 409, headers });
+        }
+      }
       if (error?.message.toLocaleLowerCase().includes("daily candidate number limit")) {
         return NextResponse.json({ error: "This company has reached today's generated candidate number limit. Try again tomorrow." }, { status: 409, headers });
       }
       return NextResponse.json({ error: "Unable to save this candidate inquiry." }, { status: 403, headers });
     }
-    return NextResponse.json({ inquiry }, { status: 201, headers });
+    const warning = passportCheck[0].registered_in_another_company
+      ? "This passport number is already registered in another company. The inquiry was saved."
+      : undefined;
+    return NextResponse.json({ inquiry, ...(warning ? { warning } : {}) }, { status: 201, headers });
   } catch (error) {
     console.error("Candidate inquiry creation request failed", error);
     return NextResponse.json({ error: "Candidate inquiry service is unavailable." }, { status: 503, headers });

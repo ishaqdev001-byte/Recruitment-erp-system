@@ -10,11 +10,17 @@ import {
 import type { Candidate, CandidateAgentOption } from "./Candidates";
 import { SearchableSelect } from "./SearchableSelect";
 import { getCountries, getCountryByShort, getStatesByShort } from "countrycitystatejson/client";
-import { isPassportNumberValid, normalizePassportNumber, passportNumberRule } from "@/lib/passport-number";
+import {
+  isPassportNumberValid,
+  normalizePassportNumber,
+  passportNumberRule,
+  passportRegistrationDuplicateMessage,
+} from "@/lib/passport-number";
 
 interface Props {
   candidate: Candidate;
   isNew: boolean;
+  inquiryId?: string | null;
   isAgent?: boolean; // Whether user is an agent registering a candidate
   onSave: (c: Candidate) => void | Promise<void>;
   onBack: () => void;
@@ -151,8 +157,10 @@ type CandidateStageEvent = {
 };
 type PassportCheck = {
   passportNumber: string;
-  status: "idle" | "checking" | "valid" | "duplicate" | "invalid" | "error";
-  registeredBy?: string;
+  status: "idle" | "checking" | "valid" | "duplicate" | "other-company" | "invalid" | "error";
+  registeredLastName?: string;
+  registeredAgentName?: string;
+  belongsToAnotherAgent?: boolean;
   error?: string;
 };
 type CandidateFinancePayload = {
@@ -184,7 +192,7 @@ function calculateAge(dateOfBirth: string): number | null {
   return age;
 }
 
-export default function CandidateDetail({ candidate, isNew, isAgent = false, onSave, onBack, agentOptions = [], canViewFinance = false, canViewActivityLogs = false, canViewActivityByRole = false, canManagePassportStatus = false }: Props) {
+export default function CandidateDetail({ candidate, isNew, inquiryId, isAgent = false, onSave, onBack, agentOptions = [], canViewFinance = false, canViewActivityLogs = false, canViewActivityByRole = false, canManagePassportStatus = false }: Props) {
   // Agents registering candidates see the required personal, passport, kin, and job information.
   // Staff completing registration see all tabs based on permissions
   const agentRegisteringTabs = ["Personal", "Passport Info", "Residence", "Parents & Kin", "Job Info"] as const;
@@ -355,20 +363,33 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
       void fetch("/api/candidates/passport-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ passportNumber: normalizedPassportNumber, nationality: form.nationality }),
+        body: JSON.stringify({
+          passportNumber: normalizedPassportNumber,
+          nationality: form.nationality,
+          inquiryId,
+        }),
         cache: "no-store",
         signal: controller.signal,
       }).then(async (response) => {
         const payload = await response.json() as {
           registered?: boolean;
-          registeredBy?: string | null;
+          registeredLastName?: string | null;
+          registeredAgentName?: string | null;
+          belongsToAnotherAgent?: boolean;
+          registeredInAnotherCompany?: boolean;
           error?: string;
         };
         if (!response.ok) throw new Error(payload.error ?? "Unable to validate this passport number.");
         setPassportCheck({
           passportNumber: normalizedPassportNumber,
-          status: payload.registered ? "duplicate" : "valid",
-          registeredBy: payload.registeredBy ?? undefined,
+          status: payload.registered
+            ? "duplicate"
+            : payload.registeredInAnotherCompany
+              ? "other-company"
+              : "valid",
+          registeredLastName: payload.registeredLastName ?? undefined,
+          registeredAgentName: payload.registeredAgentName ?? undefined,
+          belongsToAnotherAgent: payload.belongsToAnotherAgent,
         });
       }).catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -384,7 +405,7 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [form.nationality, isNew, normalizedPassportNumber]);
+  }, [form.nationality, inquiryId, isNew, normalizedPassportNumber]);
 
   const set = (key: keyof Candidate, val: string | string[] | number) =>
     setForm((f) => ({ ...f, [key]: val }));
@@ -425,7 +446,10 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
         (form.passportStatus !== "Available" ||
           (form.passportBranch.trim() && form.passportStorageLocation.trim())) &&
           (form.passportStatus !== "With Agent" || form.agent.trim() || Boolean(form.agentUserId) || isAgent)) &&
-        (!isNew || (passportCheck.passportNumber === normalizedPassportNumber && passportCheck.status === "valid")));
+        (!isNew ||
+          (passportCheck.passportNumber === normalizedPassportNumber &&
+            (passportCheck.status === "valid" ||
+              passportCheck.status === "other-company"))));
   const registrationComplete =
     personalSectionComplete &&
     kinSectionComplete &&
@@ -854,14 +878,22 @@ export default function CandidateDetail({ candidate, isNew, isAgent = false, onS
                   style={{
                     color: passportCheck.status === "valid"
                       ? "#16a34a"
-                      : passportCheck.status === "duplicate" || passportCheck.status === "invalid" || passportCheck.status === "error"
-                        ? "#dc2626"
-                        : "var(--muted-foreground)",
+                      : passportCheck.status === "other-company"
+                        ? "#b45309"
+                        : passportCheck.status === "duplicate" || passportCheck.status === "invalid" || passportCheck.status === "error"
+                          ? "#dc2626"
+                          : "var(--muted-foreground)",
                   }}
                 >
                   {passportCheck.status === "checking" && "Checking passport number…"}
                   {passportCheck.status === "valid" && "✓ Passport number is valid and available."}
-                  {passportCheck.status === "duplicate" && `Sorry, this passport number was already captured by ${passportCheck.registeredBy ?? "a former team member"}.`}
+                  {passportCheck.status === "other-company" && "This passport number is already registered in another company. You can continue."}
+                  {passportCheck.status === "duplicate" &&
+                    passportRegistrationDuplicateMessage({
+                      registered_last_name: passportCheck.registeredLastName,
+                      registered_agent_name: passportCheck.registeredAgentName,
+                      belongs_to_another_agent: passportCheck.belongsToAnotherAgent,
+                    })}
                   {(passportCheck.status === "invalid" || passportCheck.status === "error") && (passportCheck.error ?? "Unable to validate this passport number.")}
                 </p>
               )}

@@ -604,6 +604,22 @@ const financeCandidateReadRolePermissionMigration = await readFile(
   "utf8",
 )
 
+const administrationOfficerRoleGuardMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261103131114_administration_officer_requisitions_and_finance_read_access.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
+const chairmanRolePermissionOverridesMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261117143721_chairman_role_permission_overrides.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const financeReadOnlyMedicalAppointmentsMigration = await readFile(
   new URL(
     "../supabase/migrations/20261102111623_finance_read_only_medical_appointments.sql",
@@ -3823,6 +3839,60 @@ try {
     permissionsAfterRejectedUpdate.rows.map((permission) => permission.permission_code),
     ["candidates.view", "finance.view"],
   )
+
+  await database.exec("begin")
+  await database.exec(administrationOfficerRoleGuardMigration)
+  await database.exec(chairmanRolePermissionOverridesMigration)
+  await database.query(
+    "update public.companies set primary_admin_user_id = $2 where id = $1",
+    [companyA, userA],
+  )
+  await database.query(
+    "update public.company_roles set name = 'Finance Manager' where id = $1",
+    [editableRoleId],
+  )
+
+  await database.exec("savepoint deny_protected_role_permission")
+  await assert.rejects(
+    database.query(
+      "select public.replace_company_role_permissions($1, $2, $3)",
+      [
+        editableRoleId,
+        companyA,
+        ["requisitions.create", "projects.create"],
+      ],
+    ),
+  )
+  await database.exec("rollback to savepoint deny_protected_role_permission")
+
+  await database.exec("savepoint deny_non_owner_role_override")
+  await assert.rejects(
+    database.query(
+      "select public.replace_company_role_permissions_for_primary_admin($1, $2, $3, $4)",
+      [
+        editableRoleId,
+        companyA,
+        ["requisitions.create", "projects.create"],
+        userB,
+      ],
+    ),
+  )
+  await database.exec("rollback to savepoint deny_non_owner_role_override")
+
+  const chairmanSavedPermissions = await database.query(
+    "select public.replace_company_role_permissions_for_primary_admin($1, $2, $3, $4) as permissions",
+    [
+      editableRoleId,
+      companyA,
+      ["requisitions.create", "projects.create"],
+      userA,
+    ],
+  )
+  assert.deepEqual(
+    chairmanSavedPermissions.rows[0].permissions,
+    ["projects.create", "requisitions.create"],
+  )
+  await database.exec("rollback")
 
   const futureFinanceCompanyId = "50000000-0000-4000-8000-000000000001"
   await database.query(

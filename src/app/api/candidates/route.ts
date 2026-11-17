@@ -6,7 +6,12 @@ import { canViewCandidateFinance } from "@/lib/server/candidate-finance-access";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { roleAccessSettings } from "@/lib/role-access-settings";
 import { ensureInterServerCandidateFolders } from "@/lib/storage/interserver";
-import { isPassportNumberValid, normalizePassportNumber, passportNumberRule } from "@/lib/passport-number";
+import {
+  isPassportNumberValid,
+  normalizePassportNumber,
+  passportNumberRule,
+  passportRegistrationDuplicateMessage,
+} from "@/lib/passport-number";
 
 export const runtime = "nodejs";
 
@@ -105,6 +110,7 @@ export async function GET() {
       { data: canEditCandidates, error: editPermissionError },
       { data: canRegisterCandidates, error: registerPermissionError },
       { data: canCreateCandidates, error: legacyCreatePermissionError },
+      { data: canCreateCandidateInquiries, error: inquiryCreatePermissionError },
       { data: canViewAgentFinance, error: agentFinancePermissionError },
       { data: canManageCandidateSources, error: sourcePermissionError },
       { data: canUpdateCandidateStages, error: stagePermissionError },
@@ -127,6 +133,10 @@ export async function GET() {
         requested_company_id: membership.company_id,
         requested_permission: "candidates.create",
       }),
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+        requested_permission: "candidate_inquiries.create",
+      }),
       supabase.rpc("current_user_can_view_agent_finance", {
         requested_company_id: membership.company_id,
       }),
@@ -147,7 +157,7 @@ export async function GET() {
         requested_permission: "communications.sms.send",
       }),
     ]);
-    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || sourcePermissionError || stagePermissionError || projectSubmissionPermissionError || smsPermissionError) {
+    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || inquiryCreatePermissionError || sourcePermissionError || stagePermissionError || projectSubmissionPermissionError || smsPermissionError) {
       return NextResponse.json({ error: "Unable to verify candidate access." }, { status: 503, headers });
     }
     if (agentFinancePermissionError) {
@@ -209,6 +219,7 @@ export async function GET() {
         canUpdateCandidateStages: Boolean(canUpdateCandidateStages),
         canSubmitCandidatesToProjects: Boolean(canSubmitCandidatesToProjects),
         canRegisterCandidates: (Boolean(canRegisterCandidates) || Boolean(canCreateCandidates)) && canRegister,
+        canCreateInquiries: Boolean(canCreateCandidateInquiries) || Boolean(canCreateCandidates),
         canManageCandidateSources: Boolean(canManageCandidateSources),
         canManagePassportStatus,
         canSendBulkSms:
@@ -296,20 +307,30 @@ export async function POST(request: Request) {
     const passportNumber = typeof details.passportNumber === "string"
       ? normalizePassportNumber(details.passportNumber)
       : "";
+    if (passportNumber) details.passportNumber = passportNumber;
+    let passportCheck: {
+      is_registered: boolean;
+      registered_in_another_company: boolean;
+      registered_last_name: string | null;
+      registered_agent_name: string | null;
+      belongs_to_another_agent: boolean;
+    }[] = [];
     if (passportNumber) {
-      const { data: passportCheck, error: passportCheckError } = await supabase.rpc(
+      const { data, error: passportCheckError } = await supabase.rpc(
         "lookup_candidate_passport_registration",
-        { requested_passport_number: passportNumber },
+        {
+          requested_passport_number: passportNumber,
+          requested_exclude_inquiry_id: inquiryId,
+        },
       );
-      if (passportCheckError || !passportCheck?.length) {
+      if (passportCheckError || !data?.length) {
         console.error("Candidate passport duplicate check failed", passportCheckError);
         return NextResponse.json({ error: "Unable to validate this passport number." }, { status: 503, headers });
       }
+      passportCheck = data;
       if (passportCheck[0].is_registered) {
-        const registeredBy = passportCheck[0].registered_by ?? "a former team member";
         return NextResponse.json({
-          error: `Sorry, this passport number was already captured by ${registeredBy}.`,
-          registeredBy,
+          error: passportRegistrationDuplicateMessage(passportCheck[0]),
         }, { status: 409, headers });
       }
     }
@@ -338,8 +359,16 @@ export async function POST(request: Request) {
     let inquiryCreatedBy: string | null = null;
     if (inquiryId) {
       const { data: inquiry, error: inquiryError } = await supabase.from("candidate_inquiries")
-        .select("id, agent_user_id, created_by").eq("id", inquiryId).eq("company_id", membership.company_id).eq("status", "inquiry").maybeSingle();
+        .select("id, agent_user_id, created_by, first_name, last_name, phone")
+        .eq("id", inquiryId).eq("company_id", membership.company_id).eq("status", "inquiry").maybeSingle();
       if (inquiryError || !inquiry) return NextResponse.json({ error: "This inquiry is no longer open for registration." }, { status: 409, headers });
+      if (
+        inquiry.first_name.trim().toLocaleLowerCase() !== firstName.toLocaleLowerCase()
+        || inquiry.last_name.trim().toLocaleLowerCase() !== lastName.toLocaleLowerCase()
+        || inquiry.phone.replace(/\s+/g, "") !== phone.replace(/\s+/g, "")
+      ) {
+        return NextResponse.json({ error: "The candidate's name and phone must match the selected inquiry." }, { status: 400, headers });
+      }
       inquiryAgentUserId = inquiry.agent_user_id;
       inquiryCreatedBy = inquiry.created_by;
     }
@@ -487,13 +516,16 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "That file number is already assigned to another candidate." }, { status: 409, headers });
       }
       const duplicatePassport = error?.code === "23505" && (
-        duplicateError.includes("passportnumber") ||
-        duplicateError.includes("passport_number_unique_idx")
+        duplicateError.includes("passport") ||
+        duplicateError.includes("company_passport_number_unique")
       );
       if (duplicatePassport) {
         const { data: passportCheck, error: passportCheckError } = await supabase.rpc(
           "lookup_candidate_passport_registration",
-          { requested_passport_number: passportNumber },
+          {
+            requested_passport_number: passportNumber,
+            requested_exclude_inquiry_id: inquiryId,
+          },
         );
         if (passportCheckError || !passportCheck?.[0]?.is_registered) {
           console.error("Candidate passport owner lookup failed", passportCheckError);
@@ -501,10 +533,8 @@ export async function POST(request: Request) {
             error: "This passport number is already registered, but its registrar could not be verified. Please try again.",
           }, { status: 503, headers });
         }
-        const registeredBy = passportCheck?.[0]?.registered_by ?? "another team member";
         return NextResponse.json({
-          error: `Sorry, this passport number was already captured by ${registeredBy}.`,
-          registeredBy,
+          error: passportRegistrationDuplicateMessage(passportCheck[0]),
         }, { status: 409, headers });
       }
       return NextResponse.json({
@@ -520,6 +550,9 @@ export async function POST(request: Request) {
         created_by_name: data.created_by ? actorNames.get(data.created_by) ?? "Former team member" : null,
         updated_by_name: data.updated_by ? actorNames.get(data.updated_by) ?? "Former team member" : null,
       },
+      ...(passportCheck[0]?.registered_in_another_company
+        ? { warning: "This passport number is already registered in another company, but the candidate was saved." }
+        : {}),
     }, { status: 201, headers });
   } catch (error) {
     console.error("Candidate registration request failed", error);

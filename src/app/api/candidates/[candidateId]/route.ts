@@ -279,8 +279,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
         return NextResponse.json({ error: "That file number is already assigned to another candidate." }, { status: 409, headers });
       }
       if (error?.code === "23505" && (
-        duplicateError.includes("passportnumber") ||
-        duplicateError.includes("passport_number_unique_idx")
+        duplicateError.includes("passport")
       )) {
         return NextResponse.json({ error: "That passport number is already registered to a candidate." }, { status: 409, headers });
       }

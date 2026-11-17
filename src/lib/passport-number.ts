@@ -20,3 +20,18 @@ export function passportNumberRule(nationality: string) {
   if (zambiaNationalities.has(country)) return "Zambian passport numbers must be exactly 8 letters or digits.";
   return "Passport numbers for other nationalities must contain 1–9 letters or digits.";
 }
+
+export function passportRegistrationDuplicateMessage(match: {
+  registered_last_name?: string | null;
+  registered_agent_name?: string | null;
+  belongs_to_another_agent?: boolean | null;
+}) {
+  const lastName = match.registered_last_name?.trim() || "This candidate";
+  const agentName = match.registered_agent_name?.trim();
+
+  if (match.belongs_to_another_agent) {
+    return `This candidate belongs to another agent. ${lastName} is already registered at the office${agentName ? ` under ${agentName}` : ""}.`;
+  }
+
+  return `${lastName} is already registered at the office.`;
+}

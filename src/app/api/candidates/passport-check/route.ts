@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isUuid } from "@/lib/server/documents";
 import { isPassportNumberValid, normalizePassportNumber, passportNumberRule } from "@/lib/passport-number";
 
 export const runtime = "nodejs";
@@ -14,7 +15,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401, headers });
     }
 
-    const body = await request.json().catch(() => null) as { passportNumber?: unknown; nationality?: unknown } | null;
+    const body = await request.json().catch(() => null) as {
+      passportNumber?: unknown;
+      nationality?: unknown;
+      inquiryId?: unknown;
+    } | null;
     const passportNumber = typeof body?.passportNumber === "string"
       ? normalizePassportNumber(body.passportNumber)
       : "";
@@ -28,7 +33,12 @@ export async function POST(request: Request) {
 
     const { data, error } = await supabase.rpc(
       "lookup_candidate_passport_registration",
-      { requested_passport_number: passportNumber },
+      {
+        requested_passport_number: passportNumber,
+        requested_exclude_inquiry_id: typeof body?.inquiryId === "string" && isUuid(body.inquiryId)
+          ? body.inquiryId
+          : null,
+      },
     );
     if (error) {
       console.error("Candidate passport validation failed", error);
@@ -42,7 +52,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       registered: result.is_registered,
-      registeredBy: result.registered_by,
+      registeredLastName: result.registered_last_name,
+      registeredAgentName: result.registered_agent_name,
+      belongsToAnotherAgent: result.belongs_to_another_agent,
+      registeredInAnotherCompany: result.registered_in_another_company,
     }, { headers });
   } catch (error) {
     console.error("Candidate passport validation request failed", error);

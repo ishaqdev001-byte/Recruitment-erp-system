@@ -97,6 +97,8 @@ interface InquiryRecord {
 
   phone: string
 
+  passport_number: string
+
   discovery_source: InquirySource
 
   agent_user_id: string | null
@@ -128,6 +130,8 @@ interface InquiryDraft {
   lastName: string
 
   phone: string
+
+  passportNumber: string
 
   discoverySource: InquirySource | ""
 
@@ -480,6 +484,8 @@ const emptyInquiryDraft = (): InquiryDraft => ({
 
   phone: "",
 
+  passportNumber: "",
+
   discoverySource: "",
 
   agentUserId: "",
@@ -551,6 +557,8 @@ function candidateFromInquiry(inquiry: InquiryRecord): Candidate {
     mother_name: "",
 
     details: {
+      passportNumber: inquiry.passport_number,
+
       jobOfInterest: inquiry.job_of_interest,
 
       preferredCountries: inquiry.desired_countries,
@@ -612,6 +620,8 @@ export default function CandidateRoster({
 
     canRegisterCandidates?: boolean
 
+    canCreateInquiries?: boolean
+
     canManageCandidateSources?: boolean
 
     canManagePassportStatus?: boolean
@@ -643,6 +653,8 @@ export default function CandidateRoster({
   const [inquiryError, setInquiryError] = useState("")
 
   const [inquiryNotice, setInquiryNotice] = useState("")
+
+  const [registrationNotice, setRegistrationNotice] = useState("")
 
   const [inquiryReloadKey, setInquiryReloadKey] = useState(0)
 
@@ -1473,6 +1485,7 @@ export default function CandidateRoster({
       const payload = (await response.json()) as {
         inquiry?: InquiryRecord
         error?: string
+        warning?: string
       }
 
       if (!response.ok || !payload.inquiry)
@@ -1481,9 +1494,10 @@ export default function CandidateRoster({
         )
 
       clearClientApiCache()
-      setInquiryNotice(
+      setInquiryNotice([
         `Inquiry saved for ${payload.inquiry.first_name} ${payload.inquiry.last_name}.`,
-      )
+        payload.warning,
+      ].filter(Boolean).join(" "))
 
       closeInquiryForm()
 
@@ -1501,6 +1515,8 @@ export default function CandidateRoster({
 
   const registerFromInquiry = (inquiry: InquiryRecord) => {
     setRegistrationInquiryId(inquiry.id)
+
+    setRegistrationNotice("")
 
     setEditingCandidate(candidateFromInquiry(inquiry))
 
@@ -1611,12 +1627,14 @@ export default function CandidateRoster({
     const payload = (await response.json()) as {
       candidate?: CandidateRecord
       error?: string
+      warning?: string
     }
 
     if (!response.ok || !payload.candidate)
       throw new Error(payload.error ?? "Unable to save candidate.")
 
     clearClientApiCache()
+    setRegistrationNotice(payload.warning ?? "")
     if (isNewCandidate)
       setCandidates((current) => [payload.candidate!, ...current])
     else
@@ -1642,6 +1660,7 @@ export default function CandidateRoster({
       <CandidateDetail
         candidate={editingCandidate}
         isNew={isNewCandidate}
+        inquiryId={registrationInquiryId}
         isAgent={permissions?.isAgent}
         onSave={saveCandidate}
         agentOptions={inquiryPeople
@@ -1755,6 +1774,7 @@ export default function CandidateRoster({
               <button
                 type="button"
                 onClick={() => {
+                  setRegistrationNotice("")
                   setRegistrationInquiryId(null)
                   setEditingCandidate(newCandidate())
                   setIsNewCandidate(true)
@@ -1769,7 +1789,7 @@ export default function CandidateRoster({
               </button>
             )
           ) : (
-            permissions.canRegisterCandidates && (
+            permissions.canCreateInquiries && (
               <button
                 type="button"
                 onClick={() => {
@@ -1791,6 +1811,14 @@ export default function CandidateRoster({
           )}
         </div>
       </header>
+      {activePage === "pipeline" && registrationNotice && (
+        <p
+          role="status"
+          className="border-b border-amber-600/30 bg-amber-600/10 px-6 py-3 text-sm text-amber-800"
+        >
+          {registrationNotice}
+        </p>
+      )}
       {bulkSmsNotice && (
         <div
           role="status"
@@ -2453,6 +2481,29 @@ export default function CandidateRoster({
                     setInquiryDraft((current) => ({
                       ...current,
                       phone: event.target.value,
+                    }))
+                  }
+                  className="mt-1 w-full border px-3 py-2 text-sm font-normal"
+                  style={{
+                    background: "var(--secondary)",
+                    borderColor: "var(--border)",
+                    color: "var(--foreground)",
+                  }}
+                />
+              </label>
+              <label
+                className="text-xs font-700"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Passport number
+                <input
+                  required
+                  maxLength={100}
+                  value={inquiryDraft.passportNumber}
+                  onChange={(event) =>
+                    setInquiryDraft((current) => ({
+                      ...current,
+                      passportNumber: event.target.value,
                     }))
                   }
                   className="mt-1 w-full border px-3 py-2 text-sm font-normal"

@@ -11,9 +11,13 @@ type AgentNote = {
 
   body: string
 
-  candidate_names: string[]
+  candidate_names?: string[]
 
   created_at: string
+
+  project_id?: string
+
+  project_assignment?: boolean
 }
 
 export default function AgentCommunicationsNotes() {
@@ -32,20 +36,25 @@ export default function AgentCommunicationsNotes() {
     setError("")
 
     try {
-      const response = await fetch("/api/communications/agent-notes", {
-        cache: "no-store",
-      })
-
-      const payload = (await response.json()) as {
-        notes?: AgentNote[]
-
-        error?: string
-      }
-
-      if (!response.ok)
-        throw new Error(payload.error ?? "Unable to load your notes.")
-
-      setNotes(payload.notes ?? [])
+      const [agentResponse, projectResponse] = await Promise.all([
+        fetch("/api/communications/agent-notes", { cache: "no-store" }),
+        fetch("/api/communications/project-assignments", { cache: "no-store" }),
+      ])
+      const [agentPayload, projectPayload] = await Promise.all([
+        agentResponse.json() as Promise<{ notes?: AgentNote[]; error?: string }>,
+        projectResponse.json() as Promise<{ notes?: AgentNote[]; error?: string }>,
+      ])
+      if (!agentResponse.ok)
+        throw new Error(agentPayload.error ?? "Unable to load your notes.")
+      if (!projectResponse.ok)
+        throw new Error(projectPayload.error ?? "Unable to load project assignment notes.")
+      setNotes([
+        ...(agentPayload.notes ?? []),
+        ...(projectPayload.notes ?? []).map((note) => ({
+          ...note,
+          project_assignment: true,
+        })),
+      ].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)))
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -155,7 +164,7 @@ export default function AgentCommunicationsNotes() {
               className="mt-1 text-xs"
               style={{ color: "var(--muted-foreground)" }}
             >
-              Company messages about your candidates will appear here.
+              Company messages and project assignments will appear here.
             </p>
           </div>
         ) : (
@@ -176,12 +185,20 @@ export default function AgentCommunicationsNotes() {
                   {new Date(note.created_at).toLocaleString()}
                 </time>
               </div>
-              {note.candidate_names.length > 0 && (
+              {note.project_assignment && (
                 <p
                   className="mt-2 text-xs"
                   style={{ color: "var(--muted-foreground)" }}
                 >
-                  Candidates: {note.candidate_names.join(", ")}
+                  Project assignment
+                </p>
+              )}
+              {(note.candidate_names?.length ?? 0) > 0 && (
+                <p
+                  className="mt-2 text-xs"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Candidates: {note.candidate_names?.join(", ")}
                 </p>
               )}
               <p

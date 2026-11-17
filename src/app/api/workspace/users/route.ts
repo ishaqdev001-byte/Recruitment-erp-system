@@ -276,6 +276,79 @@ function escapeEmailHtml(value: string) {
   })
 }
 
+type SystemSmtpConfiguration = {
+  host: string
+  port: number
+  user: string
+  pass: string
+  from: string
+}
+
+function getSystemSmtpConfiguration(): SystemSmtpConfiguration | null {
+  const host = process.env.SYSTEM_SMTP_HOST?.trim()
+  const port = Number(process.env.SYSTEM_SMTP_PORT ?? "587")
+  const user = process.env.SYSTEM_SMTP_USER?.trim()
+  const pass = process.env.SYSTEM_SMTP_PASS?.trim()
+  const from = process.env.SYSTEM_SMTP_FROM?.trim() || user || ""
+
+  if (
+    !host ||
+    !user ||
+    !pass ||
+    !from ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535
+  ) {
+    return null
+  }
+
+  return { host, port, user, pass, from }
+}
+
+async function sendWorkspaceInvitationEmail(options: {
+  smtp: SystemSmtpConfiguration
+  to: string
+  fullName: string
+  companyName: string
+  roleName: string
+  actionLink: string
+}) {
+  const transport = nodemailer.createTransport({
+    host: options.smtp.host,
+    port: options.smtp.port,
+    secure: options.smtp.port === 465,
+    auth: {
+      user: options.smtp.user,
+      pass: options.smtp.pass,
+    },
+    requireTLS: options.smtp.port !== 465,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
+  })
+
+  const fullName = escapeEmailHtml(options.fullName)
+  const companyName = escapeEmailHtml(options.companyName)
+  const roleName = escapeEmailHtml(options.roleName)
+  const actionLink = escapeEmailHtml(options.actionLink)
+  try {
+    const delivery = await transport.sendMail({
+      from: `"Kilax Smart Recruit" <${options.smtp.from}>`,
+      to: options.to,
+      subject: `You are invited to join ${options.companyName}`,
+      text: `Hello ${options.fullName},\n\nYou have been invited to join ${options.companyName} as ${options.roleName}.\n\nAccept the invitation and set up your password: ${options.actionLink}\n\nIf you were not expecting this invitation, you can ignore this message.`,
+      html: `<h2>You have been invited to join ${companyName}</h2><p>Hello ${fullName},</p><p>You have been invited to join <strong>${companyName}</strong> as <strong>${roleName}</strong>.</p><p>Accept the invitation and set up your password:</p><p><a href="${actionLink}">Accept invitation</a></p><p>If you were not expecting this invitation, you can ignore this message.</p>`,
+    })
+
+    if (delivery.accepted.length === 0 || delivery.rejected.length > 0) {
+      throw new Error("The SMTP server did not accept the invitation recipient.")
+    }
+  } finally {
+    transport.close()
+  }
+}
+
 function parseRequestedPermissions(value: unknown): string[] | null {
   if (
     !Array.isArray(value) ||
@@ -1915,7 +1988,23 @@ export async function POST(request: Request) {
             { status: 404, headers: responseHeaders },
           )
 
-        if (authUser.user.confirmed_at)
+        const { data: latestInvitation, error: latestInvitationError } =
+          await admin
+            .from("workspace_invitations")
+            .select("accepted_at")
+            .eq("company_id", access.companyId)
+            .eq("user_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+        if (latestInvitationError)
+          return NextResponse.json(
+            { error: "Unable to verify this invitation." },
+            { status: 500, headers: responseHeaders },
+          )
+
+        if (latestInvitation?.accepted_at)
           return NextResponse.json(
             { error: "This user has already accepted the invitation." },
 
@@ -1927,6 +2016,16 @@ export async function POST(request: Request) {
             { error: "The invited account has no email address." },
 
             { status: 409, headers: responseHeaders },
+          )
+
+        const smtp = getSystemSmtpConfiguration()
+        if (!smtp)
+          return NextResponse.json(
+            {
+              error:
+                "Invitation email delivery is not configured. Set SYSTEM_SMTP_HOST, SYSTEM_SMTP_PORT, SYSTEM_SMTP_USER, and SYSTEM_SMTP_PASS on the server.",
+            },
+            { status: 503, headers: responseHeaders },
           )
 
         const { data: companyDetails, error: companyDetailsError } = await admin
@@ -1975,35 +2074,6 @@ export async function POST(request: Request) {
           )
         }
 
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-
-        const publicKey =
-          process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-        if (!supabaseUrl || !publicKey) {
-          const { error: cleanupError } = await admin
-
-            .from("workspace_invitations")
-
-            .delete()
-
-            .eq("id", invitationId)
-
-          if (cleanupError)
-            console.error(
-              "Failed to remove invitation record without email configuration",
-
-              cleanupError,
-            )
-
-          return NextResponse.json(
-            { error: "Invitation email delivery is not configured." },
-
-            { status: 503, headers: responseHeaders },
-          )
-        }
-
         const siteUrl =
           process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
           new URL(request.url).origin
@@ -2018,45 +2088,63 @@ export async function POST(request: Request) {
 
         redirectUrl.searchParams.set("invitation_id", invitationId)
 
-        const mailer = createClient(supabaseUrl, publicKey, {
-          auth: {
-            autoRefreshToken: false,
+        const { data: linkData, error: linkError } =
+          await admin.auth.admin.generateLink({
+            type: "magiclink",
+            email: authUser.user.email,
+            options: { redirectTo: redirectUrl.toString() },
+          })
 
-            persistSession: false,
-          },
-        })
-
-        const { error: emailError } = await mailer.auth.signInWithOtp({
-          email: authUser.user.email,
-
-          options: {
-            shouldCreateUser: false,
-
-            emailRedirectTo: redirectUrl.toString(),
-          },
-        })
-
-        if (emailError) {
+        const actionLink = linkData?.properties?.action_link
+        if (linkError || !actionLink) {
           const { error: cleanupError } = await admin
-
             .from("workspace_invitations")
-
             .delete()
-
             .eq("id", invitationId)
 
           if (cleanupError)
             console.error(
-              "Failed to remove invitation record after email delivery failure",
+              "Failed to remove invitation record after link generation failed",
+              cleanupError,
+            )
 
+          console.error("Workspace invitation link generation failed", linkError)
+          return NextResponse.json(
+            { error: "Unable to generate an invitation link. Please try again." },
+            { status: 502, headers: responseHeaders },
+          )
+        }
+
+        try {
+          await sendWorkspaceInvitationEmail({
+            smtp,
+            to: authUser.user.email,
+            fullName:
+              typeof authUser.user.user_metadata?.full_name === "string"
+                ? authUser.user.user_metadata.full_name
+                : authUser.user.email,
+            companyName: companyDetails.name,
+            roleName: targetRoleName ?? "team member",
+            actionLink,
+          })
+        } catch (emailError) {
+          const { error: cleanupError } = await admin
+            .from("workspace_invitations")
+            .delete()
+            .eq("id", invitationId)
+
+          if (cleanupError)
+            console.error(
+              "Failed to remove invitation record after email delivery failed",
               cleanupError,
             )
 
           console.error("Workspace invitation email resend failed", emailError)
-
           return NextResponse.json(
-            { error: "Unable to send the invitation email. Please try again." },
-
+            {
+              error:
+                "Unable to deliver the invitation email. Check the server SMTP settings and try again.",
+            },
             { status: 502, headers: responseHeaders },
           )
         }
@@ -3003,22 +3091,49 @@ export async function POST(request: Request) {
 
       redirectUrl.searchParams.set("invitation_id", invitationId)
 
-      const { data: inviteData, error: inviteError } =
-        await admin.auth.admin.inviteUserByEmail(email, {
-          data: {
-            full_name: accountName,
-
-            company_name: company.name,
-
-            role_name: role.name,
+      const smtp = getSystemSmtpConfiguration()
+      if (!smtp)
+        return NextResponse.json(
+          {
+            error:
+              "Invitation email delivery is not configured. Set SYSTEM_SMTP_HOST, SYSTEM_SMTP_PORT, SYSTEM_SMTP_USER, and SYSTEM_SMTP_PASS on the server.",
           },
+          { status: 503, headers: responseHeaders },
+        )
 
-          redirectTo: redirectUrl.toString(),
+      const { data: inviteData, error: inviteError } =
+        await admin.auth.admin.generateLink({
+          type: "invite",
+          email,
+          options: {
+            data: {
+              full_name: accountName,
+              company_name: company.name,
+              role_name: role.name,
+            },
+            redirectTo: redirectUrl.toString(),
+          },
         })
 
-      if (inviteError || !inviteData.user) {
+      const inviteActionLink = inviteData?.properties?.action_link
+      if (inviteError || !inviteData.user || !inviteActionLink) {
+        if (inviteData?.user?.id) {
+          const { error: cleanupError } = await admin.auth.admin.deleteUser(
+            inviteData.user.id,
+          )
+          if (cleanupError)
+            console.error(
+              "Failed to remove account after invitation link generation failed",
+              cleanupError,
+            )
+        }
+
         return NextResponse.json(
-          { error: inviteError?.message ?? "Unable to send invitation." },
+          {
+            error:
+              inviteError?.message ??
+              "Unable to generate the invitation link.",
+          },
 
           { status: 400, headers: responseHeaders },
         )
@@ -3041,7 +3156,7 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error:
-              "Invitation was sent but its company assignment could not be saved. Send a new invitation.",
+              "The invitation account could not be assigned to its company. No email was sent; please try again.",
           },
 
           { status: 500, headers: responseHeaders },
@@ -3079,7 +3194,7 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error:
-              "Invitation was created but the user's profile could not be saved.",
+              "The invited user's profile could not be saved. No email was sent; please try again.",
           },
 
           { status: 500, headers: responseHeaders },
@@ -3122,7 +3237,7 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error:
-              "Invitation was created but could not be assigned to the company role.",
+              "The invited user could not be assigned to the company role. No email was sent; please try again.",
           },
 
           { status: 500, headers: responseHeaders },
@@ -3197,11 +3312,27 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error:
-              "Invitation was sent but its one-hour acceptance record could not be saved. Send a new invitation.",
+              "The invitation acceptance record could not be saved. No email was sent; please try again.",
           },
 
           { status: 500, headers: responseHeaders },
         )
+      }
+
+      let invitationEmailWarning: string | undefined
+      try {
+        await sendWorkspaceInvitationEmail({
+          smtp,
+          to: email,
+          fullName: accountName,
+          companyName: company.name,
+          roleName: role.name,
+          actionLink: inviteActionLink,
+        })
+      } catch (emailError) {
+        console.error("Workspace invitation email delivery failed", emailError)
+        invitationEmailWarning =
+          "The account was created, but the invitation email could not be delivered. Check the server SMTP settings, then use Resend invite in Users & Roles."
       }
 
       return NextResponse.json(
@@ -3223,6 +3354,8 @@ export async function POST(request: Request) {
 
             userType: userTypeSelection.userType,
           },
+          invitationEmailSent: !invitationEmailWarning,
+          ...(invitationEmailWarning ? { invitationEmailWarning } : {}),
         },
 
         { status: 201, headers: responseHeaders },

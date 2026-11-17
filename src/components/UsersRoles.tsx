@@ -1092,7 +1092,11 @@ export default function UsersRoles({
           }),
         })
 
-        const result = (await response.json()) as { error?: string }
+        const result = (await response.json()) as {
+          error?: string
+          invitationEmailSent?: boolean
+          invitationEmailWarning?: string
+        }
 
         if (!response.ok)
           throw new Error(result.error ?? "Unable to invite user.")
@@ -1111,9 +1115,16 @@ export default function UsersRoles({
 
         setInvitedStaffForm(emptyInvitedStaffForm)
 
-        setNotice(
-          "Invitation sent. The user can set their password from the email link.",
-        )
+        if (result.invitationEmailSent === false) {
+          setError(
+            result.invitationEmailWarning ??
+              "The account was created, but the invitation email could not be delivered. Use Resend invite after checking the server SMTP settings.",
+          )
+        } else {
+          setNotice(
+            "Invitation sent. The user can set their password from the email link.",
+          )
+        }
       }
 
       setReloadKey((key) => key + 1)

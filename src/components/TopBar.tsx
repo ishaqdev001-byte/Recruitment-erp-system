@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, Camera, CircleAlert, CircleCheck, Info, Loader2, Menu, Save, Search, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
 import type { View, WorkspaceRole } from "../App";
 import { matchesSearch } from "@/lib/search";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type CommandItem = {
   label: string;
@@ -98,12 +99,15 @@ export default function TopBar({
   onDensityChange,
   companyName,
   companyLogo,
+  userId,
   userName,
   userEmail,
   userAvatarUrl,
+  onProjectAssignmentNotification,
 }: {
   onMenuClick: () => void;
   onNavigate: (v: View) => void;
+  onProjectAssignmentNotification: () => void;
   role: WorkspaceRole;
   permissions: string[];
   theme: "dark" | "light";
@@ -112,6 +116,7 @@ export default function TopBar({
   onDensityChange: () => void;
   companyName?: string;
   companyLogo?: string;
+  userId: string;
   userName?: string;
   userEmail?: string;
   userAvatarUrl?: string;
@@ -373,7 +378,7 @@ export default function TopBar({
           ? await workspaceResponse.json() as {
               available?: boolean;
               warning?: string;
-              notifications?: { id: string; required_permission: string; category: string; title: string; body: string; created_at: string; read_at: string | null }[];
+              notifications?: { id: string; required_permission: string; category: string; title: string; body: string; source_type: string; created_at: string; read_at: string | null }[];
             }
           : { notifications: [] };
         if (workspacePayload.available === false) {
@@ -393,6 +398,9 @@ export default function TopBar({
         const leaveNotifications = leavePayload.notifications ?? [];
         const requisitionNotifications = requisitionPayload.notifications ?? [];
         const workspaceNotifications = workspacePayload.notifications ?? [];
+        if (workspaceNotifications.some((notification) => notification.source_type === "project.assignment")) {
+          onProjectAssignmentNotification();
+        }
         const workspaceView = (category: string, requiredPermission: string): View => {
           if (requiredPermission === "staff_chat.view") return "staff-chat";
           if (requiredPermission.startsWith("expense_requests.")) return "expense-requests";
@@ -500,12 +508,34 @@ export default function TopBar({
     };
     const refreshReminders = () => { void loadReminders(); };
     void loadReminders();
+    const supabase = createSupabaseBrowserClient();
+    const notificationChannel = supabase
+      .channel(`workspace-notifications:${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "workspace_notifications",
+          filter: `recipient_id=eq.${userId}`,
+        },
+        refreshReminders,
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          refreshReminders();
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.error("Workspace notification realtime subscription failed", status);
+        }
+      });
     const interval = window.setInterval(() => { void loadReminders(); }, 60000);
     window.addEventListener("task-reminders-changed", refreshReminders);
     window.addEventListener("leave-notifications-changed", refreshReminders);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      void supabase.removeChannel(notificationChannel);
       window.removeEventListener("task-reminders-changed", refreshReminders);
       window.removeEventListener("leave-notifications-changed", refreshReminders);
     };
@@ -514,7 +544,9 @@ export default function TopBar({
     canViewLeaveNotifications,
     canViewRequisitionNotifications,
     canViewTaskReminders,
+    onProjectAssignmentNotification,
     pushSettings,
+    userId,
   ]);
 
   const results = useMemo(() => {

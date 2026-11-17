@@ -21,6 +21,7 @@ interface Message {
   smsLog?: boolean;
   mailLog?: boolean;
   systemLog?: boolean;
+  projectAssignmentLog?: boolean;
 }
 
 type SmsContact = { id: string; type: ContactType; name: string; phone: string };
@@ -31,6 +32,7 @@ type Mailbox = { provider: MailProvider; email_address: string; connected_at: st
 type MailboxesPayload = { mailboxes?: Mailbox[]; configured?: Partial<Record<MailProvider, boolean>>; canSend?: boolean; platformEmail?: string; defaultProvider?: MailProvider; error?: string };
 type ProviderMail = { id: string; provider: MailProvider; direction: "Inbound" | "Outbound"; from: string; to: string; subject: string; body: string; date: string; status: "Received" | "Sent" | "Draft" | "Failed" | "Unknown" };
 type SystemCommunication = { id: string; contact: string; projectName: string; subject: string; body: string; created_at: string };
+type ProjectAssignmentNote = { id: string; subject: string; body: string; created_at: string };
 
 const templates = [
   { name: "Payment Reminder", body: "Dear [CANDIDATE_NAME], your payment of UGX [AMOUNT] is due on [DATE]. Please contact us to arrange payment." },
@@ -72,6 +74,7 @@ export default function Communications({ userName = "Team", companyName = "", us
   const [mailLoading, setMailLoading] = useState(false);
   const [mailError, setMailError] = useState("");
   const [systemError, setSystemError] = useState("");
+  const [projectAssignmentError, setProjectAssignmentError] = useState("");
   const [mailNotice, setMailNotice] = useState("");
   const [mailTo, setMailTo] = useState("");
   const [mailSubject, setMailSubject] = useState("");
@@ -137,6 +140,38 @@ export default function Communications({ userName = "Team", companyName = "", us
   };
 
   useEffect(() => { void loadSystemMessages(); }, []);
+
+  const loadProjectAssignmentNotes = async () => {
+    setProjectAssignmentError("");
+    try {
+      const response = await fetch("/api/communications/project-assignments", { cache: "no-store" });
+      const payload = await response.json() as { notes?: ProjectAssignmentNote[]; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to load project assignment notes.");
+      const assignmentMessages: Message[] = (payload.notes ?? []).map((note) => ({
+        id: `project-assignment-${note.id}`,
+        contact: "Project assignment",
+        contactType: "Staff",
+        channel: "Note",
+        direction: "Outbound",
+        subject: note.subject,
+        body: note.body,
+        date: new Date(note.created_at).toLocaleString(),
+        by: "RecruitOS system",
+        status: "Logged",
+        projectAssignmentLog: true,
+      }));
+      setMsgs((current) => [
+        ...assignmentMessages,
+        ...current.filter((item) => !item.projectAssignmentLog),
+      ]);
+    } catch (error) {
+      setProjectAssignmentError(
+        error instanceof Error ? error.message : "Unable to load project assignment notes.",
+      );
+    }
+  };
+
+  useEffect(() => { void loadProjectAssignmentNotes(); }, []);
 
   const loadMailMessages = async (provider: MailProvider) => {
     setMailLoading(true);
@@ -421,7 +456,7 @@ export default function Communications({ userName = "Team", companyName = "", us
               </button>
             ))}
           </div>
-          {systemError && <p role="alert" className="border-b px-6 py-2 text-sm text-red-600" style={{ borderColor: "var(--border)" }}>{systemError}</p>}
+          {(systemError || projectAssignmentError) && <p role="alert" className="border-b px-6 py-2 text-sm text-red-600" style={{ borderColor: "var(--border)" }}>{systemError || projectAssignmentError}</p>}
           <div className="hidden h-4 w-px sm:block" style={{ background: "var(--border)" }} />
           <div className="flex min-w-0 flex-wrap gap-1.5">
             {(["All", "Candidate", "Employer", "Agent", "Staff", "Other"] as const).map((ct) => (

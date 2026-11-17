@@ -42,7 +42,7 @@ export async function GET() {
       console.error("System communication permission check failed", permissionError);
       return NextResponse.json({ error: "Unable to verify communications access." }, { status: 503, headers });
     }
-    if (!canView) return NextResponse.json({ error: "You do not have permission to view system communications." }, { status: 403, headers });
+    if (!canView) return NextResponse.json({ messages: [] }, { headers });
 
     const { data: messages, error } = await supabase.from("workspace_communications")
       .select("id, candidate_id, project_id, event_type, subject, body, created_at")

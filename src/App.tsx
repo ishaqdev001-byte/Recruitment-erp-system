@@ -1279,6 +1279,25 @@ export default function App() {
 
   const [session, setSession] = useState<Session | null>(null)
 
+  const handleProjectAssignmentNotification = useCallback(() => {
+    setSession((current) => {
+      if (
+        !current ||
+        current.permissions.includes("communications.project_notes.view")
+      ) {
+        return current
+      }
+
+      return {
+        ...current,
+        permissions: [
+          ...current.permissions,
+          "communications.project_notes.view",
+        ],
+      }
+    })
+  }, [])
+
   const [hrPersonalDetailsComplete, setHrPersonalDetailsComplete] =
     useState<boolean | null>(null)
 
@@ -2007,6 +2026,41 @@ export default function App() {
             return
           }
 
+          const currentInvitationResponse = await fetch(
+            "/api/workspace/invitations/current",
+
+            { cache: "no-store" },
+          )
+
+          const currentInvitation =
+            (await currentInvitationResponse.json()) as {
+              invitationId?: string | null
+
+              requiresAcceptance?: boolean
+
+              legacyInvitation?: boolean
+
+              error?: string
+            }
+
+          if (!currentInvitationResponse.ok)
+            throw new Error(
+              currentInvitation.error ??
+                "Unable to verify your invitation.",
+            )
+
+          if (
+            currentInvitation.requiresAcceptance ||
+            currentInvitation.legacyInvitation
+          ) {
+            await showInvitation(
+              currentInvitation.invitationId ??
+                "legacy",
+            )
+
+            return
+          }
+
           const registrationResult =
             await provisionPendingCompanyRegistration(user)
 
@@ -2019,49 +2073,6 @@ export default function App() {
 
               welcomeEmailError: registrationResult.welcomeEmailError,
             })
-          }
-
-          const hasInviteMetadata = Boolean(
-            user.app_metadata?.invitation_company_id ||
-              (user.user_metadata?.company_name &&
-                user.user_metadata?.role_name),
-          )
-
-          if (hasInviteMetadata) {
-            const currentInvitationResponse = await fetch(
-              "/api/workspace/invitations/current",
-
-              { cache: "no-store" },
-            )
-
-            const currentInvitation =
-              (await currentInvitationResponse.json()) as {
-                invitationId?: string | null
-
-                requiresAcceptance?: boolean
-
-                legacyInvitation?: boolean
-
-                error?: string
-              }
-
-            if (!currentInvitationResponse.ok)
-              throw new Error(
-                currentInvitation.error ??
-                  "Unable to verify your invitation.",
-              )
-
-            if (
-              currentInvitation.requiresAcceptance ||
-              currentInvitation.legacyInvitation
-            ) {
-              await showInvitation(
-                currentInvitation.invitationId ??
-                  "legacy",
-              )
-
-              return
-            }
           }
 
           const workspace = await resolveUserWorkspace(
@@ -4488,6 +4499,7 @@ export default function App() {
           <TopBar
             onMenuClick={() => setMobileNavOpen(true)}
             onNavigate={handleNavigate}
+            onProjectAssignmentNotification={handleProjectAssignmentNotification}
             role={activeUser?.role ?? role}
             permissions={session.permissions}
             theme={theme}
@@ -4502,6 +4514,7 @@ export default function App() {
             }
             companyName={session.companyName}
             companyLogo={session.companyLogo}
+            userId={session.userId}
             userName={session.userName}
             userEmail={activeUser?.email}
             userAvatarUrl={session.userAvatarUrl}

@@ -171,7 +171,7 @@ async function getUnlinkedStaffRecord(
     .select("id, name, phone, branch_id, status, linked_user_id")
     .eq("company_id", companyId)
     .eq("id", staffId)
-    .eq("status", "Active")
+    .ilike("status", "active")
     .maybeSingle()
   if (error) throw error
   if (!data) return null
@@ -215,7 +215,7 @@ async function linkInvitedStaffRecord(
     })
     .eq("company_id", companyId)
     .eq("id", staffId)
-    .eq("status", "Active")
+    .ilike("status", "active")
     .is("linked_user_id", null)
     .select("id")
     .maybeSingle()
@@ -797,6 +797,11 @@ export async function GET() {
           authUser?.app_metadata?.workspace_user_type === "staff"
             ? "staff"
             : "member",
+
+        hasLinkedStaffRecord: staffUserIds.has(membership.user_id),
+
+        accountUnlinked:
+          authUser?.app_metadata?.workspace_account_unlinked === true,
       }
     })
 
@@ -1905,6 +1910,10 @@ export async function POST(request: Request) {
 
       "set-status",
 
+      "unlink-account",
+
+      "relink-account",
+
       "resend-invite",
 
       "revoke-invite",
@@ -1993,6 +2002,425 @@ export async function POST(request: Request) {
 
           { status: 403, headers: responseHeaders },
         )
+      }
+
+      if (body.action === "unlink-account") {
+        if (membership.status !== "active")
+          return NextResponse.json(
+            { error: "Only an active company account can be unlinked." },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const { data: authUser, error: authUserError } =
+          await admin.auth.admin.getUserById(userId)
+        if (authUserError || !authUser.user) {
+          console.error("Staff account unlink auth lookup failed", authUserError)
+          return NextResponse.json(
+            { error: "Unable to verify this company account." },
+            { status: 404, headers: responseHeaders },
+          )
+        }
+        if (authUser.user.app_metadata?.workspace_invite_pending === true)
+          return NextResponse.json(
+            { error: "Revoke the pending invitation before unlinking this account." },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const { data: linkedStaff, error: linkedStaffError } = await admin
+          .from("company_staff_members")
+          .select("id, status")
+          .eq("company_id", access.companyId)
+          .eq("linked_user_id", userId)
+          .limit(2)
+        if (linkedStaffError) throw linkedStaffError
+        if (linkedStaff?.length !== 1)
+          return NextResponse.json(
+            {
+              error:
+                "This account must be linked to exactly one staff record before it can be unlinked.",
+            },
+            { status: 409, headers: responseHeaders },
+          )
+        if (linkedStaff[0].status.trim().toLocaleLowerCase() !== "active")
+          return NextResponse.json(
+            { error: "Only an active staff record can be unlinked." },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const { count: directReportCount, error: directReportsError } =
+          await admin
+            .from("company_staff_members")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", access.companyId)
+            .eq("line_manager_staff_id", linkedStaff[0].id)
+            .neq("status", "Inactive")
+        if (directReportsError) throw directReportsError
+        if (directReportCount)
+          return NextResponse.json(
+            {
+              error:
+                "Reassign this staff member's direct reports before unlinking their account.",
+            },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const { error: pendingInviteError } = await admin
+          .from("workspace_invitations")
+          .delete()
+          .eq("company_id", access.companyId)
+          .eq("user_id", userId)
+          .is("accepted_at", null)
+        if (pendingInviteError) {
+          console.error(
+            "Pending invitation cleanup before staff account unlink failed",
+            pendingInviteError,
+          )
+          return NextResponse.json(
+            { error: "Unable to revoke existing invitation links." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        const staffId = linkedStaff[0].id
+        const { data: unlinkedStaff, error: staffUpdateError } = await admin
+          .from("company_staff_members")
+          .update({
+            linked_user_id: null,
+            status: "Inactive",
+            updated_by: access.userId,
+          })
+          .eq("company_id", access.companyId)
+          .eq("id", staffId)
+          .eq("linked_user_id", userId)
+          .select("id")
+          .maybeSingle()
+        if (staffUpdateError || !unlinkedStaff) {
+          console.error("Staff record unlink failed", staffUpdateError)
+          return NextResponse.json(
+            { error: "Unable to unlink the staff record." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        const { data: disabledMembership, error: disableError } = await admin
+          .from("company_memberships")
+          .update({ status: "disabled" })
+          .eq("company_id", access.companyId)
+          .eq("user_id", userId)
+          .eq("status", "active")
+          .select("user_id")
+          .maybeSingle()
+        if (disableError || !disabledMembership) {
+          const { error: rollbackError } = await admin
+            .from("company_staff_members")
+            .update({
+              linked_user_id: userId,
+              status: linkedStaff[0].status,
+              updated_by: access.userId,
+            })
+            .eq("company_id", access.companyId)
+            .eq("id", staffId)
+            .is("linked_user_id", null)
+          if (rollbackError)
+            console.error("Staff record unlink rollback failed", rollbackError)
+          console.error("Staff company membership disable failed", disableError)
+          return NextResponse.json(
+            { error: "Unable to disable this company's access." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        const { error: metadataError } = await admin.auth.admin.updateUserById(
+          userId,
+          {
+            app_metadata: {
+              ...authUser.user.app_metadata,
+              workspace_invite_pending: false,
+              workspace_invite_revoked: false,
+              workspace_account_unlinked: true,
+              workspace_staff_member_id: staffId,
+              workspace_user_type: "staff",
+            },
+          },
+        )
+        if (metadataError) {
+          const [staffRollback, membershipRollback] = await Promise.all([
+            admin
+              .from("company_staff_members")
+              .update({
+                linked_user_id: userId,
+                status: linkedStaff[0].status,
+                updated_by: access.userId,
+              })
+              .eq("company_id", access.companyId)
+              .eq("id", staffId)
+              .is("linked_user_id", null),
+            admin
+              .from("company_memberships")
+              .update({ status: membership.status })
+              .eq("company_id", access.companyId)
+              .eq("user_id", userId)
+              .eq("status", "disabled"),
+          ])
+          if (staffRollback.error)
+            console.error(
+              "Staff record metadata rollback failed",
+              staffRollback.error,
+            )
+          if (membershipRollback.error)
+            console.error(
+              "Membership metadata rollback failed",
+              membershipRollback.error,
+            )
+          console.error("Staff account unlink metadata update failed", metadataError)
+          return NextResponse.json(
+            { error: "Unable to finish unlinking this staff account." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        return NextResponse.json({ success: true }, { headers: responseHeaders })
+      }
+
+      if (body.action === "relink-account") {
+        const email =
+          typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
+        if (!/^\S+@\S+\.\S+$/.test(email) || email.length > 200)
+          return NextResponse.json(
+            { error: "Enter a valid new login email address." },
+            { status: 400, headers: responseHeaders },
+          )
+
+        if (
+          membership.status !== "disabled"
+        )
+          return NextResponse.json(
+            { error: "Only an unlinked, disabled staff account can be relinked." },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const { data: authUser, error: authUserError } =
+          await admin.auth.admin.getUserById(userId)
+        if (authUserError || !authUser.user?.email) {
+          console.error("Staff account relink auth lookup failed", authUserError)
+          return NextResponse.json(
+            { error: "Unable to verify the existing staff account." },
+            { status: 404, headers: responseHeaders },
+          )
+        }
+
+        const appMetadata = authUser.user.app_metadata ?? {}
+        const staffId =
+          typeof appMetadata.workspace_staff_member_id === "string"
+            ? appMetadata.workspace_staff_member_id
+            : ""
+        if (appMetadata.workspace_account_unlinked !== true || !staffId)
+          return NextResponse.json(
+            { error: "This account does not have an unlinked staff profile." },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const { data: staff, error: staffError } = await admin
+          .from("company_staff_members")
+          .select("id, name, status, linked_user_id")
+          .eq("company_id", access.companyId)
+          .eq("id", staffId)
+          .maybeSingle()
+        if (staffError) throw staffError
+        if (
+          !staff ||
+          staff.linked_user_id !== null ||
+          staff.status.trim().toLocaleLowerCase() !== "inactive"
+        )
+          return NextResponse.json(
+            { error: "This staff profile is no longer available for relinking." },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const isPendingRelink =
+          appMetadata.workspace_invite_pending === true
+        if (
+          email === authUser.user.email.toLocaleLowerCase() &&
+          !isPendingRelink
+        )
+          return NextResponse.json(
+            { error: "Enter the new email address for this staff account." },
+            { status: 400, headers: responseHeaders },
+          )
+
+        const smtp = getSystemSmtpConfiguration()
+        if (!smtp)
+          return NextResponse.json(
+            {
+              error:
+                "Invitation email delivery is not configured. Set SYSTEM_SMTP_HOST, SYSTEM_SMTP_PORT, SYSTEM_SMTP_USER, and SYSTEM_SMTP_PASS on the server.",
+            },
+            { status: 503, headers: responseHeaders },
+          )
+
+        const { data: companyDetails, error: companyDetailsError } = await admin
+          .from("companies")
+          .select("name, slug")
+          .eq("id", access.companyId)
+          .maybeSingle()
+        if (companyDetailsError || !companyDetails?.slug) {
+          console.error("Staff relink company lookup failed", companyDetailsError)
+          return NextResponse.json(
+            { error: "Unable to load the inviting company." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        const { error: previousInvitationDeleteError } = await admin
+          .from("workspace_invitations")
+          .delete()
+          .eq("company_id", access.companyId)
+          .eq("user_id", userId)
+          .is("accepted_at", null)
+        if (previousInvitationDeleteError) {
+          console.error(
+            "Previous staff relink invitations could not be revoked",
+            previousInvitationDeleteError,
+          )
+          return NextResponse.json(
+            { error: "Unable to revoke previous invitation links." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        const invitationId = crypto.randomUUID()
+        const { error: invitationInsertError } = await admin
+          .from("workspace_invitations")
+          .insert({
+            id: invitationId,
+            company_id: access.companyId,
+            user_id: userId,
+            role_id: membership.role_id,
+          })
+        if (invitationInsertError) {
+          console.error("Staff relink invitation record creation failed", invitationInsertError)
+          return NextResponse.json(
+            { error: "Unable to create a fresh invitation link." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        const siteUrl =
+          process.env.NEXT_PUBLIC_SITE_URL?.trim() || new URL(request.url).origin
+        const redirectUrl = new URL(
+          `/${encodeURIComponent(companyDetails.slug)}`,
+          siteUrl,
+        )
+        redirectUrl.searchParams.set("invite", "1")
+        redirectUrl.searchParams.set("invitation_id", invitationId)
+
+        const originalEmail = authUser.user.email
+        const originalAppMetadata = authUser.user.app_metadata ?? {}
+        const { error: updateAuthError } = await admin.auth.admin.updateUserById(
+          userId,
+          {
+            email,
+            email_confirm: true,
+            app_metadata: {
+              ...originalAppMetadata,
+              workspace_invite_pending: true,
+              workspace_invite_revoked: false,
+              workspace_account_unlinked: true,
+              workspace_relink_requested_by: access.userId,
+              workspace_relink_company_id: access.companyId,
+            },
+          },
+        )
+        if (updateAuthError) {
+          const { error: cleanupError } = await admin
+            .from("workspace_invitations")
+            .delete()
+            .eq("id", invitationId)
+          if (cleanupError)
+            console.error("Failed to clean up failed staff relink invitation", cleanupError)
+          console.error("Staff login email update failed", updateAuthError)
+          return NextResponse.json(
+            {
+              error:
+                updateAuthError.code === "email_exists"
+                  ? "That login email is already used by another account."
+                  : "Unable to update the staff account's login email.",
+            },
+            {
+              status: updateAuthError.code === "email_exists" ? 409 : 400,
+              headers: responseHeaders,
+            },
+          )
+        }
+
+        const rollbackRelink = async () => {
+          const { error: deleteError } = await admin
+            .from("workspace_invitations")
+            .delete()
+            .eq("id", invitationId)
+          if (deleteError)
+            console.error("Failed to remove unsuccessful staff relink invitation", deleteError)
+          const { error: rollbackError } = await admin.auth.admin.updateUserById(
+            userId,
+            {
+              email: originalEmail,
+              email_confirm: true,
+              app_metadata: originalAppMetadata,
+            },
+          )
+          if (rollbackError) {
+            console.error("Staff login email rollback failed", rollbackError)
+            return false
+          }
+          return true
+        }
+
+        const { data: linkData, error: linkError } =
+          await admin.auth.admin.generateLink({
+            type: "magiclink",
+            email,
+            options: { redirectTo: redirectUrl.toString() },
+          })
+        const actionLink = linkData?.properties?.action_link
+        if (linkError || !actionLink) {
+          const rollbackSucceeded = await rollbackRelink()
+          console.error("Staff relink invitation link generation failed", linkError)
+          return NextResponse.json(
+            {
+              error: rollbackSucceeded
+                ? "Unable to generate an invitation link. Please try again."
+                : "Invitation setup failed and the previous account email could not be restored. Contact support.",
+            },
+            { status: 502, headers: responseHeaders },
+          )
+        }
+
+        try {
+          await sendWorkspaceInvitationEmail({
+            smtp,
+            to: email,
+            fullName:
+              typeof authUser.user.user_metadata?.full_name === "string"
+                ? authUser.user.user_metadata.full_name
+                : staff.name,
+            companyName: companyDetails.name,
+            roleName: targetRoleName ?? "team member",
+            actionLink,
+          })
+        } catch (emailError) {
+          const rollbackSucceeded = await rollbackRelink()
+          console.error("Staff relink invitation email delivery failed", emailError)
+          return NextResponse.json(
+            {
+              error: rollbackSucceeded
+                ? "Unable to deliver the invitation email. Check server SMTP settings and try again."
+                : "Invitation delivery failed and the previous account email could not be restored. Contact support.",
+            },
+            { status: 502, headers: responseHeaders },
+          )
+        }
+
+        return NextResponse.json({ success: true }, { headers: responseHeaders })
       }
 
       if (body.action === "resend-invite") {
@@ -2387,6 +2815,23 @@ export async function POST(request: Request) {
 
             { status: 400, headers: responseHeaders },
           )
+
+        if (status === "active") {
+          const { data: authUser, error: authUserError } =
+            await admin.auth.admin.getUserById(userId)
+          if (authUserError || !authUser.user) {
+            console.error("User activation auth lookup failed", authUserError)
+            return NextResponse.json(
+              { error: "Unable to verify this company account." },
+              { status: 404, headers: responseHeaders },
+            )
+          }
+          if (authUser.user.app_metadata?.workspace_account_unlinked === true)
+            return NextResponse.json(
+              { error: "Use Relink account to restore this staff account." },
+              { status: 409, headers: responseHeaders },
+            )
+        }
 
         const { error } = await admin
 

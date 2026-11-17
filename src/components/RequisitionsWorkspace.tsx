@@ -600,6 +600,7 @@ export default function RequisitionsWorkspace() {
     ExpenseRequestToInitiate[]
   >([])
   const [initiatingRequestId, setInitiatingRequestId] = useState("")
+  const [initiationRates, setInitiationRates] = useState<Record<string, string[]>>({})
   const [initiationMessage, setInitiationMessage] = useState("")
   const [permissions, setPermissions] = useState<Permissions>({
     canCreate: false,
@@ -717,7 +718,36 @@ export default function RequisitionsWorkspace() {
     }
   }
 
+  const updateInitiationRate = (
+    request: ExpenseRequestToInitiate,
+    itemIndex: number,
+    value: string,
+  ) => {
+    setInitiationRates((current) => {
+      const values =
+        current[request.id] ??
+        request.line_items.map((item) =>
+          Number(item.rate) > 0 ? String(item.rate) : "",
+        )
+      const nextValues = [...values]
+      nextValues[itemIndex] = value
+      return { ...current, [request.id]: nextValues }
+    })
+  }
+
   const initiateExpenseRequest = async (request: ExpenseRequestToInitiate) => {
+    const unitRates = request.line_items.map((item, index) => {
+      const savedRate = initiationRates[request.id]?.[index]
+      return Number(savedRate ?? (Number(item.rate) > 0 ? item.rate : ""))
+    })
+    if (
+      unitRates.length === 0 ||
+      unitRates.some((rate) => !Number.isFinite(rate) || rate <= 0)
+    ) {
+      setListError("Enter a positive unit rate for every item before initiating the requisition.")
+      return
+    }
+
     setInitiatingRequestId(request.id)
     setInitiationMessage("")
     setListError("")
@@ -729,6 +759,7 @@ export default function RequisitionsWorkspace() {
           action: "initiate_requisition",
           requestId: request.id,
           comment: "Initiated by the Administration Officer.",
+          unitRates,
         }),
       })
       const payload = (await response.json()) as {
@@ -740,6 +771,11 @@ export default function RequisitionsWorkspace() {
       setInitiationMessage(
         `${payload.request?.requisitionNumber ?? "Requisition"} was created from ${request.request_number}.`,
       )
+      setInitiationRates((current) => {
+        const remaining = { ...current }
+        delete remaining[request.id]
+        return remaining
+      })
       await loadList()
     } catch (error) {
       console.error("Expense-request requisition initiation failed", error)
@@ -1592,14 +1628,29 @@ export default function RequisitionsWorkspace() {
               Approved expense requests to initiate
             </h2>
             <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
-              Initiation creates a linked requisition. Further approvals and payment remain on the Expense Request workflow.
+              Enter a unit rate for each item; the total is calculated automatically. Initiation creates a linked requisition, while further approvals and payment remain on the Expense Request workflow.
             </p>
           </div>
           <div className="space-y-3">
-            {expenseRequestsToInitiate.map((request) => (
+            {expenseRequestsToInitiate.map((request) => {
+              const unitRates = request.line_items.map((item, index) => {
+                const enteredRate = initiationRates[request.id]?.[index]
+                return enteredRate ?? (Number(item.rate) > 0 ? String(item.rate) : "")
+              })
+              const requestTotal = request.line_items.reduce(
+                (sum, item, index) => {
+                  const rate = Number(unitRates[index])
+                  return sum + Number(item.quantity) * (Number.isFinite(rate) ? rate : 0)
+                },
+                0,
+              )
+              const ratesReady =
+                unitRates.length > 0 &&
+                unitRates.every((rate) => Number.isFinite(Number(rate)) && Number(rate) > 0)
+              return (
               <article
                 key={request.id}
-                className="flex flex-wrap items-start justify-between gap-4 rounded border p-3"
+                className="rounded border p-3"
                 style={{ borderColor: "var(--border)" }}
               >
                 <div className="min-w-0 flex-1">
@@ -1615,24 +1666,46 @@ export default function RequisitionsWorkspace() {
                     {request.expense_name}
                   </h3>
                   <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
-                    Requested by {request.requested_by_name} · Due {fmtDate(request.due_date)} · {fmtAmount(Number(request.amount), "UGX")}
+                    Requested by {request.requested_by_name} · Due {fmtDate(request.due_date)}
                   </p>
-                  <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
-                    {(request.line_items ?? []).map((item) => `${item.description} (${item.quantity} × ${fmtAmount(Number(item.rate), "UGX")})`).join(" · ")}
+                  <div className="mt-3 space-y-2">
+                    {(request.line_items ?? []).map((item, index) => (
+                      <label key={`${request.id}-item-${index}`} className="grid gap-2 text-xs sm:grid-cols-[minmax(0,1fr)_160px] sm:items-center">
+                        <span style={{ color: "var(--foreground)" }}>
+                          {item.description} · Quantity {item.quantity}
+                        </span>
+                        <input
+                          required
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          aria-label={`Unit rate for ${item.description}`}
+                          placeholder="Unit rate (UGX)"
+                          value={unitRates[index]}
+                          onChange={(event) => updateInitiationRate(request, index, event.target.value)}
+                          className="w-full rounded border px-2.5 py-2 text-xs outline-none"
+                          style={fieldStyle}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs font-700" style={{ color: "var(--foreground)" }}>
+                    Calculated request total: {fmtAmount(requestTotal, "UGX")}
                   </p>
                 </div>
                 <button
                   type="button"
-                  disabled={Boolean(initiatingRequestId)}
+                  disabled={Boolean(initiatingRequestId) || !ratesReady}
                   onClick={() => void initiateExpenseRequest(request)}
-                  className="inline-flex items-center gap-2 rounded px-3 py-2 text-xs font-600 disabled:opacity-50"
+                  className="mt-3 inline-flex items-center gap-2 rounded px-3 py-2 text-xs font-600 disabled:opacity-50"
                   style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
                 >
                   {initiatingRequestId === request.id && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
                   Initiate requisition
                 </button>
               </article>
-            ))}
+            )
+            })}
           </div>
         </section>
       )}

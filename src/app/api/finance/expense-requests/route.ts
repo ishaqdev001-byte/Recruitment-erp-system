@@ -13,6 +13,14 @@ const permissionCodes = [
   "expense_requests.cashout",
   "expense_requests.initiate",
 ] as const
+const requestAccessPermissionCodes = [
+  "expense_requests.view",
+  "expense_requests.create",
+  "expense_requests.review",
+  "expense_requests.verify",
+  "expense_requests.authorize",
+  "expense_requests.cashout",
+] as const
 
 type ExpenseRequestAction =
   | "general_manager_approve"
@@ -132,8 +140,7 @@ export async function GET() {
       )
 
     const isAdministrationOfficer =
-      access.roleName === "Administration Officer"
-    const canCreate = access.isLinkedStaff && !isAdministrationOfficer
+      access.roleName.trim().toLowerCase() === "administration officer"
     const canReviewLineManager = access.isLinkedStaff && !isAdministrationOfficer
     const canReview =
       access.permissions["expense_requests.review"] &&
@@ -150,11 +157,10 @@ export async function GET() {
       access.roleName === "Finance Manager"
     const canView =
       !isAdministrationOfficer &&
-      (access.permissions["expense_requests.view"] ||
-        canReview ||
-        canVerify ||
-        canAuthorize ||
-        canCashout)
+      requestAccessPermissionCodes.some(
+        (permission) => access.permissions[permission],
+      )
+    const canCreate = !isAdministrationOfficer && (canView || canReviewLineManager)
 
     if (
       !canView &&
@@ -236,12 +242,17 @@ export async function POST(request: Request) {
       )
 
     if (body.action === "create") {
+      const hasExpenseRequestAccess =
+        access.isLinkedStaff ||
+        requestAccessPermissionCodes.some(
+          (permission) => access.permissions[permission],
+        )
       if (
-        !access.isLinkedStaff ||
-        access.roleName === "Administration Officer"
+        access.roleName.trim().toLowerCase() === "administration officer" ||
+        !hasExpenseRequestAccess
       )
         return NextResponse.json(
-          { error: "Only active linked company staff may submit expense requests." },
+          { error: "You do not have permission to create expense requests." },
           { status: 403, headers },
         )
 
@@ -270,7 +281,7 @@ export async function POST(request: Request) {
           { status: 400, headers },
         )
 
-      const normalizedItems: { description: string; quantity: number; rate: number }[] = []
+      const normalizedItems: { description: string; quantity: number }[] = []
       for (const item of items) {
         if (!item || typeof item !== "object")
           return NextResponse.json({ error: "Each line item must be valid." }, {
@@ -281,32 +292,22 @@ export async function POST(request: Request) {
         const description =
           typeof line.description === "string" ? line.description.trim() : ""
         const quantity = Number(line.quantity)
-        const rate = Number(line.rate)
         if (
           !description ||
           description.length > 200 ||
           !Number.isFinite(quantity) ||
           quantity <= 0 ||
-          !Number.isFinite(rate) ||
-          rate < 0
+          "rate" in line ||
+          "unitRate" in line ||
+          "amount" in line
         )
           return NextResponse.json({
-            error: "Each item needs a description, positive quantity, and non-negative rate.",
+            error: "Each item needs a description and positive quantity. Amounts are set during requisition initiation.",
           }, { status: 400, headers })
-        normalizedItems.push({ description, quantity, rate })
+        normalizedItems.push({ description, quantity })
       }
 
-      const total = normalizedItems.reduce(
-        (sum, item) => sum + item.quantity * item.rate,
-        0,
-      )
-      if (!Number.isFinite(total) || total <= 0 || total > 999999999999.99)
-        return NextResponse.json(
-          { error: "Line items must total an amount greater than zero and within the supported limit." },
-          { status: 400, headers },
-        )
-
-      const { data, error } = await access.supabase.rpc("submit_staff_expense_request", {
+      const { data, error } = await access.supabase.rpc("submit_expense_request_with_items", {
         requested_company_id: access.companyId,
         requested_expense_name: expenseName,
         requested_purpose: purpose,
@@ -387,6 +388,24 @@ export async function POST(request: Request) {
         { status: 400, headers },
       )
 
+    let unitRates: number[] | null = null
+    if (body.action === "initiate_requisition") {
+      const requestedRates = Array.isArray(body.unitRates) ? body.unitRates : []
+      if (
+        requestedRates.length === 0 ||
+        requestedRates.length > 50 ||
+        requestedRates.some((value) => {
+          const rate = Number(value)
+          return !Number.isFinite(rate) || rate <= 0 || rate > 999999999
+        })
+      )
+        return NextResponse.json(
+          { error: "Enter a positive unit rate for every item before initiating the requisition." },
+          { status: 400, headers },
+        )
+      unitRates = requestedRates.map(Number)
+    }
+
     const accountId = typeof body.accountId === "string" ? body.accountId : null
     const paymentMethod = typeof body.paymentMethod === "string" ? body.paymentMethod : null
     const usesStaffWorkflow = [
@@ -395,11 +414,17 @@ export async function POST(request: Request) {
       "initiate_requisition",
     ].includes(body.action)
     const { data, error } = usesStaffWorkflow
-      ? await access.supabase.rpc("transition_staff_expense_request", {
-          requested_request_id: requestId,
-          requested_action: body.action,
-          requested_comment: comment,
-        })
+      ? body.action === "initiate_requisition"
+        ? await access.supabase.rpc("initiate_expense_request_requisition", {
+            requested_request_id: requestId,
+            requested_comment: comment,
+            requested_unit_rates: unitRates,
+          })
+        : await access.supabase.rpc("transition_staff_expense_request", {
+            requested_request_id: requestId,
+            requested_action: body.action,
+            requested_comment: comment,
+          })
       : await access.supabase.rpc("transition_expense_request", {
           requested_request_id: requestId,
           requested_action: body.action,

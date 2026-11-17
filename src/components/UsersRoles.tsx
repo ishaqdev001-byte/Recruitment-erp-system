@@ -48,6 +48,10 @@ type UserRecord = {
 
   isPrimaryAdmin: boolean
 
+  hasLinkedStaffRecord: boolean
+
+  accountUnlinked: boolean
+
   branchId: string | null
 
   branch: string
@@ -117,6 +121,15 @@ type StaffRecord = {
   transportAccountMode: TransportAccountMode
 
   transportAccountId: string
+}
+
+function getNormalizedNameParts(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLocaleLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
 }
 
 type UserEditForm = {
@@ -720,6 +733,8 @@ export default function UsersRoles({
 
   const [staffLoading, setStaffLoading] = useState(false)
 
+  const [staffLoadError, setStaffLoadError] = useState("")
+
   const [deletingStaffId, setDeletingStaffId] = useState("")
 
   const [staffForm, setStaffForm] = useState(emptyStaffForm)
@@ -762,6 +777,10 @@ export default function UsersRoles({
   const [userBranchFilter, setUserBranchFilter] = useState("all")
 
   const [userSearch, setUserSearch] = useState("")
+
+  const [relinkingUserId, setRelinkingUserId] = useState("")
+
+  const [relinkEmail, setRelinkEmail] = useState("")
 
   const [editingUserType, setEditingUserType] = useState<UserRecord | null>(
     null,
@@ -903,12 +922,13 @@ export default function UsersRoles({
   }, [companyId, reloadKey])
 
   useEffect(() => {
-    if (tab !== "staff" && !(showNewUser && userType === "staff")) return
+    if (tab !== "staff" && !showNewUser) return
 
     let cancelled = false
 
     const loadStaff = async () => {
       setStaffLoading(true)
+      setStaffLoadError("")
 
       try {
         const response = await fetch("/api/workspace/staff", {
@@ -965,12 +985,14 @@ export default function UsersRoles({
           }
         }
       } catch (loadError) {
-        if (!cancelled)
-          setError(
+        if (!cancelled) {
+          const message =
             loadError instanceof Error
               ? loadError.message
-              : "Unable to load staff records.",
-          )
+              : "Unable to load staff records."
+          setStaffLoadError(message)
+          setError(message)
+        }
       } finally {
         if (!cancelled) setStaffLoading(false)
       }
@@ -981,7 +1003,7 @@ export default function UsersRoles({
     return () => {
       cancelled = true
     }
-  }, [companyId, reloadKey, showNewUser, tab, userType])
+  }, [companyId, reloadKey, showNewUser, tab])
 
   const submitUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1513,15 +1535,28 @@ export default function UsersRoles({
   const manageUser = async (
     user: UserRecord,
 
-    action: "change-role" | "set-status" | "resend-invite" | "revoke-invite" | "delete-user",
+    action:
+      | "change-role"
+      | "set-status"
+      | "unlink-account"
+      | "relink-account"
+      | "resend-invite"
+      | "revoke-invite"
+      | "delete-user",
 
     roleId?: string,
+
+    email?: string,
   ) => {
     const prompts: Partial<Record<typeof action, string>> = {
       "set-status":
         user.status === "disabled"
           ? `Activate ${user.name}'s company access?`
           : `Deactivate ${user.name}'s company access?`,
+
+      "unlink-account": `Unlink ${user.name}'s staff account from this company? Their company access will be disabled and their staff record marked inactive. Their access to other companies will not change.`,
+
+      "relink-account": `Send a password setup invitation to ${email?.trim()}? This changes the login email for this account across all companies. Access to this company remains disabled until the invitation is accepted.`,
 
       "resend-invite": `Send a fresh invitation link to ${user.email}? The new link will be valid for one hour.`,
 
@@ -1533,6 +1568,11 @@ export default function UsersRoles({
     const prompt = prompts[action]
 
     if (prompt && !window.confirm(prompt)) return
+
+    if (action === "relink-account" && !email?.trim()) {
+      setError("Enter the new login email address.")
+      return
+    }
 
     setUserActionPending(user.id)
 
@@ -1558,6 +1598,8 @@ export default function UsersRoles({
                 status: user.status === "disabled" ? "active" : "disabled",
               }
             : {}),
+
+          ...(action === "relink-account" ? { email: email?.trim() } : {}),
         }),
       })
 
@@ -1569,14 +1611,23 @@ export default function UsersRoles({
       setNotice(
         action === "change-role"
           ? `Role updated for ${user.name}.`
-          : action === "resend-invite"
-            ? `A fresh invitation link was sent to ${user.email}.`
-            : action === "set-status"
-              ? `Access updated for ${user.name}.`
-              : action === "revoke-invite"
-                ? `Invitation revoked for ${user.name}. Their account remains listed and their staff record is available for reassignment.`
-                : `${user.name} removed from this company.`,
+          : action === "unlink-account"
+            ? `${user.name}'s staff account was unlinked and company access disabled.`
+            : action === "relink-account"
+              ? `A new password setup link was sent to ${email?.trim()}.`
+              : action === "resend-invite"
+                ? `A fresh invitation link was sent to ${user.email}.`
+                : action === "set-status"
+                  ? `Access updated for ${user.name}.`
+                  : action === "revoke-invite"
+                    ? `Invitation revoked for ${user.name}. Their account remains listed and their staff record is available for reassignment.`
+                    : `${user.name} removed from this company.`,
       )
+
+      if (action === "relink-account") {
+        setRelinkingUserId("")
+        setRelinkEmail("")
+      }
 
       setReloadKey((key) => key + 1)
     } catch (actionError) {
@@ -1949,22 +2000,27 @@ export default function UsersRoles({
     workCalendar.closureDates,
   )
   const companyUserIds = new Set(data.users.map((user) => user.id))
-  const staffNameMatches =
+  const staffNameSearchParts = getNormalizedNameParts(userName)
+  const staffNameCandidates =
     userType === "staff" &&
     !selectedExistingStaff &&
+    staffNameSearchParts.length > 0 &&
     userName.trim().length >= 2
       ? staffMembers
-          .filter(
-            (staff) =>
-              staff.status === "Active" &&
-              (!staff.linkedUserId ||
-                !companyUserIds.has(staff.linkedUserId)) &&
-              staff.name
-                .toLocaleLowerCase()
-                .includes(userName.trim().toLocaleLowerCase()),
-          )
-          .slice(0, 8)
+          .filter((staff) => {
+            const normalizedStaffName = getNormalizedNameParts(staff.name)
+            return staffNameSearchParts.every((part) =>
+              normalizedStaffName.some((namePart) => namePart.includes(part)),
+            )
+          })
       : []
+  const staffNameMatches = staffNameCandidates
+    .filter(
+      (staff) =>
+        staff.status.trim().toLocaleLowerCase() === "active" &&
+        (!staff.linkedUserId || !companyUserIds.has(staff.linkedUserId)),
+    )
+    .slice(0, 8)
 
   const selectExistingStaff = (staff: StaffRecord) => {
     setSelectedExistingStaffId(staff.id)
@@ -2442,6 +2498,7 @@ export default function UsersRoles({
                         <div className="flex items-center gap-2">
                           {canEditUserType &&
                             !user.isPrimaryAdmin &&
+                            !user.accountUnlinked &&
                             user.id !== currentUserId && (
                               <button
                                 type="button"
@@ -2470,6 +2527,81 @@ export default function UsersRoles({
                             >
                               Current user
                             </span>
+                          ) : user.accountUnlinked ? (
+                            relinkingUserId === user.id ? (
+                              <form
+                                onSubmit={(event) => {
+                                  event.preventDefault()
+                                  void manageUser(
+                                    user,
+                                    "relink-account",
+                                    undefined,
+                                    relinkEmail,
+                                  )
+                                }}
+                                className="flex items-center gap-2"
+                              >
+                                <input
+                                  type="email"
+                                  required
+                                  aria-label={`New login email for ${user.name}`}
+                                  autoComplete="email"
+                                  value={relinkEmail}
+                                  onChange={(event) =>
+                                    setRelinkEmail(event.target.value)
+                                  }
+                                  placeholder="New login email"
+                                  className="w-48 rounded border px-2 py-1 text-xs"
+                                  style={fieldStyle}
+                                />
+                                <button
+                                  type="submit"
+                                  disabled={userActionPending === user.id}
+                                  className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                                  style={{
+                                    borderColor: "var(--border)",
+                                    color: "var(--primary)",
+                                  }}
+                                >
+                                  Send invite
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={userActionPending === user.id}
+                                  onClick={() => {
+                                    setRelinkingUserId("")
+                                    setRelinkEmail("")
+                                  }}
+                                  className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                                  style={{
+                                    borderColor: "var(--border)",
+                                    color: "var(--muted-foreground)",
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </form>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={userActionPending === user.id}
+                                onClick={() => {
+                                  setRelinkingUserId(user.id)
+                                  setRelinkEmail(
+                                    user.status === "invited" ? user.email : "",
+                                  )
+                                }}
+                                className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "var(--primary)",
+                                }}
+                              >
+                                {user.status === "invited"
+                                  ? "Resend relink invite"
+                                  : "Relink account"}
+                              </button>
+                            )
                           ) : user.status === "invited" ? (
                             <>
                               <button
@@ -2503,6 +2635,23 @@ export default function UsersRoles({
                                 Revoke invite
                               </button>
                             </>
+                          ) : user.userType === "staff" &&
+                            user.hasLinkedStaffRecord &&
+                            user.status === "active" ? (
+                            <button
+                              type="button"
+                              disabled={userActionPending === user.id}
+                              onClick={() =>
+                                void manageUser(user, "unlink-account")
+                              }
+                              className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                              style={{
+                                borderColor: "var(--border)",
+                                color: "#f59e0b",
+                              }}
+                            >
+                              Unlink account
+                            </button>
                           ) : (
                             <button
                               type="button"
@@ -3343,6 +3492,22 @@ export default function UsersRoles({
                     placeholder="Start typing a staff member’s name"
                   />
                 </label>
+                {staffLoadError && (
+                  <div
+                    role="alert"
+                    className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400"
+                  >
+                    <p>{staffLoadError}</p>
+                    <button
+                      type="button"
+                      disabled={staffLoading}
+                      onClick={() => setReloadKey((key) => key + 1)}
+                      className="mt-2 underline disabled:opacity-50"
+                    >
+                      Retry loading staff
+                    </button>
+                  </div>
+                )}
                 {staffLoading && (
                   <p
                     className="text-xs"
@@ -3391,13 +3556,15 @@ export default function UsersRoles({
                 )}
                 {userName.trim().length >= 2 &&
                   !staffLoading &&
+                  !staffLoadError &&
                   !staffNameMatches.length && (
                     <p
                       className="text-xs"
                       style={{ color: "var(--muted-foreground)" }}
                     >
-                      No available staff match found. You can create a new staff
-                      profile instead.
+                      {staffNameCandidates.length
+                        ? "Matching staff records exist, but they are inactive or already linked to a company account."
+                        : "No staff record matches those name parts. Check the spelling or use Add new staff profile."}
                     </p>
                   )}
                 <div className="flex gap-3">
@@ -3412,24 +3579,27 @@ export default function UsersRoles({
                   >
                     Back
                   </button>
-                  {!staffLoading && !staffNameMatches.length && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedExistingStaffId("")
-                        setUserPhone("")
-                        setInvitedStaffForm(emptyInvitedStaffForm)
-                        setInviteStep("details")
-                      }}
-                      className="flex-1 rounded border py-2 text-sm"
-                      style={{
-                        borderColor: "var(--border)",
-                        color: "var(--foreground)",
-                      }}
-                    >
-                      Add new staff profile
-                    </button>
-                  )}
+                  {!staffLoading &&
+                    !staffLoadError &&
+                    !staffNameCandidates.length &&
+                    !staffNameMatches.length && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedExistingStaffId("")
+                          setUserPhone("")
+                          setInvitedStaffForm(emptyInvitedStaffForm)
+                          setInviteStep("details")
+                        }}
+                        className="flex-1 rounded border py-2 text-sm"
+                        style={{
+                          borderColor: "var(--border)",
+                          color: "var(--foreground)",
+                        }}
+                      >
+                        Add new staff profile
+                      </button>
+                    )}
                 </div>
               </section>
             )}

@@ -40,12 +40,20 @@ async function getInvitation(invitationId: string) {
     admin.from("companies").select("name").eq("id", invitation.company_id).maybeSingle(),
     admin.from("company_roles").select("name").eq("id", invitation.role_id).eq("company_id", invitation.company_id).maybeSingle(),
   ]);
-  if (membershipError || companyError || roleError || membership?.status !== "active"
+  const isRelink = Boolean(
+    membership?.status === "disabled"
+      && user.app_metadata?.workspace_account_unlinked === true
+      && user.app_metadata?.workspace_invite_pending === true
+      && user.app_metadata?.workspace_relink_company_id === invitation.company_id
+      && typeof user.app_metadata?.workspace_staff_member_id === "string",
+  );
+  if (membershipError || companyError || roleError || !membership
+    || (membership.status !== "active" && !isRelink)
     || membership.role_id !== invitation.role_id || !company || !role) {
     return { error: "The invited company assignment could not be verified. Ask the company administrator to resend the invitation.", status: 403 as const };
   }
 
-  return { admin, invitation, userId: user.id, companyName: company.name, roleName: role.name };
+  return { admin, invitation, userId: user.id, companyName: company.name, roleName: role.name, isRelink };
 }
 
 async function getLegacyInvitation() {
@@ -118,6 +126,194 @@ export async function POST(_request: Request, context: RouteContext<"/api/worksp
     if (authUserError || !authUser.user) {
       return NextResponse.json({ error: "Unable to verify the invited account." }, { status: 500, headers: responseHeaders });
     }
+
+    if (result.isRelink) {
+      const originalAppMetadata = authUser.user.app_metadata ?? {};
+      const staffId =
+        typeof originalAppMetadata.workspace_staff_member_id === "string"
+          ? originalAppMetadata.workspace_staff_member_id
+          : "";
+      const relinkActorId =
+        typeof originalAppMetadata.workspace_relink_requested_by === "string"
+          ? originalAppMetadata.workspace_relink_requested_by
+          : result.userId;
+      if (!staffId) {
+        return NextResponse.json({ error: "The linked staff profile could not be verified." }, { status: 409, headers: responseHeaders });
+      }
+
+      const [{ data: staff, error: staffError }, { data: profile, error: profileError }] = await Promise.all([
+        result.admin
+          .from("company_staff_members")
+          .select("id, status, linked_user_id")
+          .eq("company_id", result.invitation.company_id)
+          .eq("id", staffId)
+          .maybeSingle(),
+        result.admin
+          .from("profiles")
+          .select("must_change_password")
+          .eq("id", result.userId)
+          .maybeSingle(),
+      ]);
+      if (staffError || profileError) {
+        console.error("Staff relink invitation verification failed", staffError ?? profileError);
+        return NextResponse.json({ error: "Unable to verify the staff account." }, { status: 500, headers: responseHeaders });
+      }
+      if (!staff || staff.linked_user_id !== null || staff.status !== "Inactive") {
+        return NextResponse.json({ error: "This staff profile is no longer available for relinking." }, { status: 409, headers: responseHeaders });
+      }
+
+      let staffLinked = false;
+      let membershipEnabled = false;
+      let profileUpdated = false;
+      let metadataUpdated = false;
+      const rollbackRelink = async () => {
+        const failures: string[] = [];
+        if (metadataUpdated) {
+          const { error } = await result.admin.auth.admin.updateUserById(result.userId, {
+            app_metadata: originalAppMetadata,
+          });
+          if (error) {
+            failures.push("account metadata");
+            console.error("Staff relink metadata rollback failed", error);
+          }
+        }
+        if (profileUpdated) {
+          const { error } = await result.admin
+            .from("profiles")
+            .update({ must_change_password: profile?.must_change_password ?? false })
+            .eq("id", result.userId);
+          if (error) {
+            failures.push("password requirement");
+            console.error("Staff relink password requirement rollback failed", error);
+          }
+        }
+        if (membershipEnabled) {
+          const { error } = await result.admin
+            .from("company_memberships")
+            .update({ status: "disabled" })
+            .eq("company_id", result.invitation.company_id)
+            .eq("user_id", result.userId);
+          if (error) {
+            failures.push("company access");
+            console.error("Staff relink membership rollback failed", error);
+          }
+        }
+        if (staffLinked) {
+          const { error } = await result.admin
+            .from("company_staff_members")
+            .update({
+              linked_user_id: null,
+              status: "Inactive",
+              updated_by: relinkActorId,
+            })
+            .eq("company_id", result.invitation.company_id)
+            .eq("id", staffId)
+            .eq("linked_user_id", result.userId);
+          if (error) {
+            failures.push("staff link");
+            console.error("Staff relink record rollback failed", error);
+          }
+        }
+        return failures;
+      };
+
+      const { data: linkedStaff, error: linkError } = await result.admin
+        .from("company_staff_members")
+        .update({
+          linked_user_id: result.userId,
+          status: "Active",
+          updated_by: relinkActorId,
+        })
+        .eq("company_id", result.invitation.company_id)
+        .eq("id", staffId)
+        .eq("status", "Inactive")
+        .is("linked_user_id", null)
+        .select("id")
+        .maybeSingle();
+      if (linkError || !linkedStaff) {
+        console.error("Staff relink invitation link failed", linkError);
+        return NextResponse.json({ error: "Unable to relink this staff profile." }, { status: 409, headers: responseHeaders });
+      }
+      staffLinked = true;
+
+      const { data: enabledMembership, error: membershipError } = await result.admin
+        .from("company_memberships")
+        .update({ status: "active" })
+        .eq("company_id", result.invitation.company_id)
+        .eq("user_id", result.userId)
+        .eq("status", "disabled")
+        .select("user_id")
+        .maybeSingle();
+      if (membershipError || !enabledMembership) {
+        const failures = await rollbackRelink();
+        console.error("Staff relink membership activation failed", membershipError);
+        return NextResponse.json(
+          { error: failures.length ? "Unable to restore the account safely. Contact support." : "Unable to restore this company's access." },
+          { status: 500, headers: responseHeaders },
+        );
+      }
+      membershipEnabled = true;
+
+      if (profile?.must_change_password) {
+        const { error } = await result.admin
+          .from("profiles")
+          .update({ must_change_password: false })
+          .eq("id", result.userId);
+        if (error) {
+          const failures = await rollbackRelink();
+          console.error("Staff relink password flag update failed", error);
+          return NextResponse.json(
+            { error: failures.length ? "Unable to restore the account safely. Contact support." : "Unable to update the staff password requirement." },
+            { status: 500, headers: responseHeaders },
+          );
+        }
+        profileUpdated = true;
+      }
+
+      const { error: metadataError } = await result.admin.auth.admin.updateUserById(
+        result.userId,
+        {
+          app_metadata: {
+            ...originalAppMetadata,
+            workspace_invite_pending: false,
+            workspace_invite_revoked: false,
+            workspace_account_unlinked: false,
+            workspace_relink_requested_by: null,
+            workspace_relink_company_id: null,
+          },
+        },
+      );
+      if (metadataError) {
+        const failures = await rollbackRelink();
+        console.error("Staff relink metadata update failed", metadataError);
+        return NextResponse.json(
+          { error: failures.length ? "Unable to restore the account safely. Contact support." : "Unable to finish relinking the staff account." },
+          { status: 500, headers: responseHeaders },
+        );
+      }
+      metadataUpdated = true;
+
+      const { data: acceptedInvitation, error: acceptanceError } = await result.admin
+        .from("workspace_invitations")
+        .update({ accepted_at: new Date().toISOString() })
+        .eq("id", invitationId)
+        .eq("user_id", result.userId)
+        .is("accepted_at", null)
+        .gt("expires_at", new Date().toISOString())
+        .select("id")
+        .maybeSingle();
+      if (acceptanceError || !acceptedInvitation) {
+        const failures = await rollbackRelink();
+        console.error("Staff relink invitation acceptance failed", acceptanceError);
+        return NextResponse.json(
+          { error: failures.length ? "Unable to restore the account safely. Contact support." : "This invitation expired before it could be completed. Ask the company administrator to send a new one." },
+          { status: 410, headers: responseHeaders },
+        );
+      }
+
+      return NextResponse.json({ success: true }, { headers: responseHeaders });
+    }
+
     const { error: metadataError } = await result.admin.auth.admin.updateUserById(result.userId, {
       app_metadata: {
         ...authUser.user.app_metadata,

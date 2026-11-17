@@ -18,7 +18,7 @@ export async function GET() {
     const admin = createClient(url, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
     const { data: invitation, error } = await admin
       .from("workspace_invitations")
-      .select("id, accepted_at, expires_at")
+      .select("id, company_id, accepted_at, expires_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -28,12 +28,19 @@ export async function GET() {
       return NextResponse.json({ error: "Unable to verify workspace invitation status." }, { status: 503, headers: responseHeaders });
     }
 
+    const relinkInvitationRequiresEmailLink = Boolean(
+      invitation &&
+      !invitation.accepted_at &&
+      user.app_metadata?.workspace_account_unlinked === true &&
+      user.app_metadata?.workspace_relink_company_id === invitation.company_id
+    );
+
     return NextResponse.json({
-      invitationId: invitation?.id ?? null,
-      requiresAcceptance: Boolean(invitation && !invitation.accepted_at),
+      invitationId: relinkInvitationRequiresEmailLink ? null : invitation?.id ?? null,
+      requiresAcceptance: Boolean(invitation && !invitation.accepted_at && !relinkInvitationRequiresEmailLink),
       legacyInvitation: !invitation && Boolean(user.app_metadata?.invitation_company_id
         || (user.user_metadata?.company_name && user.user_metadata?.role_name)),
-      expiresAt: invitation?.expires_at ?? null,
+      expiresAt: relinkInvitationRequiresEmailLink ? null : invitation?.expires_at ?? null,
     }, { headers: responseHeaders });
   } catch (error) {
     console.error("Current invitation request failed", error);

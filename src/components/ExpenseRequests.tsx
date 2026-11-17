@@ -54,7 +54,7 @@ type Permissions = {
 
 type AccountOption = { id: string; name: string; account_type: string }
 type ExpenseCategory = { id: string; name: string }
-type DraftExpenseItem = { description: string; quantity: string; rate: string }
+type DraftExpenseItem = { description: string; quantity: string }
 
 const initialPermissions: Permissions = {
   canView: false,
@@ -111,7 +111,7 @@ export default function ExpenseRequests() {
   const [expenseCategoryId, setExpenseCategoryId] = useState("")
   const [categories, setCategories] = useState<ExpenseCategory[]>([])
   const [items, setItems] = useState<DraftExpenseItem[]>([
-    { description: "", quantity: "1", rate: "" },
+    { description: "", quantity: "1" },
   ])
   const [dueDate, setDueDate] = useState("")
   const [requestComment, setRequestComment] = useState("")
@@ -188,7 +188,6 @@ export default function ExpenseRequests() {
           items: items.map((item) => ({
             description: item.description.trim(),
             quantity: Number(item.quantity),
-            rate: Number(item.rate),
           })),
           dueDate,
           comment: requestComment,
@@ -200,10 +199,10 @@ export default function ExpenseRequests() {
       setExpenseName("")
       setPurpose("")
       setExpenseCategoryId("")
-      setItems([{ description: "", quantity: "1", rate: "" }])
+      setItems([{ description: "", quantity: "1" }])
       setDueDate("")
       setRequestComment("")
-      setNotice("Expense request submitted for line-manager review.")
+      setNotice("Expense request submitted for review.")
       await loadRequests()
     } catch (submitError) {
       console.error("Expense request submission failed", submitError)
@@ -427,7 +426,7 @@ export default function ExpenseRequests() {
             Expense Requests
           </h1>
           <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
-            Staff submit requests to their line manager. Approved requests are initiated as requisitions, then proceed through General Manager review, Finance verification, Chairman authorization, and Finance Manager cash-out.
+            Submit itemized requests without prices. Requests go to an assigned line manager or the General Manager; the Administration Officer enters unit rates when initiating the requisition, after which approvals and cash-out continue here.
           </p>
         </div>
         <button
@@ -482,10 +481,10 @@ export default function ExpenseRequests() {
             </label>
             <div className="space-y-3 sm:col-span-2">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-600">Items *</span>
+                <span className="text-sm font-600">Items and quantities *</span>
                 <button
                   type="button"
-                  onClick={() => setItems((current) => [...current, { description: "", quantity: "1", rate: "" }])}
+                  onClick={() => setItems((current) => [...current, { description: "", quantity: "1" }])}
                   className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-xs font-600"
                   style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
                 >
@@ -493,12 +492,12 @@ export default function ExpenseRequests() {
                 </button>
               </div>
               {items.map((item, index) => (
-                <div key={index} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_110px_150px_auto]">
+                <div key={index} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_110px_auto]">
                   <input
                     required
                     maxLength={200}
                     aria-label={`Item ${index + 1} description`}
-                    placeholder="Description"
+                    placeholder="Item"
                     value={item.description}
                     onChange={(event) => updateItem(index, { description: event.target.value })}
                     className="w-full rounded border px-3 py-2 outline-none"
@@ -516,18 +515,6 @@ export default function ExpenseRequests() {
                     className="w-full rounded border px-3 py-2 outline-none"
                     style={fieldStyle}
                   />
-                  <input
-                    required
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    aria-label={`Item ${index + 1} rate`}
-                    placeholder="Unit rate"
-                    value={item.rate}
-                    onChange={(event) => updateItem(index, { rate: event.target.value })}
-                    className="w-full rounded border px-3 py-2 outline-none"
-                    style={fieldStyle}
-                  />
                   <button
                     type="button"
                     aria-label={`Remove item ${index + 1}`}
@@ -540,18 +527,18 @@ export default function ExpenseRequests() {
                   </button>
                 </div>
               ))}
-              <div className="text-right text-sm font-700" style={{ color: "var(--foreground)" }}>
-                Request total: {formatAmount(items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.rate || 0), 0))}
-              </div>
+              <p className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                The Administration Officer will enter unit rates when initiating the requisition.
+              </p>
             </div>
             <label className="text-sm sm:col-span-2">
               <span className="mb-1 block">Request comment *</span>
               <textarea required maxLength={2000} rows={2} value={requestComment} onChange={(event) => setRequestComment(event.target.value)} className="w-full rounded border px-3 py-2.5 outline-none" style={fieldStyle} />
             </label>
           </div>
-          <button type="submit" disabled={saving || !expenseCategoryId || items.some((item) => !item.description.trim() || Number(item.quantity) <= 0 || Number(item.rate) < 0)} className="mt-4 inline-flex items-center gap-2 rounded px-4 py-2.5 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "white" }}>
+          <button type="submit" disabled={saving || !expenseCategoryId || items.some((item) => !item.description.trim() || !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0)} className="mt-4 inline-flex items-center gap-2 rounded px-4 py-2.5 text-sm font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "white" }}>
             {saving ? <Loader2 className="animate-spin" size={16} aria-hidden="true" /> : <Plus size={16} aria-hidden="true" />}
-            Submit for review
+            Submit expense request
           </button>
         </form>
       )}
@@ -594,8 +581,8 @@ export default function ExpenseRequests() {
                   </span>
                 </div>
                 <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                  <div><span style={{ color: "var(--muted-foreground)" }}>Amount</span><p className="font-700" style={{ color: "var(--foreground)" }}>{formatAmount(Number(request.amount))}</p></div>
-                  <div><span style={{ color: "var(--muted-foreground)" }}>Requested for</span><p style={{ color: "var(--foreground)" }}>{request.requested_by_name}</p></div>
+                  <div><span style={{ color: "var(--muted-foreground)" }}>Amount</span><p className="font-700" style={{ color: "var(--foreground)" }}>{Number(request.amount) > 0 ? formatAmount(Number(request.amount)) : "Not priced yet"}</p></div>
+                  <div><span style={{ color: "var(--muted-foreground)" }}>Created by</span><p style={{ color: "var(--foreground)" }}>{request.requested_by_name}</p></div>
                   <div><span style={{ color: "var(--muted-foreground)" }}>Due date</span><p style={{ color: "var(--foreground)" }}>{formatDate(request.due_date)}</p></div>
                   <div><span style={{ color: "var(--muted-foreground)" }}>Submitted</span><p style={{ color: "var(--foreground)" }}>{new Date(request.created_at).toLocaleDateString()}</p></div>
                   {request.requisition_number && <div><span style={{ color: "var(--muted-foreground)" }}>Requisition</span><p className="font-700" style={{ color: "var(--primary)" }}>{request.requisition_number}</p></div>}
@@ -606,8 +593,8 @@ export default function ExpenseRequests() {
                   <ul className="mt-2 space-y-1">
                     {(request.line_items ?? []).map((item, index) => (
                       <li key={`${request.id}-item-${index}`} className="flex flex-wrap justify-between gap-2" style={{ color: "var(--muted-foreground)" }}>
-                        <span>{item.description} ({item.quantity} × {formatAmount(Number(item.rate))})</span>
-                        <span>{formatAmount(Number(item.quantity) * Number(item.rate))}</span>
+                        <span>{item.description} (quantity: {item.quantity})</span>
+                        {Number(item.rate) > 0 && <span>{formatAmount(Number(item.quantity) * Number(item.rate))}</span>}
                       </li>
                     ))}
                   </ul>

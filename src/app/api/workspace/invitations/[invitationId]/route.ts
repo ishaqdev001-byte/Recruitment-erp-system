@@ -114,6 +114,21 @@ export async function POST(_request: Request, context: RouteContext<"/api/worksp
     const { invitationId } = await context.params;
     const result = await getInvitation(invitationId);
     if ("error" in result) return NextResponse.json({ error: result.error }, { status: result.status, headers: responseHeaders });
+    const { data: authUser, error: authUserError } = await result.admin.auth.admin.getUserById(result.userId);
+    if (authUserError || !authUser.user) {
+      return NextResponse.json({ error: "Unable to verify the invited account." }, { status: 500, headers: responseHeaders });
+    }
+    const { error: metadataError } = await result.admin.auth.admin.updateUserById(result.userId, {
+      app_metadata: {
+        ...authUser.user.app_metadata,
+        workspace_invite_pending: false,
+        workspace_invite_revoked: false,
+      },
+    });
+    if (metadataError) {
+      console.error("Workspace invitation metadata update failed", metadataError);
+      return NextResponse.json({ error: "Unable to complete this invitation." }, { status: 500, headers: responseHeaders });
+    }
     const { data, error } = await result.admin
       .from("workspace_invitations")
       .update({ accepted_at: new Date().toISOString() })
@@ -123,7 +138,16 @@ export async function POST(_request: Request, context: RouteContext<"/api/worksp
       .gt("expires_at", new Date().toISOString())
       .select("id")
       .maybeSingle();
-    if (error || !data) return NextResponse.json({ error: "This invitation expired before it could be completed. Ask the company administrator to send a new one." }, { status: 410, headers: responseHeaders });
+    if (error || !data) {
+      const { error: restoreMetadataError } = await result.admin.auth.admin.updateUserById(result.userId, {
+        app_metadata: {
+          ...authUser.user.app_metadata,
+          workspace_invite_pending: true,
+        },
+      });
+      if (restoreMetadataError) console.error("Workspace invitation metadata rollback failed", restoreMetadataError);
+      return NextResponse.json({ error: "This invitation expired before it could be completed. Ask the company administrator to send a new one." }, { status: 410, headers: responseHeaders });
+    }
     return NextResponse.json({ success: true }, { headers: responseHeaders });
   } catch (error) {
     console.error("Workspace invitation acceptance failed", error);

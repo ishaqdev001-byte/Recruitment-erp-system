@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
   Plus,
   Search,
+  Trash2,
   WalletCards,
 } from "lucide-react"
 
@@ -71,6 +72,7 @@ type AccountsPayload = {
     canCreate: boolean
     canManageAccounts: boolean
     canAdministerAccounts: boolean
+    canDeleteExpenses: boolean
   }
   error?: string
 }
@@ -122,6 +124,8 @@ export default function AccountsWorkspace() {
   const [canManageAccounts, setCanManageAccounts] = useState(false)
 
   const [canAdministerAccounts, setCanAdministerAccounts] = useState(false)
+
+  const [canDeleteExpenses, setCanDeleteExpenses] = useState(false)
 
   const [loading, setLoading] = useState(true)
 
@@ -208,6 +212,8 @@ export default function AccountsWorkspace() {
       setCanAdministerAccounts(
         Boolean(result.permissions?.canAdministerAccounts),
       )
+
+      setCanDeleteExpenses(Boolean(result.permissions?.canDeleteExpenses))
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -534,6 +540,41 @@ export default function AccountsWorkspace() {
         deleteError instanceof Error
           ? deleteError.message
           : "Unable to delete account.",
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDeleteExpense = async (expense: Expense) => {
+    if (
+      !window.confirm(
+        `Delete expense ${expense.reference}? This removes it from the company records and account ledger for the entire company.`,
+      )
+    )
+      return
+
+    setSaving(true)
+    setError("")
+    setNotice("")
+
+    try {
+      const response = await fetch("/api/finance/accounts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expenseId: expense.id }),
+      })
+      const result = (await response.json()) as { error?: string }
+      if (!response.ok)
+        throw new Error(result.error ?? "Unable to delete this expense.")
+
+      setNotice(`Expense ${expense.reference} deleted from company records.`)
+      await loadAccounts()
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Unable to delete this expense.",
       )
     } finally {
       setSaving(false)
@@ -1006,6 +1047,154 @@ export default function AccountsWorkspace() {
                         {entry.direction === "credit" ? "+" : "-"}
                         {money(entry.amount)}
                       </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2
+                className="text-sm font-700"
+                style={{ color: "var(--foreground)" }}
+              >
+                Recorded expenses
+              </h2>
+              <p
+                className="mt-1 text-xs"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Company expense records and their account entries.
+              </p>
+            </div>
+          </div>
+          <div
+            className="finance-table-scroll rounded border"
+            style={{ borderColor: "var(--border)", background: "var(--card)" }}
+          >
+            <table className="w-full min-w-225 text-sm">
+              <thead>
+                <tr
+                  className="border-b text-left"
+                  style={{ borderColor: "var(--border)" }}
+                >
+                  {[
+                    "Date",
+                    "Category",
+                    "Description",
+                    "Paid to",
+                    "Account",
+                    "Method",
+                    "Reference",
+                    "Amount",
+                    ...(canDeleteExpenses ? ["Actions"] : []),
+                  ].map((header) => (
+                    <th
+                      key={header}
+                      className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {header}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {loading && (
+                  <tr>
+                    <td
+                      colSpan={canDeleteExpenses ? 9 : 8}
+                      className="px-4 py-8 text-center text-sm"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Loading expenses…
+                    </td>
+                  </tr>
+                )}
+                {!loading && expenses.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={canDeleteExpenses ? 9 : 8}
+                      className="px-4 py-8 text-center text-sm"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      No company expenses recorded.
+                    </td>
+                  </tr>
+                )}
+                {!loading &&
+                  expenses.map((expense) => (
+                    <tr
+                      key={expense.id}
+                      className="border-b last:border-0"
+                      style={{ borderColor: "var(--border)" }}
+                    >
+                      <td
+                        className="whitespace-nowrap px-3 py-3 text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {new Date(`${expense.paid_at}T00:00:00`).toLocaleDateString("en-GB")}
+                      </td>
+                      <td
+                        className="px-3 py-3 text-xs"
+                        style={{ color: "var(--foreground)" }}
+                      >
+                        {expense.expense_type}
+                      </td>
+                      <td
+                        className="px-3 py-3 text-xs"
+                        style={{ color: "var(--foreground)" }}
+                      >
+                        {expense.description}
+                      </td>
+                      <td
+                        className="px-3 py-3 text-xs"
+                        style={{ color: "var(--foreground)" }}
+                      >
+                        {expense.paid_to || "—"}
+                      </td>
+                      <td
+                        className="whitespace-nowrap px-3 py-3 text-xs"
+                        style={{ color: "var(--foreground)" }}
+                      >
+                        {expense.account_name}
+                      </td>
+                      <td
+                        className="whitespace-nowrap px-3 py-3 text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {expense.payment_method}
+                      </td>
+                      <td
+                        className="whitespace-nowrap px-3 py-3 mono text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {expense.reference}
+                      </td>
+                      <td
+                        className="whitespace-nowrap px-3 py-3 mono text-xs font-700"
+                        style={{ color: "#c2413a" }}
+                      >
+                        {money(expense.amount)}
+                      </td>
+                      {canDeleteExpenses && (
+                        <td className="whitespace-nowrap px-3 py-3">
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => void handleDeleteExpense(expense)}
+                            className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600 disabled:opacity-50"
+                            style={{ borderColor: "#c2413a", color: "#c2413a" }}
+                            aria-label={`Delete expense ${expense.reference}`}
+                          >
+                            <Trash2 size={13} aria-hidden="true" />
+                            Delete
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
               </tbody>

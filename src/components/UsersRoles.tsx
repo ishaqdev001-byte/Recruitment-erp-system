@@ -1525,9 +1525,9 @@ export default function UsersRoles({
 
       "resend-invite": `Send a fresh invitation link to ${user.email}? The new link will be valid for one hour.`,
 
-      "revoke-invite": `Revoke the pending invitation for ${user.name}?`,
+      "revoke-invite": `Revoke the pending invitation for ${user.name}? Their account will remain listed, and their Staff-page record will be kept for a future invitation.`,
 
-      "delete-user": `Remove ${user.name} from this company? If they have no other company memberships, their account will be deactivated and removed while keeping historical finance records intact.`,
+      "delete-user": `Remove ${user.name} from this company? Their Staff-page record will be kept and unlinked. If they have no other company memberships, their account will be deactivated and removed while keeping historical finance records intact.`,
     }
 
     const prompt = prompts[action]
@@ -1574,7 +1574,7 @@ export default function UsersRoles({
             : action === "set-status"
               ? `Access updated for ${user.name}.`
               : action === "revoke-invite"
-                ? `Invitation revoked for ${user.name}.`
+                ? `Invitation revoked for ${user.name}. Their account remains listed and their staff record is available for reassignment.`
                 : `${user.name} removed from this company.`,
       )
 
@@ -1948,6 +1948,7 @@ export default function UsersRoles({
     workCalendar.schedule,
     workCalendar.closureDates,
   )
+  const companyUserIds = new Set(data.users.map((user) => user.id))
   const staffNameMatches =
     userType === "staff" &&
     !selectedExistingStaff &&
@@ -1956,7 +1957,8 @@ export default function UsersRoles({
           .filter(
             (staff) =>
               staff.status === "Active" &&
-              !staff.linkedUserId &&
+              (!staff.linkedUserId ||
+                !companyUserIds.has(staff.linkedUserId)) &&
               staff.name
                 .toLocaleLowerCase()
                 .includes(userName.trim().toLocaleLowerCase()),

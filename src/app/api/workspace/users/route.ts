@@ -172,10 +172,30 @@ async function getUnlinkedStaffRecord(
     .eq("company_id", companyId)
     .eq("id", staffId)
     .eq("status", "Active")
-    .is("linked_user_id", null)
     .maybeSingle()
   if (error) throw error
-  return data as ExistingStaffRecord | null
+  if (!data) return null
+
+  if (data.linked_user_id) {
+    const { data: membership, error: membershipError } = await admin
+      .from("company_memberships")
+      .select("user_id")
+      .eq("company_id", companyId)
+      .eq("user_id", data.linked_user_id)
+      .maybeSingle()
+    if (membershipError) throw membershipError
+    if (membership) return null
+
+    const { error: unlinkError } = await admin
+      .from("company_staff_members")
+      .update({ linked_user_id: null })
+      .eq("company_id", companyId)
+      .eq("id", staffId)
+      .eq("linked_user_id", data.linked_user_id)
+    if (unlinkError) throw unlinkError
+  }
+
+  return { ...data, linked_user_id: null } as ExistingStaffRecord
 }
 
 async function linkInvitedStaffRecord(
@@ -215,7 +235,7 @@ async function createOrLinkInvitedStaffRecord(
   staffInput: StaffInput | null,
   existingStaffId: string,
   phone: string,
-) {
+): Promise<string | null> {
   if (existingStaffId) {
     await linkInvitedStaffRecord(
       admin,
@@ -225,10 +245,10 @@ async function createOrLinkInvitedStaffRecord(
       createdBy,
       phone,
     )
-    return
+    return existingStaffId
   }
   if (staffInput) {
-    await insertInvitedStaffRecord(
+    return insertInvitedStaffRecord(
       admin,
       companyId,
       createdBy,
@@ -237,6 +257,7 @@ async function createOrLinkInvitedStaffRecord(
       phone,
     )
   }
+  return null
 }
 
 async function removeInvitedStaffRecord(
@@ -257,7 +278,7 @@ async function removeInvitedStaffRecord(
   }
   const { error } = await admin
     .from("company_staff_members")
-    .delete()
+    .update({ linked_user_id: null })
     .eq("company_id", companyId)
     .eq("linked_user_id", userId)
   if (error) throw error
@@ -738,6 +759,11 @@ export async function GET() {
         ? joinedRole[0]?.name
         : joinedRole?.name
       const branchId = membership.branch_id ?? mainBranch?.id ?? null
+      const isPendingInvite = Boolean(
+        authUser &&
+          (authUser.app_metadata?.workspace_invite_pending === true ||
+            !authUser.confirmed_at),
+      )
 
       return {
         id: membership.user_id,
@@ -761,17 +787,16 @@ export async function GET() {
 
         role: role ?? roleNameById.get(membership.role_id) ?? "Unknown role",
 
-        status:
-          membership.status === "disabled"
-            ? "disabled"
-            : authUser?.confirmed_at
-              ? membership.status
-              : "invited",
+        status: isPendingInvite ? "invited" : membership.status,
 
         isPrimaryAdmin:
           membership.user_id === companyResult.data.primary_admin_user_id,
 
-        userType: staffUserIds.has(membership.user_id) ? "staff" : "member",
+        userType:
+          staffUserIds.has(membership.user_id) ||
+          authUser?.app_metadata?.workspace_user_type === "staff"
+            ? "staff"
+            : "member",
       }
     })
 
@@ -1971,13 +1996,6 @@ export async function POST(request: Request) {
       }
 
       if (body.action === "resend-invite") {
-        if (membership.status !== "active")
-          return NextResponse.json(
-            { error: "This company membership is not active." },
-
-            { status: 409, headers: responseHeaders },
-          )
-
         const { data: authUser, error: authUserError } =
           await admin.auth.admin.getUserById(userId)
 
@@ -2004,10 +2022,24 @@ export async function POST(request: Request) {
             { status: 500, headers: responseHeaders },
           )
 
-        if (latestInvitation?.accepted_at)
+        const invitationIsPending = Boolean(
+          authUser.user.app_metadata?.workspace_invite_pending === true ||
+            !authUser.user.confirmed_at ||
+            (latestInvitation && !latestInvitation.accepted_at),
+        )
+
+        if (latestInvitation?.accepted_at || !invitationIsPending)
           return NextResponse.json(
             { error: "This user has already accepted the invitation." },
+            { status: 409, headers: responseHeaders },
+          )
 
+        if (
+          membership.status !== "active" &&
+          membership.status !== "disabled"
+        )
+          return NextResponse.json(
+            { error: "This company membership cannot be reactivated." },
             { status: 409, headers: responseHeaders },
           )
 
@@ -2044,6 +2076,24 @@ export async function POST(request: Request) {
 
             { status: 500, headers: responseHeaders },
           )
+
+        const { error: previousInvitationDeleteError } = await admin
+          .from("workspace_invitations")
+          .delete()
+          .eq("company_id", access.companyId)
+          .eq("user_id", userId)
+          .is("accepted_at", null)
+
+        if (previousInvitationDeleteError) {
+          console.error(
+            "Previous workspace invitation links could not be revoked",
+            previousInvitationDeleteError,
+          )
+          return NextResponse.json(
+            { error: "Unable to revoke the previous invitation link." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
 
         const invitationId = crypto.randomUUID()
 
@@ -2115,6 +2165,92 @@ export async function POST(request: Request) {
           )
         }
 
+        const wasDisabled = membership.status === "disabled"
+        let relinkedStaffId = ""
+
+        if (wasDisabled) {
+          const { data: reactivatedMembership, error: reactivateError } =
+            await admin
+              .from("company_memberships")
+              .update({ status: "active" })
+              .eq("company_id", access.companyId)
+              .eq("user_id", userId)
+              .eq("status", "disabled")
+              .select("user_id")
+              .maybeSingle()
+
+          if (reactivateError || !reactivatedMembership) {
+            const { error: cleanupError } = await admin
+              .from("workspace_invitations")
+              .delete()
+              .eq("id", invitationId)
+            if (cleanupError)
+              console.error(
+                "Failed to clean up invitation after membership reactivation failed",
+                cleanupError,
+              )
+            console.error(
+              "Workspace membership reactivation failed",
+              reactivateError,
+            )
+            return NextResponse.json(
+              { error: "Unable to restore this user's company membership." },
+              { status: 500, headers: responseHeaders },
+            )
+          }
+
+          const staffMemberId =
+            typeof authUser.user.app_metadata?.workspace_staff_member_id ===
+            "string"
+              ? authUser.user.app_metadata.workspace_staff_member_id
+              : ""
+
+          if (staffMemberId) {
+            try {
+              await linkInvitedStaffRecord(
+                admin,
+                access.companyId,
+                staffMemberId,
+                userId,
+                access.userId,
+                "",
+              )
+              relinkedStaffId = staffMemberId
+            } catch (staffLinkError) {
+              const { error: disableError } = await admin
+                .from("company_memberships")
+                .update({ status: "disabled" })
+                .eq("company_id", access.companyId)
+                .eq("user_id", userId)
+              if (disableError)
+                console.error(
+                  "Membership rollback after staff relinking failed",
+                  disableError,
+                )
+              const { error: cleanupError } = await admin
+                .from("workspace_invitations")
+                .delete()
+                .eq("id", invitationId)
+              if (cleanupError)
+                console.error(
+                  "Failed to clean up invitation after staff relinking failed",
+                  cleanupError,
+                )
+              console.error(
+                "Revoked staff record relinking failed",
+                staffLinkError,
+              )
+              return NextResponse.json(
+                {
+                  error:
+                    "The retained staff record could not be linked. Refresh the staff roster before resending.",
+                },
+                { status: 409, headers: responseHeaders },
+              )
+            }
+          }
+        }
+
         try {
           await sendWorkspaceInvitationEmail({
             smtp,
@@ -2128,6 +2264,31 @@ export async function POST(request: Request) {
             actionLink,
           })
         } catch (emailError) {
+          if (relinkedStaffId) {
+            const { error: unlinkError } = await admin
+              .from("company_staff_members")
+              .update({ linked_user_id: null })
+              .eq("company_id", access.companyId)
+              .eq("id", relinkedStaffId)
+              .eq("linked_user_id", userId)
+            if (unlinkError)
+              console.error(
+                "Staff record rollback after invitation email failure failed",
+                unlinkError,
+              )
+          }
+          if (wasDisabled) {
+            const { error: disableError } = await admin
+              .from("company_memberships")
+              .update({ status: "disabled" })
+              .eq("company_id", access.companyId)
+              .eq("user_id", userId)
+            if (disableError)
+              console.error(
+                "Membership rollback after invitation email failure failed",
+                disableError,
+              )
+          }
           const { error: cleanupError } = await admin
             .from("workspace_invitations")
             .delete()
@@ -2278,12 +2439,159 @@ export async function POST(request: Request) {
             { status: 404, headers: responseHeaders },
           )
 
-        if (authUser.user.confirmed_at)
+        const { data: latestInvitation, error: latestInvitationError } =
+          await admin
+            .from("workspace_invitations")
+            .select("accepted_at")
+            .eq("company_id", access.companyId)
+            .eq("user_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+        if (latestInvitationError)
+          return NextResponse.json(
+            { error: "Unable to verify this invitation." },
+            { status: 500, headers: responseHeaders },
+          )
+
+        const invitationIsPending = Boolean(
+          authUser.user.app_metadata?.workspace_invite_pending === true ||
+            !authUser.user.confirmed_at ||
+            (latestInvitation && !latestInvitation.accepted_at),
+        )
+
+        if (latestInvitation?.accepted_at || !invitationIsPending)
           return NextResponse.json(
             { error: "This user has already accepted the invitation." },
-
             { status: 409, headers: responseHeaders },
           )
+
+        const { data: linkedStaff, error: linkedStaffError } = await admin
+          .from("company_staff_members")
+          .select("id")
+          .eq("company_id", access.companyId)
+          .eq("linked_user_id", userId)
+
+        if (linkedStaffError)
+          return NextResponse.json(
+            { error: "Unable to preserve the linked staff record." },
+            { status: 500, headers: responseHeaders },
+          )
+
+        if ((linkedStaff ?? []).length > 1)
+          return NextResponse.json(
+            {
+              error:
+                "This user has multiple linked staff records. Contact support before revoking the invitation.",
+            },
+            { status: 409, headers: responseHeaders },
+          )
+
+        const staffMemberId =
+          linkedStaff?.[0]?.id ??
+          (typeof authUser.user.app_metadata?.workspace_staff_member_id ===
+          "string"
+            ? authUser.user.app_metadata.workspace_staff_member_id
+            : null)
+
+        const { error: disableError } = await admin
+          .from("company_memberships")
+          .update({ status: "disabled" })
+          .eq("company_id", access.companyId)
+          .eq("user_id", userId)
+
+        if (disableError) {
+          console.error("Invited membership disable failed", disableError)
+          return NextResponse.json(
+            { error: "Unable to revoke this user's invitation." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        if (linkedStaff?.length) {
+          const { error: unlinkError } = await admin
+            .from("company_staff_members")
+            .update({ linked_user_id: null, updated_by: access.userId })
+            .eq("company_id", access.companyId)
+            .eq("linked_user_id", userId)
+
+          if (unlinkError) {
+            console.error("Invited staff record unlink failed", unlinkError)
+            return NextResponse.json(
+              {
+                error:
+                  "The invitation was revoked, but the staff record could not be made available for reassignment.",
+              },
+              { status: 500, headers: responseHeaders },
+            )
+          }
+        }
+
+        const { error: metadataError } = await admin.auth.admin.updateUserById(
+          userId,
+          {
+            app_metadata: {
+              ...authUser.user.app_metadata,
+              workspace_invite_pending: true,
+              workspace_invite_revoked: true,
+              ...(staffMemberId
+                ? {
+                    workspace_staff_member_id: staffMemberId,
+                    workspace_user_type: "staff",
+                  }
+                : {}),
+            },
+          },
+        )
+
+        if (metadataError) {
+          console.error("Revoked invitation metadata update failed", metadataError)
+          return NextResponse.json(
+            {
+              error:
+                "The invitation was revoked, but its user details could not be retained.",
+            },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        const { error: invitationDeleteError } = await admin
+          .from("workspace_invitations")
+          .delete()
+          .eq("company_id", access.companyId)
+          .eq("user_id", userId)
+          .is("accepted_at", null)
+
+        if (invitationDeleteError) {
+          console.error(
+            "Revoked invitation token record removal failed",
+            invitationDeleteError,
+          )
+          return NextResponse.json(
+            { error: "The invitation was disabled, but its link could not be revoked." },
+            { status: 500, headers: responseHeaders },
+          )
+        }
+
+        return NextResponse.json({ success: true }, { headers: responseHeaders })
+      }
+
+      const { error: unlinkStaffError } = await admin
+        .from("company_staff_members")
+        .update({ linked_user_id: null, updated_by: access.userId })
+        .eq("company_id", access.companyId)
+        .eq("linked_user_id", userId)
+
+      if (unlinkStaffError) {
+        console.error("Staff record unlink before user deletion failed", unlinkStaffError)
+        return NextResponse.json(
+          {
+            error:
+              "The user's staff record could not be preserved. No user or membership data was deleted.",
+          },
+          { status: 500, headers: responseHeaders },
+        )
       }
 
       if (!otherMemberships?.length) {
@@ -3128,10 +3436,15 @@ export async function POST(request: Request) {
             )
         }
 
+        const duplicateAccountError =
+            inviteError?.message.toLowerCase().includes("already") ?? false
+
         return NextResponse.json(
           {
             error:
-              inviteError?.message ??
+                (duplicateAccountError
+                  ? "An account with this email already exists. If it is listed in Users & Roles, use Resend invite to send a fresh link."
+                  : inviteError?.message) ??
               "Unable to generate the invitation link.",
           },
 
@@ -3147,6 +3460,8 @@ export async function POST(request: Request) {
             ...inviteData.user.app_metadata,
 
             invitation_company_id: access.companyId,
+            workspace_invite_pending: true,
+            workspace_user_type: userTypeSelection.userType,
           },
         })
 

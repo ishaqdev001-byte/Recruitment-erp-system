@@ -132,6 +132,7 @@ async function getAccountsAccess(
 
   const canAdministerAccounts =
     company.primary_admin_user_id === user.id || role.name === "CEO"
+  const isChairman = role.name.trim().toLowerCase() === "chairman"
 
   return {
     admin,
@@ -147,8 +148,8 @@ async function getAccountsAccess(
     isMainBranch: Boolean(isMainBranch),
 
     canManageAccounts,
-
     canAdministerAccounts,
+    isChairman,
   }
 }
 
@@ -265,7 +266,7 @@ export async function GET(request: Request) {
       .eq("is_active", true)
       .order("name")
 
-    if (!access.isMainBranch) {
+    if (!access.isMainBranch && !access.isChairman) {
       accountsQuery.eq("branch_id", access.branchId!)
 
       ledgerQuery.eq("branch_id", access.branchId!)
@@ -367,6 +368,7 @@ export async function GET(request: Request) {
           canCreate: Boolean(canCreate),
           canManageAccounts: access.canManageAccounts,
           canAdministerAccounts: access.canAdministerAccounts,
+          canDeleteExpenses: access.isChairman,
         },
       },
       { headers },
@@ -380,6 +382,70 @@ export async function GET(request: Request) {
           "Company accounts are unavailable. Apply the company accounts migration and try again.",
       },
       { status: 503, headers },
+    )
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const access = await getAccountsAccess("finance.view")
+
+    if ("error" in access)
+      return NextResponse.json({ error: access.error }, {
+        status: access.status,
+        headers,
+      })
+
+    if (!access.isChairman)
+      return NextResponse.json(
+        { error: "Only the Chairman can delete company expenses." },
+        { status: 403, headers },
+      )
+
+    const body = (await request.json().catch(() => null)) as
+      | Record<string, unknown>
+      | null
+    const expenseId = typeof body?.expenseId === "string" ? body.expenseId : ""
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(expenseId))
+      return NextResponse.json(
+        { error: "Select a valid company expense to delete." },
+        { status: 400, headers },
+      )
+
+    const { data, error } = await access.supabase.rpc("delete_company_expense", {
+      requested_company_id: access.companyId,
+      requested_expense_id: expenseId,
+    })
+    if (error) {
+      if (error.code === "42501")
+        return NextResponse.json({ error: error.message }, {
+          status: 403,
+          headers,
+        })
+      if (error.code === "P0002")
+        return NextResponse.json({ error: error.message }, {
+          status: 404,
+          headers,
+        })
+      if (error.code === "23503")
+        return NextResponse.json({ error: error.message }, {
+          status: 409,
+          headers,
+        })
+
+      console.error("Company expense deletion failed", error)
+      return NextResponse.json(
+        { error: "Unable to delete this company expense." },
+        { status: 500, headers },
+      )
+    }
+
+    return NextResponse.json({ success: true, result: data }, { headers })
+  } catch (error) {
+    console.error("Company expense DELETE failed", error)
+    return NextResponse.json(
+      { error: "Unable to delete this company expense." },
+      { status: 500, headers },
     )
   }
 }

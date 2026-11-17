@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Download, Plus, Search } from "lucide-react";
+import { Download, Plus, Search, Trash2 } from "lucide-react";
 import { SearchableMultiSelect, SearchableSelect } from "./SearchableSelect";
 import { matchesSearch } from "@/lib/search";
 import {
@@ -57,7 +57,7 @@ type PayrollAdjustment = {
   employee: StaffOption;
   blockedByUnpaidLeave?: boolean;
 };
-type PayrollPayload = { paychecks?: PaycheckRecord[]; staff?: StaffOption[]; accounts?: AccountOption[]; company?: { name: string; logo_url: string | null }; workCalendar?: CompanyWorkCalendar; permissions?: { canRecord?: boolean }; error?: string };
+type PayrollPayload = { paychecks?: PaycheckRecord[]; staff?: StaffOption[]; accounts?: AccountOption[]; company?: { name: string; logo_url: string | null }; workCalendar?: CompanyWorkCalendar; permissions?: { canRecord?: boolean; canDelete?: boolean }; error?: string };
 type AdjustmentsPayload = { adjustments?: PayrollAdjustment[]; referencePreview?: string; error?: string };
 
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
@@ -77,6 +77,7 @@ export default function Paychecks() {
   });
   const [referencePreview, setReferencePreview] = useState("");
   const [canRecord, setCanRecord] = useState(false);
+  const [canDelete, setCanDelete] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [adjustmentSaving, setAdjustmentSaving] = useState(false);
@@ -123,6 +124,7 @@ export default function Paychecks() {
             closureDates: [],
           });
           setCanRecord(Boolean(payload.permissions?.canRecord));
+          setCanDelete(Boolean(payload.permissions?.canDelete));
           setAdjustments(adjustmentPayload.adjustments ?? []);
           setReferencePreview(adjustmentPayload.referencePreview ?? "");
         }
@@ -197,6 +199,35 @@ export default function Paychecks() {
     }
   };
 
+  const deletePaycheck = async (paycheck: PaycheckRecord) => {
+    if (
+      paycheck.isUnpaidLeave ||
+      !window.confirm(
+        `Delete the paycheck for ${paycheck.employee.name} (${paycheck.payment_reference})? This removes the paycheck, ledger entry, and payslip. Its linked benefits and deductions will become available again for that pay month.`,
+      )
+    )
+      return;
+
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/paychecks", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paycheckId: paycheck.id }),
+      });
+      const result = await response.json() as { error?: string; warning?: string };
+      if (!response.ok) throw new Error(result.error ?? "Unable to delete this paycheck.");
+      setNotice(result.warning ?? `Paycheck ${paycheck.payment_reference} deleted.`);
+      setReloadKey((key) => key + 1);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete this paycheck.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const openAdjustment = (type: "benefit" | "deduction") => {
     setAdjustmentType(type);
     setSelectedStaffIds([]);
@@ -262,10 +293,10 @@ export default function Paychecks() {
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="finance-table-scroll rounded border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-225 text-sm">
-            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Pay period", "Staff member", "Gross pay", "Benefits", "Deductions", "Net pay", "Payment date", "Status", "Payslip"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Pay period", "Staff member", "Gross pay", "Benefits", "Deductions", "Net pay", "Payment date", "Status", "Payslip", ...(canDelete ? ["Actions"] : [])].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={9} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading payroll…</td></tr>}
-              {!loading && !filteredPaychecks.length && <tr><td colSpan={9} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{paychecks.length ? "No payments match this search." : "No monthly payments recorded."}</td></tr>}
+              {loading && <tr><td colSpan={canDelete ? 10 : 9} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading payroll…</td></tr>}
+              {!loading && !filteredPaychecks.length && <tr><td colSpan={canDelete ? 10 : 9} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{paychecks.length ? "No payments match this search." : "No monthly payments recorded."}</td></tr>}
               {!loading && filteredPaychecks.map((paycheck) => <tr key={paycheck.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>{new Date(`${paycheck.pay_period}T00:00:00`).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</td>
                 <td className="whitespace-nowrap px-3 py-3"><span className="block font-600" style={{ color: "var(--foreground)" }}>{paycheck.employee.name}</span><span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{paycheck.employee.staff_id} · {paycheck.employee.position}</span></td>
@@ -278,6 +309,11 @@ export default function Paychecks() {
                   {paycheck.isUnpaidLeave ? `Unpaid leave (${paycheck.unpaidLeaveDays} days)` : "Paid"}
                 </td>
                 <td className="px-3 py-3">{paycheck.payslipUrl ? <a href={paycheck.payslipUrl} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Download size={13} aria-hidden="true" />PDF</a> : <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>—</span>}</td>
+                {canDelete && <td className="whitespace-nowrap px-3 py-3">
+                  {!paycheck.isUnpaidLeave && <button type="button" disabled={saving} onClick={() => void deletePaycheck(paycheck)} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600 disabled:opacity-50" style={{ borderColor: "#c2413a", color: "#c2413a" }} aria-label={`Delete paycheck for ${paycheck.employee.name}`}>
+                    <Trash2 size={13} aria-hidden="true" />Delete
+                  </button>}
+                </td>}
               </tr>)}
             </tbody>
           </table>

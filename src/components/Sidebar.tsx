@@ -205,6 +205,12 @@ export default function Sidebar({
     if (view === "agent-invoices" && role === "Chairman") return false
     if (view === "expense-requests" && role === "Administration Officer")
       return false
+    if (
+      view === "human-resources" &&
+      role !== "Chairman" &&
+      isLinkedStaff !== true
+    )
+      return false
     return (
       canAccessView(view, visiblePermissions) ||
       (view === "expense-requests" && isLinkedStaff === true)

@@ -35,7 +35,7 @@ async function getPayrollAccess(permission: "finance.view" | "finance.create") {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
   const { data: membership, error: membershipError } = await supabase.from("company_memberships")
-    .select("company_id, branch_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
+    .select("company_id, branch_id, role_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 as const };
   const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
     requested_company_id: membership.company_id,
@@ -48,12 +48,20 @@ async function getPayrollAccess(permission: "finance.view" | "finance.create") {
   if (branchError || (!isMainBranch && !membership.branch_id)) return { error: "Unable to verify your company branch.", status: 503 as const };
   const admin = createAdminClient();
   if (!admin) return { error: "Payroll requires SUPABASE_SERVICE_ROLE_KEY in the server environment.", status: 503 as const };
+  const { data: role, error: roleError } = await admin.from("company_roles")
+    .select("name")
+    .eq("id", membership.role_id)
+    .eq("company_id", membership.company_id)
+    .maybeSingle();
+  if (roleError || !role) return { error: "Unable to verify payroll role.", status: 503 as const };
   return {
     admin,
+    supabase,
     companyId: membership.company_id,
     userId: user.id,
     branchId: membership.branch_id,
     isMainBranch: Boolean(isMainBranch),
+    isChairman: role.name.trim().toLowerCase() === "chairman",
   };
 }
 
@@ -203,7 +211,7 @@ export async function GET() {
     const accountsQuery = access.admin.from("company_accounts")
       .select("id, name, account_type, account_number")
       .eq("company_id", access.companyId).eq("status", "active").order("name");
-    if (!access.isMainBranch) {
+    if (!access.isMainBranch && !access.isChairman) {
       paychecksQuery.eq("branch_id", access.branchId!);
       staffQuery.eq("branch_id", access.branchId!);
       accountsQuery.eq("branch_id", access.branchId!);
@@ -279,10 +287,55 @@ export async function GET() {
       || a.employee.name.localeCompare(b.employee.name),
     );
     const publicStaff = [...staffById.values()].sort((a, b) => a.name.localeCompare(b.name));
-    return NextResponse.json({ paychecks: rows, staff: publicStaff, accounts: accounts ?? [], company, workCalendar, permissions: { canRecord: Boolean(allowed) } }, { headers });
+    return NextResponse.json({ paychecks: rows, staff: publicStaff, accounts: accounts ?? [], company, workCalendar, permissions: { canRecord: Boolean(allowed), canDelete: access.isChairman } }, { headers });
   } catch (error) {
     console.error("Paycheck list request failed", error);
     return NextResponse.json({ error: "Payroll data is unavailable. Apply the staff payroll migration and try again." }, { status: 503, headers });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const access = await getPayrollAccess("finance.view");
+    if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
+    if (!access.isChairman) {
+      return NextResponse.json({ error: "Only the Chairman can delete paychecks." }, { status: 403, headers });
+    }
+
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    const paycheckId = typeof body?.paycheckId === "string" ? body.paycheckId : "";
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(paycheckId)) {
+      return NextResponse.json({ error: "Select a valid paycheck to delete." }, { status: 400, headers });
+    }
+
+    const { data, error } = await access.supabase.rpc("delete_company_staff_paycheck", {
+      requested_company_id: access.companyId,
+      requested_paycheck_id: paycheckId,
+    });
+    if (error) {
+      if (error.code === "42501") return NextResponse.json({ error: error.message }, { status: 403, headers });
+      if (error.code === "P0002") return NextResponse.json({ error: error.message }, { status: 404, headers });
+      console.error("Company paycheck deletion failed", error);
+      return NextResponse.json({ error: "Unable to delete this paycheck." }, { status: 500, headers });
+    }
+
+    const deletion = data as { paycheckId?: string; payslipPath?: string | null } | null;
+    if (!deletion?.paycheckId) throw new Error("Paycheck was deleted without a result.");
+
+    let warning: string | undefined;
+    if (deletion.payslipPath) {
+      try {
+        await deleteCompanyDriveFile(deletion.payslipPath);
+      } catch (cleanupError) {
+        console.error("Deleted paycheck payslip cleanup failed", cleanupError);
+        warning = "The paycheck was deleted, but its payslip file could not be removed.";
+      }
+    }
+
+    return NextResponse.json({ success: true, warning }, { headers });
+  } catch (error) {
+    console.error("Company paycheck DELETE failed", error);
+    return NextResponse.json({ error: "Unable to delete this paycheck." }, { status: 500, headers });
   }
 }
 

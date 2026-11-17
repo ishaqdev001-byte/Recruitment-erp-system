@@ -700,6 +700,13 @@ function canAccessSessionView(
     return false
   }
   if (
+    view === "human-resources" &&
+    workspaceSession.role !== "Chairman" &&
+    workspaceSession.isLinkedStaff !== true
+  ) {
+    return false
+  }
+  if (
     view === "expense-requests" &&
     workspaceSession.role === "Administration Officer"
   ) {
@@ -1403,6 +1410,7 @@ export default function App() {
         session &&
         session.role !==
           "Chairman" &&
+        session.isLinkedStaff === true &&
         (hrPersonalDetailsComplete !==
           true ||
           hrProfileUpdateRequired) &&
@@ -2151,10 +2159,7 @@ export default function App() {
       return
     }
 
-    if (
-      session.role ===
-      "Chairman"
-    ) {
+    if (session.role === "Chairman" || session.isLinkedStaff !== true) {
       setHrPersonalDetailsComplete(true)
 
       setHrProfileReminder(null)
@@ -2212,7 +2217,23 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [session?.companyId, session?.role, session?.userId])
+  }, [
+    session?.companyId,
+    session?.isLinkedStaff,
+    session?.role,
+    session?.userId,
+  ])
+
+  useEffect(() => {
+    if (
+      session &&
+      session.role !== "Chairman" &&
+      view === "human-resources" &&
+      !session.isLinkedStaff
+    ) {
+      setView("dashboard")
+    }
+  }, [session?.isLinkedStaff, session?.role, view])
 
   useEffect(() => {
     if (!session) return
@@ -4411,6 +4432,7 @@ export default function App() {
 
   if (
     session.role !== "Chairman" &&
+    session.isLinkedStaff === true &&
     (hrPersonalDetailsComplete !== true || hrProfileUpdateRequired)
   ) {
     if (hrPersonalDetailsComplete === null) {

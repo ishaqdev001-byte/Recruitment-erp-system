@@ -56,6 +56,7 @@ type ProjectForm = {
   ticketCount: string;
 };
 type ProjectPermissions = {
+  canViewFull: boolean;
   canCreate: boolean;
   canEdit: boolean;
   canDelete: boolean;
@@ -72,7 +73,7 @@ const initialForm = (): ProjectForm => ({
   totalDemand: "", contractorServiceCharge: "", candidateServiceCharge: "", interviewMode: "Face to face", status: "active",
   visaCount: "0", ticketCount: "0",
 });
-const defaultPermissions: ProjectPermissions = { canCreate: false, canEdit: false, canDelete: false, canChangeStatus: false, canManageManagers: false, canAssignStaff: false };
+const defaultPermissions: ProjectPermissions = { canViewFull: false, canCreate: false, canEdit: false, canDelete: false, canChangeStatus: false, canManageManagers: false, canAssignStaff: false };
 const statusLabels: Record<ProjectStatus, string> = { active: "Active", inactive: "Inactive", cancelled: "Cancelled" };
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 
@@ -355,10 +356,10 @@ export default function Projects() {
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <div className="app-table-scroll"><table className="w-full min-w-320 text-sm">
-            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Project", "Contractor", "Projects Manager", "Assigned staff", "Country", "Salary range", "Age bracket", "Vacancies", "Submitted", "Shortfall", "Visas", "Candidate fee", "Contractor fee", "Book", "Tickets", "Status", "Actions"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Project", "Contractor", "Projects Manager", "Assigned staff", "Country", "Salary range", "Age bracket", "Vacancies", "Submitted", "Shortfall", "Visas", "Candidate fee", ...(permissions.canViewFull ? ["Contractor fee", "Book"] : []), "Tickets", "Status", "Actions"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={17} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading projects…</td></tr>}
-              {!loading && !error && filteredProjects.length === 0 && <tr><td colSpan={17} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{projects.length ? "No projects match this search." : "No projects registered yet."}</td></tr>}
+              {loading && <tr><td colSpan={permissions.canViewFull ? 17 : 15} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading projects…</td></tr>}
+              {!loading && !error && filteredProjects.length === 0 && <tr><td colSpan={permissions.canViewFull ? 17 : 15} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{projects.length ? "No projects match this search." : "No projects registered yet."}</td></tr>}
               {!loading && filteredProjects.map((project) => <tr key={project.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>{project.project_name}</td>
                 <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.contractor_name}</td>
@@ -394,8 +395,8 @@ export default function Projects() {
                 <td className="px-3 py-3 mono font-700" style={{ color: "#f59e0b" }}>{Math.max(0, project.total_demand - project.submitted_count)}</td>
                 <td className="px-3 py-3 mono" style={{ color: "var(--foreground)" }}>{project.visa_count}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{project.candidate_service_charge.toLocaleString("en-UG")}</td>
-                <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{project.contractor_service_charge.toLocaleString("en-UG")}</td>
-                <td className="whitespace-nowrap px-3 py-3 text-xs font-600" style={{ color: "#17845b" }}>Project: {project.project_name} #{project.id.replace(/-/g, "").slice(-12)}</td>
+                {permissions.canViewFull && <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--foreground)" }}>{project.contractor_service_charge.toLocaleString("en-UG")}</td>}
+                {permissions.canViewFull && <td className="whitespace-nowrap px-3 py-3 text-xs font-600" style={{ color: "#17845b" }}>Project: {project.project_name} #{project.id.replace(/-/g, "").slice(-12)}</td>}
                 <td className="px-3 py-3 mono" style={{ color: "var(--foreground)" }}>{project.ticket_count}</td>
                 <td className="px-3 py-3"><select aria-label={`Status for ${project.project_name}`} value={project.status} disabled={!permissions.canChangeStatus} onChange={(event) => void updateStatus(project, event.target.value as ProjectStatus)} className="border px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-70" style={fieldStyle}><option value="active">Active</option><option value="inactive">Inactive</option><option value="cancelled">Cancelled</option></select></td>
                 <td className="whitespace-nowrap px-3 py-3"><div className="flex items-center gap-1"><button type="button" aria-label={`Edit ${project.project_name}`} title="Edit project" disabled={!permissions.canEdit} onClick={() => openEditProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "var(--muted-foreground)" }}><Pencil size={15} aria-hidden="true" /></button><button type="button" aria-label={`View visa candidates for ${project.project_name}`} title="View visa candidates" onClick={() => openVisaCandidates(project)} className="p-2" style={{ color: "var(--foreground)" }}><Eye size={15} aria-hidden="true" /></button><button type="button" aria-label={`Delete ${project.project_name}`} title="Delete project" disabled={!permissions.canDelete} onClick={() => void deleteProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "#ef4444" }}><Trash2 size={15} aria-hidden="true" /></button></div></td>

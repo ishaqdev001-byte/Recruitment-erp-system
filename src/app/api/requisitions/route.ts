@@ -220,6 +220,18 @@ export async function GET(request: Request) {
           requested_company_id: access.companyId,
           requested_permission: "requisitions.authorize",
         }),
+        access.supabase.rpc("current_user_has_company_permission", {
+          requested_company_id: access.companyId,
+          requested_permission: "expense_requests.edit",
+        }),
+        access.supabase.rpc("current_user_has_company_permission", {
+          requested_company_id: access.companyId,
+          requested_permission: "expense_requests.delete",
+        }),
+        access.supabase.rpc("current_user_has_company_permission", {
+          requested_company_id: access.companyId,
+          requested_permission: "expense_requests.initiate",
+        }),
       ]),
       canCreateRequisitions(access),
     ])
@@ -229,9 +241,15 @@ export async function GET(request: Request) {
         { status: 503, headers: responseHeaders },
       )
     }
-    const [canView, canReview, canVerify, canAuthorize] = permissionResults.map(
-      (result) => Boolean(result.data),
-    )
+    const [
+      canView,
+      canReview,
+      canVerify,
+      canAuthorize,
+      canEditExpenseRequests,
+      canDeleteExpenseRequests,
+      canInitiateExpenseRequestPermission,
+    ] = permissionResults.map((result) => Boolean(result.data))
     if (!canView && !canCreate && !canReview && !canVerify && !canAuthorize) {
       return NextResponse.json(
         { error: "You do not have permission to view requisitions." },
@@ -274,42 +292,115 @@ export async function GET(request: Request) {
       )
     }
 
-    let expenseRequestsToInitiate: Record<string, unknown>[] = []
-    if (canCreate) {
+    let expenseRequests: Record<string, unknown>[] = []
+    if (canView) {
       let expenseRequestQuery = access.supabase
         .from("expense_requests")
         .select(`
-          id, request_number, expense_name, requested_by_name, purpose,
-          amount, due_date, expense_category_name, line_items, created_at
+          id, serial_number, request_number, expense_name, requested_by_name,
+          purpose, amount, due_date, expense_category_id, expense_category_name,
+          request_comment, line_items, created_at, created_by, status,
+          line_manager_reviewed_at, line_manager_comment, rejected_stage,
+          requisition_number
         `)
         .eq("company_id", access.companyId)
-        .eq("status", "pending_administration_officer_initiation")
+        .is("deleted_at", null)
+        .is("requisition_id", null)
+        .in("status", [
+          "pending_line_manager_review",
+          "pending_administration_officer_initiation",
+        ])
         .order("created_at", { ascending: true })
         .limit(200)
+      if (myOnly)
+        expenseRequestQuery = expenseRequestQuery.eq(
+          "created_by",
+          access.userId,
+        )
       if (!access.isMainBranch && access.branchId)
-        expenseRequestQuery = expenseRequestQuery.eq("branch_id", access.branchId)
+        expenseRequestQuery = expenseRequestQuery.eq(
+          "branch_id",
+          access.branchId,
+        )
       const { data: pendingRequests, error: pendingRequestError } =
         await expenseRequestQuery
       if (pendingRequestError) {
-        console.error("Expense-request initiation queue failed", pendingRequestError)
+        console.error(
+          "Requisition expense-request list failed",
+          pendingRequestError,
+        )
         return NextResponse.json(
-          { error: "Unable to load expense requests awaiting requisition initiation." },
+          {
+            error:
+              "Unable to load expense requests in the requisition workflow.",
+          },
           { status: 503, headers: responseHeaders },
         )
       }
-      expenseRequestsToInitiate = pendingRequests ?? []
+      expenseRequests = pendingRequests ?? []
+    }
+
+    const sourceRequestIds = (requisitions ?? [])
+      .map((requisition) => requisition.source_expense_request_id)
+      .filter((id): id is string => Boolean(id))
+    let requisitionsWithRequestMetadata = requisitions ?? []
+    if (sourceRequestIds.length > 0) {
+      const { data: sourceRequests, error: sourceRequestError } =
+        await access.supabase
+          .from("expense_requests")
+          .select("id, serial_number, line_manager_reviewed_at, rejected_stage")
+          .in("id", sourceRequestIds)
+      if (sourceRequestError) {
+        console.error(
+          "Linked expense-request metadata query failed",
+          sourceRequestError,
+        )
+        return NextResponse.json(
+          { error: "Unable to load linked expense-request details." },
+          { status: 503, headers: responseHeaders },
+        )
+      }
+      const sourceById = new Map(
+        (sourceRequests ?? []).map((request) => [request.id, request]),
+      )
+      requisitionsWithRequestMetadata = (requisitions ?? []).map(
+        (requisition) => ({
+          ...requisition,
+          source_expense_request_serial_number:
+            sourceById.get(requisition.source_expense_request_id ?? "")
+              ?.serial_number ?? null,
+          source_expense_request_line_manager_reviewed_at:
+            sourceById.get(requisition.source_expense_request_id ?? "")
+              ?.line_manager_reviewed_at ?? null,
+          source_expense_request_rejected_stage:
+            sourceById.get(requisition.source_expense_request_id ?? "")
+              ?.rejected_stage ?? null,
+        }),
+      )
     }
 
     return NextResponse.json(
       {
-        requisitions: Array.isArray(requisitions) ? requisitions : [],
-        expenseRequestsToInitiate,
+        requisitions: requisitionsWithRequestMetadata,
+        expenseRequests,
+        expenseRequestsToInitiate:
+          canCreate && canInitiateExpenseRequestPermission
+            ? expenseRequests.filter(
+                (request) =>
+                  request.status ===
+                  "pending_administration_officer_initiation",
+              )
+            : [],
         currentUserId: access.userId,
         permissions: {
           canCreate,
           canReview,
           canVerify,
           canAuthorize,
+          canEditExpenseRequests,
+          canDeleteExpenseRequests,
+          canInitiateExpenseRequests:
+            canCreate && canInitiateExpenseRequestPermission,
         },
       },
       { headers: responseHeaders },

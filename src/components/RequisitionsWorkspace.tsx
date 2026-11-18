@@ -57,11 +57,13 @@ import {
   CircleDollarSign,
   ClipboardList,
   Edit2,
+  Eye,
   FileText,
   Loader2,
   Plus,
   Search,
   ShieldCheck,
+  Trash2,
   X,
   XCircle,
 } from "lucide-react"
@@ -105,6 +107,9 @@ type Requisition = {
   source_expense_request_number?: string | null
   requested_by_user_id?: string | null
   requested_by_name?: string
+  source_expense_request_serial_number?: number | null
+  source_expense_request_line_manager_reviewed_at?: string | null
+  source_expense_request_rejected_stage?: string | null
   initiated_by_user_id?: string | null
   initiated_at?: string | null
   created_by: string
@@ -114,15 +119,33 @@ type Requisition = {
 
 type ExpenseRequestToInitiate = {
   id: string
+  serial_number: number
   request_number: string
   expense_name: string
   requested_by_name: string
   purpose: string
   amount: number
   due_date: string
+  expense_category_id: string | null
   expense_category_name: string
+  request_comment: string
   line_items: { description: string; quantity: number; rate: number }[]
   created_at: string
+  created_by: string
+  status: string
+  line_manager_reviewed_at: string | null
+  line_manager_comment: string | null
+  rejected_stage: string | null
+  requisition_number: string | null
+}
+
+type ExpenseRequestEditDraft = {
+  expenseName: string
+  purpose: string
+  dueDate: string
+  expenseCategoryId: string
+  comment: string
+  items: { description: string; quantity: string }[]
 }
 
 type RequisitionItem = {
@@ -171,6 +194,9 @@ type Permissions = {
   canReview: boolean
   canVerify: boolean
   canAuthorize: boolean
+  canEditExpenseRequests: boolean
+  canDeleteExpenseRequests: boolean
+  canInitiateExpenseRequests: boolean
 }
 
 type ReqNotification = {
@@ -185,10 +211,7 @@ type ReqNotification = {
 
 const fmtAmount = (n: number, currency = "") =>
   `${
-    currency
-      ? currency +
-        " "
-      : ""
+    currency ? currency + " " : ""
   }${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 const fmtDate = (iso: string) =>
@@ -289,51 +312,26 @@ function LookupSelect({
   }, [])
 
   const search = async (q: string) => {
-    if (
-      q.trim().length <
-      2
-    )
-      return
+    if (q.trim().length < 2) return
     const requestId = ++searchRequestId.current
     setLoading(true)
     try {
       const sep = apiPath.includes("?") ? "&" : "?"
       const url = q
-        ? `${apiPath}${sep}${
-            searchParam ??
-            "q"
-          }=${encodeURIComponent(q)}`
+        ? `${apiPath}${sep}${searchParam ?? "q"}=${encodeURIComponent(q)}`
         : apiPath
       const res = await fetch(url, { cache: "no-store" })
       const payload = (await res.json()) as Record<string, LookupItem[]>
       const key = Object.keys(payload)[0]
-      if (
-        requestId ===
-        searchRequestId.current
-      ) {
+      if (requestId === searchRequestId.current) {
         setResults(
-          (
-            payload[key] ??
-            []
-          ).filter(
-            (item) =>
-              item.is_active !==
-              false,
-          ),
+          (payload[key] ?? []).filter((item) => item.is_active !== false),
         )
       }
     } catch {
-      if (
-        requestId ===
-        searchRequestId.current
-      )
-        setResults([])
+      if (requestId === searchRequestId.current) setResults([])
     } finally {
-      if (
-        requestId ===
-        searchRequestId.current
-      )
-        setLoading(false)
+      if (requestId === searchRequestId.current) setLoading(false)
     }
   }
 
@@ -341,10 +339,7 @@ function LookupSelect({
     isEditingQuery.current = true
     setQuery(v)
     if (value) onClear()
-    if (
-      v.trim().length <
-      2
-    ) {
+    if (v.trim().length < 2) {
       if (timer.current) clearTimeout(timer.current)
       searchRequestId.current += 1
       setResults([])
@@ -360,12 +355,7 @@ function LookupSelect({
   const select = (item: LookupItem) => {
     isEditingQuery.current = false
     onChange(item)
-    setQuery(
-      String(
-        item[labelKey] ??
-          "",
-      ),
-    )
+    setQuery(String(item[labelKey] ?? ""))
     setOpen(false)
     setResults([])
   }
@@ -385,11 +375,7 @@ function LookupSelect({
           value={query}
           onChange={(e) => handleInput(e.target.value)}
           onFocus={() => {
-            if (
-              query.trim().length <
-              2
-            )
-              return
+            if (query.trim().length < 2) return
             setOpen(true)
             if (!results.length) void search(query.trim())
           }}
@@ -433,16 +419,14 @@ function LookupSelect({
               Searching…
             </div>
           )}
-          {!loading &&
-            results.length ===
-              0 && (
-              <div
-                className="px-3 py-2.5 text-xs"
-                style={{ color: "var(--muted-foreground)" }}
-              >
-                No results found.
-              </div>
-            )}
+          {!loading && results.length === 0 && (
+            <div
+              className="px-3 py-2.5 text-xs"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              No results found.
+            </div>
+          )}
           {!loading &&
             results.map((item) => (
               <button
@@ -453,20 +437,15 @@ function LookupSelect({
                 className="w-full px-3 py-2.5 text-left text-sm transition-colors"
                 style={{ color: "var(--foreground)" }}
               >
-                {String(
-                  item[labelKey] ??
-                    "",
+                {String(item[labelKey] ?? "")}
+                {item.code && item.code !== item.name && (
+                  <span
+                    className="ml-2 text-xs mono"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    {item.code}
+                  </span>
                 )}
-                {item.code &&
-                  item.code !==
-                    item.name && (
-                    <span
-                      className="ml-2 text-xs mono"
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      {item.code}
-                    </span>
-                  )}
               </button>
             ))}
         </div>
@@ -520,22 +499,18 @@ function ApprovalTimeline({ req }: { req: Requisition }) {
                 style={{
                   borderColor: color,
                   background:
-                    stage.status !==
-                    "pending"
-                      ? color +
-                        "20"
+                    stage.status !== "pending"
+                      ? color + "20"
                       : "var(--secondary)",
                 }}
               >
-                {stage.status ===
-                "approved" ? (
+                {stage.status === "approved" ? (
                   <CheckCircle2
                     size={14}
                     style={{ color }}
                     aria-hidden="true"
                   />
-                ) : stage.status ===
-                  "rejected" ? (
+                ) : stage.status === "rejected" ? (
                   <XCircle size={14} style={{ color }} aria-hidden="true" />
                 ) : (
                   <div
@@ -562,8 +537,7 @@ function ApprovalTimeline({ req }: { req: Requisition }) {
                 className="text-xs mt-0.5"
                 style={{
                   color:
-                    stage.status ===
-                    "pending"
+                    stage.status === "pending"
                       ? "#f59e0b"
                       : "var(--muted-foreground)",
                 }}
@@ -596,17 +570,30 @@ export default function RequisitionsWorkspace() {
     year: "numeric",
   }).format(new Date())
   const [requisitions, setRequisitions] = useState<Requisition[]>([])
-  const [expenseRequestsToInitiate, setExpenseRequestsToInitiate] = useState<
-    ExpenseRequestToInitiate[]
-  >([])
+  const [expenseRequestsToInitiate, setExpenseRequestsToInitiate] =
+    useState<ExpenseRequestToInitiate[]>([])
+  const [expenseRequests, setExpenseRequests] =
+    useState<ExpenseRequestToInitiate[]>([])
+  const [expenseRequestDetail, setExpenseRequestDetail] =
+    useState<ExpenseRequestToInitiate | null>(null)
+  const [editingExpenseRequest, setEditingExpenseRequest] =
+    useState<ExpenseRequestToInitiate | null>(null)
+  const [expenseRequestEditDraft, setExpenseRequestEditDraft] =
+    useState<ExpenseRequestEditDraft | null>(null)
+  const [savingExpenseRequest, setSavingExpenseRequest] = useState(false)
+  const [expenseRequestActionError, setExpenseRequestActionError] = useState("")
   const [initiatingRequestId, setInitiatingRequestId] = useState("")
-  const [initiationRates, setInitiationRates] = useState<Record<string, string[]>>({})
+  const [initiationRates, setInitiationRates] =
+    useState<Record<string, string[]>>({})
   const [initiationMessage, setInitiationMessage] = useState("")
   const [permissions, setPermissions] = useState<Permissions>({
     canCreate: false,
     canReview: false,
     canVerify: false,
     canAuthorize: false,
+    canEditExpenseRequests: false,
+    canDeleteExpenseRequests: false,
+    canInitiateExpenseRequests: false,
   })
   const [currentUserId, setCurrentUserId] = useState("")
   const [loading, setLoading] = useState(true)
@@ -689,29 +676,22 @@ export default function RequisitionsWorkspace() {
       })
       const payload = (await res.json()) as {
         requisitions?: Requisition[]
+        expenseRequests?: ExpenseRequestToInitiate[]
         expenseRequestsToInitiate?: ExpenseRequestToInitiate[]
         permissions?: Permissions
         currentUserId?: string
         error?: string
       }
       if (!res.ok)
-        throw new Error(
-          payload.error ??
-            "Unable to load requisitions.",
-        )
-      setRequisitions(
-        payload.requisitions ??
-          [],
-      )
+        throw new Error(payload.error ?? "Unable to load requisitions.")
+      setRequisitions(payload.requisitions ?? [])
       setExpenseRequestsToInitiate(payload.expenseRequestsToInitiate ?? [])
+      setExpenseRequests(payload.expenseRequests ?? [])
       if (payload.permissions) setPermissions(payload.permissions)
       if (payload.currentUserId) setCurrentUserId(payload.currentUserId)
     } catch (err) {
       setListError(
-        err instanceof
-          Error
-          ? err.message
-          : "Unable to load requisitions.",
+        err instanceof Error ? err.message : "Unable to load requisitions.",
       )
     } finally {
       setLoading(false)
@@ -744,7 +724,9 @@ export default function RequisitionsWorkspace() {
       unitRates.length === 0 ||
       unitRates.some((rate) => !Number.isFinite(rate) || rate <= 0)
     ) {
-      setListError("Enter a positive unit rate for every item before initiating the requisition.")
+      setListError(
+        "Enter a positive unit rate for every item before initiating the requisition.",
+      )
       return
     }
 
@@ -789,6 +771,104 @@ export default function RequisitionsWorkspace() {
     }
   }
 
+  const openExpenseRequestEdit = (request: ExpenseRequestToInitiate) => {
+    setEditingExpenseRequest(request)
+    setExpenseRequestActionError("")
+    setExpenseRequestEditDraft({
+      expenseName: request.expense_name,
+      purpose: request.purpose,
+      dueDate: request.due_date,
+      expenseCategoryId: request.expense_category_id ?? "",
+      comment: request.request_comment,
+      items: request.line_items.map((item) => ({
+        description: item.description,
+        quantity: String(item.quantity),
+      })),
+    })
+  }
+
+  const saveExpenseRequest = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!editingExpenseRequest || !expenseRequestEditDraft) return
+
+    setSavingExpenseRequest(true)
+    setExpenseRequestActionError("")
+    try {
+      const response = await fetch("/api/finance/expense-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "edit",
+          requestId: editingExpenseRequest.id,
+          expenseName: expenseRequestEditDraft.expenseName,
+          purpose: expenseRequestEditDraft.purpose,
+          dueDate: expenseRequestEditDraft.dueDate,
+          expenseCategoryId: expenseRequestEditDraft.expenseCategoryId,
+          comment: expenseRequestEditDraft.comment,
+          items: expenseRequestEditDraft.items,
+        }),
+      })
+      const payload = (await response.json()) as { error?: string }
+      if (!response.ok)
+        throw new Error(
+          payload.error ?? "Unable to update the expense request.",
+        )
+
+      setEditingExpenseRequest(null)
+      setExpenseRequestEditDraft(null)
+      setInitiationMessage(
+        `${editingExpenseRequest.request_number} was updated and returned for line-manager approval.`,
+      )
+      await loadList()
+    } catch (error) {
+      setExpenseRequestActionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to update the expense request.",
+      )
+    } finally {
+      setSavingExpenseRequest(false)
+    }
+  }
+
+  const deleteExpenseRequest = async (request: ExpenseRequestToInitiate) => {
+    if (
+      !window.confirm(
+        `Delete expense request ${request.request_number}? It can only be deleted before requisition initiation.`,
+      )
+    )
+      return
+
+    setExpenseRequestActionError("")
+    try {
+      const response = await fetch("/api/finance/expense-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", requestId: request.id }),
+      })
+      const payload = (await response.json()) as { error?: string }
+      if (!response.ok)
+        throw new Error(
+          payload.error ?? "Unable to delete the expense request.",
+        )
+
+      setInitiationMessage(`${request.request_number} was deleted.`)
+      await loadList()
+    } catch (error) {
+      setExpenseRequestActionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to delete the expense request.",
+      )
+    }
+  }
+
+  const openExpenseRequestInitiation = (requestId: string) => {
+    document
+      .getElementById(`expense-request-initiation-${requestId}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" })
+  }
+
   useEffect(() => {
     void loadList()
   }, [statusFilter, myOnly])
@@ -803,19 +883,12 @@ export default function RequisitionsWorkspace() {
         error?: string
       }
       if (!response.ok)
-        throw new Error(
-          result.error ??
-            "Unable to load expense categories.",
-        )
-      setExpenseCategories(
-        result.categories ??
-          [],
-      )
+        throw new Error(result.error ?? "Unable to load expense categories.")
+      setExpenseCategories(result.categories ?? [])
       setCategoryLoadError("")
     } catch (error) {
       setCategoryLoadError(
-        error instanceof
-          Error
+        error instanceof Error
           ? error.message
           : "Unable to load expense categories.",
       )
@@ -838,19 +911,12 @@ export default function RequisitionsWorkspace() {
         error?: string
       }
       if (!response.ok)
-        throw new Error(
-          result.error ??
-            "Unable to load company items.",
-        )
-      setCatalogItems(
-        result.items ??
-          [],
-      )
+        throw new Error(result.error ?? "Unable to load company items.")
+      setCatalogItems(result.items ?? [])
       setCatalogLoadError("")
     } catch (error) {
       setCatalogLoadError(
-        error instanceof
-          Error
+        error instanceof Error
           ? error.message
           : "Unable to load company items.",
       )
@@ -872,17 +938,10 @@ export default function RequisitionsWorkspace() {
       error?: string
     }
     if (!response.ok || !result.item)
-      throw new Error(
-        result.error ??
-          "Unable to add this company item.",
-      )
+      throw new Error(result.error ?? "Unable to add this company item.")
     const item = result.item
     setCatalogItems((current) =>
-      current.some(
-        (existing) =>
-          existing.id ===
-          item.id,
-      )
+      current.some((existing) => existing.id === item.id)
         ? current
         : [...current, item].sort((a, b) => a.name.localeCompare(b.name)),
     )
@@ -898,14 +957,8 @@ export default function RequisitionsWorkspace() {
         unreadCount?: number
       }
       if (res.ok) {
-        setNotifications(
-          payload.notifications ??
-            [],
-        )
-        setUnreadCount(
-          payload.unreadCount ??
-            0,
-        )
+        setNotifications(payload.notifications ?? [])
+        setUnreadCount(payload.unreadCount ?? 0)
       }
     } catch {}
   }
@@ -957,16 +1010,9 @@ export default function RequisitionsWorkspace() {
       ])
       if (detailRes.ok && detailPayload.requisition) {
         setDetailReq(detailPayload.requisition)
-        setDetailItems(
-          detailPayload.items ??
-            [],
-        )
+        setDetailItems(detailPayload.items ?? [])
       }
-      if (paymentsRes.ok)
-        setDetailPayments(
-          paymentsPayload.payments ??
-            [],
-        )
+      if (paymentsRes.ok) setDetailPayments(paymentsPayload.payments ?? [])
     } catch {}
     setDetailLoading(false)
   }
@@ -997,9 +1043,7 @@ export default function RequisitionsWorkspace() {
     resetForm()
     setFormError(
       categoryLoadError ||
-        (!categoriesLoading &&
-        expenseCategories.length ===
-          0
+        (!categoriesLoading && expenseCategories.length === 0
           ? "No active expense categories are available. Ask the Chairman to add one in Settings."
           : ""),
     )
@@ -1009,10 +1053,7 @@ export default function RequisitionsWorkspace() {
   const openEditForm = async (req: Requisition) => {
     resetForm()
     setFormTitle(req.title)
-    setFormExpenseCategoryId(
-      req.expense_category_id ??
-        "",
-    )
+    setFormExpenseCategoryId(req.expense_category_id ?? "")
     setFormDueDate(req.due_date)
     setFormNotes(req.notes)
     setFormDeptName(req.department_name)
@@ -1029,25 +1070,14 @@ export default function RequisitionsWorkspace() {
         items?: RequisitionItem[]
       }
       if (res.ok && payload.requisition) {
-        setFormDeptId(
-          payload.requisition.department_id ??
-            "",
-        )
-        setFormCurrencyId(
-          payload.requisition.currency_id ??
-            "",
-        )
-        setFormProviderId(
-          payload.requisition.service_provider_id ??
-            "",
-        )
+        setFormDeptId(payload.requisition.department_id ?? "")
+        setFormCurrencyId(payload.requisition.currency_id ?? "")
+        setFormProviderId(payload.requisition.service_provider_id ?? "")
         if (payload.items) {
           setFormItems(
             payload.items.map((item) => ({
               _key: item.id,
-              catalogItemId:
-                item.catalog_item_id ??
-                null,
+              catalogItemId: item.catalog_item_id ?? null,
               description: item.description,
               quantity: String(item.quantity),
               rate: String(item.rate),
@@ -1060,20 +1090,13 @@ export default function RequisitionsWorkspace() {
 
   const formTotals = formItems.reduce(
     (acc, item) =>
-      acc +
-      (parseFloat(item.quantity) ||
-        0) *
-        (parseFloat(item.rate) ||
-          0),
+      acc + (parseFloat(item.quantity) || 0) * (parseFloat(item.rate) || 0),
     0,
   )
 
   const submitForm = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (
-      formItems.length ===
-      0
-    ) {
+    if (formItems.length === 0) {
       setFormError("Add at least one line item before submitting.")
       return
     }
@@ -1081,20 +1104,12 @@ export default function RequisitionsWorkspace() {
     setFormError("")
     try {
       const payload = {
-        id:
-          editingId ??
-          undefined,
+        id: editingId ?? undefined,
         title: formTitle.trim(),
         expenseCategoryId: formExpenseCategoryId,
-        departmentId:
-          formDeptId ||
-          null,
-        currencyId:
-          formCurrencyId ||
-          null,
-        serviceProviderId:
-          formProviderId ||
-          null,
+        departmentId: formDeptId || null,
+        currencyId: formCurrencyId || null,
+        serviceProviderId: formProviderId || null,
         dueDate: formDueDate,
         notes: formNotes.trim(),
         items: formItems.map((item) => ({
@@ -1113,20 +1128,14 @@ export default function RequisitionsWorkspace() {
         error?: string
       }
       if (!res.ok)
-        throw new Error(
-          result.error ??
-            "Unable to save requisition.",
-        )
+        throw new Error(result.error ?? "Unable to save requisition.")
       setShowForm(false)
       resetForm()
       await loadList()
       await loadNotifications()
     } catch (err) {
       setFormError(
-        err instanceof
-          Error
-          ? err.message
-          : "Unable to save requisition.",
+        err instanceof Error ? err.message : "Unable to save requisition.",
       )
     } finally {
       setFormSaving(false)
@@ -1146,9 +1155,7 @@ export default function RequisitionsWorkspace() {
         setVerifierItems(
           payload.items.map((item) => ({
             _key: item.id,
-            catalogItemId:
-              item.catalog_item_id ??
-              null,
+            catalogItemId: item.catalog_item_id ?? null,
             description: item.description,
             quantity: String(item.quantity),
             rate: String(item.rate),
@@ -1161,10 +1168,7 @@ export default function RequisitionsWorkspace() {
   const submitVerifierEdit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!verifierEditTarget) return
-    if (
-      verifierItems.length ===
-      0
-    ) {
+    if (verifierItems.length === 0) {
       setVerifierError("At least one line item is required.")
       return
     }
@@ -1188,24 +1192,14 @@ export default function RequisitionsWorkspace() {
         totalAmount?: number
         error?: string
       }
-      if (!res.ok)
-        throw new Error(
-          result.error ??
-            "Unable to save changes.",
-        )
+      if (!res.ok) throw new Error(result.error ?? "Unable to save changes.")
       setVerifierEditTarget(null)
       await loadList()
-      if (
-        detailReq?.id ===
-        verifierEditTarget.id
-      )
+      if (detailReq?.id === verifierEditTarget.id)
         await openDetail(verifierEditTarget)
     } catch (err) {
       setVerifierError(
-        err instanceof
-          Error
-          ? err.message
-          : "Unable to save changes.",
+        err instanceof Error ? err.message : "Unable to save changes.",
       )
     } finally {
       setVerifierSaving(false)
@@ -1213,14 +1207,11 @@ export default function RequisitionsWorkspace() {
   }
   const openReview = (req: Requisition) => {
     const stage =
-      req.status ===
-      "pending"
+      req.status === "pending"
         ? "general_manager"
-        : req.status ===
-            "gm_review"
+        : req.status === "gm_review"
           ? "finance"
-          : req.status ===
-              "finance_review"
+          : req.status === "finance_review"
             ? "director"
             : null
     if (!stage) return
@@ -1247,25 +1238,14 @@ export default function RequisitionsWorkspace() {
         }),
       })
       const result = (await res.json()) as { ok?: boolean; error?: string }
-      if (!res.ok)
-        throw new Error(
-          result.error ??
-            "Unable to submit review.",
-        )
+      if (!res.ok) throw new Error(result.error ?? "Unable to submit review.")
       setReviewTarget(null)
       await loadList()
       await loadNotifications()
-      if (
-        detailReq?.id ===
-        reviewTarget.req.id
-      )
-        await openDetail(detailReq)
+      if (detailReq?.id === reviewTarget.req.id) await openDetail(detailReq)
     } catch (err) {
       setReviewError(
-        err instanceof
-          Error
-          ? err.message
-          : "Unable to submit review.",
+        err instanceof Error ? err.message : "Unable to submit review.",
       )
     } finally {
       setReviewSaving(false)
@@ -1290,9 +1270,7 @@ export default function RequisitionsWorkspace() {
         error?: string
       }
       if (res.ok) {
-        const accounts =
-          payload.accounts ??
-          []
+        const accounts = payload.accounts ?? []
         setPaymentAccounts(accounts)
         const def = accounts.find((a) => a.is_default)
         if (def) setPaymentAccountId(def.id)
@@ -1308,11 +1286,7 @@ export default function RequisitionsWorkspace() {
       setPaymentError("Select an account to deduct from.")
       return
     }
-    if (
-      !Number.isFinite(amount) ||
-      amount <=
-        0
-    ) {
+    if (!Number.isFinite(amount) || amount <= 0) {
       setPaymentError("Enter a valid amount greater than zero.")
       return
     }
@@ -1339,40 +1313,21 @@ export default function RequisitionsWorkspace() {
         paymentStatus?: string
         error?: string
       }
-      if (!res.ok)
-        throw new Error(
-          result.error ??
-            "Unable to record payment.",
-        )
+      if (!res.ok) throw new Error(result.error ?? "Unable to record payment.")
       setPaymentResult({
-        amountPaid:
-          result.amountPaid ??
-          0,
-        totalAmount:
-          result.totalAmount ??
-          0,
-        balance:
-          result.balance ??
-          0,
-        paymentStatus:
-          result.paymentStatus ??
-          "partial",
+        amountPaid: result.amountPaid ?? 0,
+        totalAmount: result.totalAmount ?? 0,
+        balance: result.balance ?? 0,
+        paymentStatus: result.paymentStatus ?? "partial",
       })
       setPaymentAmount("")
       setPaymentReference("")
       setPaymentNotes("")
       await loadList()
-      if (
-        detailReq?.id ===
-        paymentTarget.id
-      )
-        await openDetail(paymentTarget)
+      if (detailReq?.id === paymentTarget.id) await openDetail(paymentTarget)
     } catch (err) {
       setPaymentError(
-        err instanceof
-          Error
-          ? err.message
-          : "Unable to record payment.",
+        err instanceof Error ? err.message : "Unable to record payment.",
       )
     } finally {
       setPaymentSaving(false)
@@ -1380,39 +1335,23 @@ export default function RequisitionsWorkspace() {
   }
   const getReviewAction = (req: Requisition): string | null => {
     if (req.source_expense_request_id) return null
-    if (
-      req.status ===
-        "pending" &&
-      permissions.canReview
-    )
-      return "GM Review"
-    if (
-      req.status ===
-        "gm_review" &&
-      permissions.canVerify
-    )
+    if (req.status === "pending" && permissions.canReview) return "GM Review"
+    if (req.status === "gm_review" && permissions.canVerify)
       return "Finance Verify"
-    if (
-      req.status ===
-        "finance_review" &&
-      permissions.canAuthorize
-    )
+    if (req.status === "finance_review" && permissions.canAuthorize)
       return "Authorise"
     return null
   }
 
   const canVerifierEdit = (req: Requisition) =>
     !req.source_expense_request_id &&
-    req.status ===
-      "finance_review" &&
+    req.status === "finance_review" &&
     permissions.canVerify
   const canPay = (req: Requisition) =>
     !req.source_expense_request_id &&
-    req.status ===
-      "approved" &&
+    req.status === "approved" &&
     permissions.canVerify &&
-    req.payment_status !==
-      "paid"
+    req.payment_status !== "paid"
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {}
@@ -1613,6 +1552,175 @@ export default function RequisitionsWorkspace() {
         </div>
       )}
 
+      {expenseRequestActionError && (
+        <div
+          role="alert"
+          className="mx-6 mt-4 shrink-0 rounded border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400"
+        >
+          {expenseRequestActionError}
+        </div>
+      )}
+
+      {expenseRequests.length > 0 && (
+        <section
+          aria-labelledby="expense-requests-table-title"
+          className="mx-6 mt-4 shrink-0 overflow-x-auto rounded-lg border"
+          style={{ borderColor: "var(--border)", background: "var(--card)" }}
+        >
+          <h2
+            id="expense-requests-table-title"
+            className="px-4 py-3 text-sm font-700"
+            style={{ color: "var(--foreground)" }}
+          >
+            Expense Requests in Requisitions
+          </h2>
+          <table className="w-full min-w-[980px] text-sm">
+            <thead style={{ background: "var(--secondary)" }}>
+              <tr className="border-y" style={{ borderColor: "var(--border)" }}>
+                {[
+                  "S/N",
+                  "Requested by",
+                  "Line manager approval",
+                  "EXP NO",
+                  "RQN",
+                  "Actions",
+                ].map((heading) => (
+                  <th
+                    key={heading}
+                    className="whitespace-nowrap px-4 py-3 text-left text-xs font-700 uppercase tracking-wide"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    {heading}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {expenseRequests.map((request) => {
+                const canInitiate =
+                  permissions.canInitiateExpenseRequests &&
+                  request.status === "pending_administration_officer_initiation"
+                return (
+                  <tr
+                    key={request.id}
+                    className="border-b last:border-b-0"
+                    style={{ borderColor: "var(--border)" }}
+                  >
+                    <td
+                      className="whitespace-nowrap px-4 py-3 mono text-xs font-700"
+                      style={{ color: "var(--primary)" }}
+                    >
+                      {String(request.serial_number).padStart(3, "0")}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className="block text-xs font-600"
+                        style={{ color: "var(--foreground)" }}
+                      >
+                        {request.requested_by_name}
+                      </span>
+                      <span
+                        className="mt-1 block max-w-64 truncate text-[10px]"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {request.expense_name}
+                      </span>
+                    </td>
+                    <td
+                      className="px-4 py-3 text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {request.rejected_stage === "line_manager_review"
+                        ? "Returned for changes"
+                        : request.line_manager_reviewed_at
+                          ? `Approved ${fmtDate(request.line_manager_reviewed_at)}`
+                          : "Pending approval"}
+                    </td>
+                    <td
+                      className="whitespace-nowrap px-4 py-3 mono text-xs"
+                      style={{ color: "var(--foreground)" }}
+                    >
+                      {request.request_number}
+                    </td>
+                    <td
+                      className="whitespace-nowrap px-4 py-3 mono text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {request.requisition_number || "—"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <div className="flex items-center gap-1.5">
+                        {permissions.canEditExpenseRequests && (
+                          <button
+                            type="button"
+                            disabled={
+                              request.status !==
+                                "pending_line_manager_review" &&
+                              request.status !==
+                                "pending_administration_officer_initiation"
+                            }
+                            onClick={() => openExpenseRequestEdit(request)}
+                            className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-600 disabled:opacity-40"
+                            style={{
+                              borderColor: "var(--border)",
+                              color: "var(--foreground)",
+                            }}
+                          >
+                            <Edit2 size={11} aria-hidden="true" /> Edit
+                          </button>
+                        )}
+                        {permissions.canDeleteExpenseRequests && (
+                          <button
+                            type="button"
+                            disabled={
+                              request.status !==
+                                "pending_line_manager_review" &&
+                              request.status !==
+                                "pending_administration_officer_initiation"
+                            }
+                            onClick={() => void deleteExpenseRequest(request)}
+                            className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-600 text-red-400 disabled:opacity-40"
+                            style={{ borderColor: "var(--border)" }}
+                          >
+                            <Trash2 size={11} aria-hidden="true" /> Delete
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setExpenseRequestDetail(request)}
+                          className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-600"
+                          style={{
+                            borderColor: "var(--border)",
+                            color: "var(--foreground)",
+                          }}
+                        >
+                          <Eye size={12} aria-hidden="true" /> View
+                        </button>
+                        {canInitiate && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openExpenseRequestInitiation(request.id)
+                            }
+                            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-600"
+                            style={{
+                              background: "var(--primary)",
+                              color: "var(--primary-foreground)",
+                            }}
+                          >
+                            Initiate
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       {expenseRequestsToInitiate.length > 0 && (
         <section
           aria-labelledby="expense-request-initiation-title"
@@ -1627,84 +1735,133 @@ export default function RequisitionsWorkspace() {
             >
               Approved expense requests to initiate
             </h2>
-            <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
-              Enter a unit rate for each item; the total is calculated automatically. Initiation creates a linked requisition, while further approvals and payment remain on the Expense Request workflow.
+            <p
+              className="mt-1 text-xs"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Enter a unit rate for each item; the total is calculated
+              automatically. Initiation creates a linked requisition, while
+              further approvals and payment remain on the Expense Request
+              workflow.
             </p>
           </div>
           <div className="space-y-3">
             {expenseRequestsToInitiate.map((request) => {
               const unitRates = request.line_items.map((item, index) => {
                 const enteredRate = initiationRates[request.id]?.[index]
-                return enteredRate ?? (Number(item.rate) > 0 ? String(item.rate) : "")
+                return (
+                  enteredRate ??
+                  (Number(item.rate) > 0 ? String(item.rate) : "")
+                )
               })
               const requestTotal = request.line_items.reduce(
                 (sum, item, index) => {
                   const rate = Number(unitRates[index])
-                  return sum + Number(item.quantity) * (Number.isFinite(rate) ? rate : 0)
+                  return (
+                    sum +
+                    Number(item.quantity) * (Number.isFinite(rate) ? rate : 0)
+                  )
                 },
                 0,
               )
               const ratesReady =
                 unitRates.length > 0 &&
-                unitRates.every((rate) => Number.isFinite(Number(rate)) && Number(rate) > 0)
+                unitRates.every(
+                  (rate) => Number.isFinite(Number(rate)) && Number(rate) > 0,
+                )
               return (
-              <article
-                key={request.id}
-                className="rounded border p-3"
-                style={{ borderColor: "var(--border)" }}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="mono text-xs font-700" style={{ color: "var(--primary)" }}>
-                      {request.request_number}
-                    </span>
-                    <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
-                      {request.expense_category_name}
-                    </span>
-                  </div>
-                  <h3 className="mt-1 text-sm font-700" style={{ color: "var(--foreground)" }}>
-                    {request.expense_name}
-                  </h3>
-                  <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
-                    Requested by {request.requested_by_name} · Due {fmtDate(request.due_date)}
-                  </p>
-                  <div className="mt-3 space-y-2">
-                    {(request.line_items ?? []).map((item, index) => (
-                      <label key={`${request.id}-item-${index}`} className="grid gap-2 text-xs sm:grid-cols-[minmax(0,1fr)_160px] sm:items-center">
-                        <span style={{ color: "var(--foreground)" }}>
-                          {item.description} · Quantity {item.quantity}
-                        </span>
-                        <input
-                          required
-                          type="number"
-                          min="0.01"
-                          step="0.01"
-                          aria-label={`Unit rate for ${item.description}`}
-                          placeholder="Unit rate (UGX)"
-                          value={unitRates[index]}
-                          onChange={(event) => updateInitiationRate(request, index, event.target.value)}
-                          className="w-full rounded border px-2.5 py-2 text-xs outline-none"
-                          style={fieldStyle}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                  <p className="mt-2 text-xs font-700" style={{ color: "var(--foreground)" }}>
-                    Calculated request total: {fmtAmount(requestTotal, "UGX")}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={Boolean(initiatingRequestId) || !ratesReady}
-                  onClick={() => void initiateExpenseRequest(request)}
-                  className="mt-3 inline-flex items-center gap-2 rounded px-3 py-2 text-xs font-600 disabled:opacity-50"
-                  style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+                <article
+                  key={request.id}
+                  id={`expense-request-initiation-${request.id}`}
+                  className="rounded border p-3"
+                  style={{ borderColor: "var(--border)" }}
                 >
-                  {initiatingRequestId === request.id && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
-                  Initiate requisition
-                </button>
-              </article>
-            )
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className="mono text-xs font-700"
+                        style={{ color: "var(--primary)" }}
+                      >
+                        {request.request_number}
+                      </span>
+                      <span
+                        className="text-xs"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {request.expense_category_name}
+                      </span>
+                    </div>
+                    <h3
+                      className="mt-1 text-sm font-700"
+                      style={{ color: "var(--foreground)" }}
+                    >
+                      {request.expense_name}
+                    </h3>
+                    <p
+                      className="mt-1 text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Requested by {request.requested_by_name} · Due{" "}
+                      {fmtDate(request.due_date)}
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {(request.line_items ?? []).map((item, index) => (
+                        <label
+                          key={`${request.id}-item-${index}`}
+                          className="grid gap-2 text-xs sm:grid-cols-[minmax(0,1fr)_160px] sm:items-center"
+                        >
+                          <span style={{ color: "var(--foreground)" }}>
+                            {item.description} · Quantity {item.quantity}
+                          </span>
+                          <input
+                            required
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            aria-label={`Unit rate for ${item.description}`}
+                            placeholder="Unit rate (UGX)"
+                            value={unitRates[index]}
+                            onChange={(event) =>
+                              updateInitiationRate(
+                                request,
+                                index,
+                                event.target.value,
+                              )
+                            }
+                            className="w-full rounded border px-2.5 py-2 text-xs outline-none"
+                            style={fieldStyle}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <p
+                      className="mt-2 text-xs font-700"
+                      style={{ color: "var(--foreground)" }}
+                    >
+                      Calculated request total: {fmtAmount(requestTotal, "UGX")}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={Boolean(initiatingRequestId) || !ratesReady}
+                    onClick={() => void initiateExpenseRequest(request)}
+                    className="mt-3 inline-flex items-center gap-2 rounded px-3 py-2 text-xs font-600 disabled:opacity-50"
+                    style={{
+                      background: "var(--primary)",
+                      color: "var(--primary-foreground)",
+                    }}
+                  >
+                    {initiatingRequestId === request.id && (
+                      <Loader2
+                        size={14}
+                        className="animate-spin"
+                        aria-hidden="true"
+                      />
+                    )}
+                    Initiate requisition
+                  </button>
+                </article>
+              )
             })}
           </div>
         </section>
@@ -1750,7 +1907,7 @@ export default function RequisitionsWorkspace() {
             >
               <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                 {[
-                  "Ref",
+                  "RQN",
                   "Title",
                   "Category",
                   "Department",
@@ -1789,10 +1946,15 @@ export default function RequisitionsWorkspace() {
                       className="whitespace-nowrap px-4 py-3 mono text-xs font-600"
                       style={{ color: "var(--primary)" }}
                     >
-                      {req.requisition_number}
+                      RQN {req.requisition_number}
                       {req.source_expense_request_number && (
-                        <span className="mt-1 block text-[10px]" style={{ color: "var(--muted-foreground)" }}>
-                          {req.source_expense_request_number}
+                        <span
+                          className="mt-1 block text-[10px] font-400"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {req.source_expense_request_serial_number != null &&
+                            `S/N ${String(req.source_expense_request_serial_number).padStart(3, "0")} · `}
+                          EXP NO {req.source_expense_request_number}
                         </span>
                       )}
                     </td>
@@ -1804,8 +1966,24 @@ export default function RequisitionsWorkspace() {
                         {req.title}
                       </span>
                       {req.requested_by_name && (
-                        <span className="mt-1 block text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+                        <span
+                          className="mt-1 block text-[10px]"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
                           Requested by {req.requested_by_name}
+                        </span>
+                      )}
+                      {req.source_expense_request_id && (
+                        <span
+                          className="mt-1 block text-[10px]"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          Line manager approval:{" "}
+                          {req.source_expense_request_line_manager_reviewed_at
+                            ? fmtDate(
+                                req.source_expense_request_line_manager_reviewed_at,
+                              )
+                            : "Pending"}
                         </span>
                       )}
                     </td>
@@ -1846,24 +2024,32 @@ export default function RequisitionsWorkspace() {
                         className="rounded px-2 py-0.5 text-xs font-600"
                         style={{ background: cfg.bg, color: cfg.color }}
                       >
-                        {req.source_expense_request_id ? `Expense · ${cfg.label}` : cfg.label}
+                        {req.source_expense_request_id
+                          ? `Expense · ${cfg.label}`
+                          : cfg.label}
                       </span>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
-                      {req.source_expense_request_id && req.payment_status !== "paid" ? (
-                        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+                      {req.source_expense_request_id &&
+                      req.payment_status !== "paid" ? (
+                        <span
+                          className="text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
                           Expense Request workflow
                         </span>
-                      ) : req.status === "approved" && (
-                        <span
-                          className="rounded px-2 py-0.5 text-xs font-600"
-                          style={{
-                            background: pymtCfg.bg,
-                            color: pymtCfg.color,
-                          }}
-                        >
-                          {pymtCfg.label}
-                        </span>
+                      ) : (
+                        req.status === "approved" && (
+                          <span
+                            className="rounded px-2 py-0.5 text-xs font-600"
+                            style={{
+                              background: pymtCfg.bg,
+                              color: pymtCfg.color,
+                            }}
+                          >
+                            {pymtCfg.label}
+                          </span>
+                        )
                       )}
                     </td>
                     <td
@@ -1882,19 +2068,21 @@ export default function RequisitionsWorkspace() {
                         >
                           <ChevronRight size={12} aria-hidden="true" /> View
                         </button>
-                        {isOwn && !req.source_expense_request_id && req.status === "pending" && (
-                          <button
-                            type="button"
-                            onClick={() => void openEditForm(req)}
-                            className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-600"
-                            style={{
-                              borderColor: "var(--border)",
-                              color: "var(--foreground)",
-                            }}
-                          >
-                            <Edit2 size={11} aria-hidden="true" /> Edit
-                          </button>
-                        )}
+                        {isOwn &&
+                          !req.source_expense_request_id &&
+                          req.status === "pending" && (
+                            <button
+                              type="button"
+                              onClick={() => void openEditForm(req)}
+                              className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-600"
+                              style={{
+                                borderColor: "var(--border)",
+                                color: "var(--foreground)",
+                              }}
+                            >
+                              <Edit2 size={11} aria-hidden="true" /> Edit
+                            </button>
+                          )}
                         {canVerifierEdit(req) && (
                           <button
                             type="button"
@@ -1946,6 +2134,456 @@ export default function RequisitionsWorkspace() {
         )}
       </div>
 
+      {expenseRequestDetail && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget)
+              setExpenseRequestDetail(null)
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="expense-request-detail-title"
+            className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-xl border p-5"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <header className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2
+                  id="expense-request-detail-title"
+                  className="text-base font-700"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  Expense Request {expenseRequestDetail.request_number}
+                </h2>
+                <p
+                  className="mt-1 text-xs"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  S/N{" "}
+                  {String(expenseRequestDetail.serial_number).padStart(3, "0")}{" "}
+                  · {expenseRequestDetail.requested_by_name}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExpenseRequestDetail(null)}
+                aria-label="Close expense request details"
+              >
+                <X size={18} aria-hidden="true" />
+              </button>
+            </header>
+            <dl className="grid gap-3 text-xs sm:grid-cols-2">
+              <div>
+                <dt style={{ color: "var(--muted-foreground)" }}>Expense</dt>
+                <dd
+                  className="mt-1 font-600"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {expenseRequestDetail.expense_name}
+                </dd>
+              </div>
+              <div>
+                <dt style={{ color: "var(--muted-foreground)" }}>Category</dt>
+                <dd
+                  className="mt-1 font-600"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {expenseRequestDetail.expense_category_name}
+                </dd>
+              </div>
+              <div>
+                <dt style={{ color: "var(--muted-foreground)" }}>Due date</dt>
+                <dd
+                  className="mt-1 font-600"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {fmtDate(expenseRequestDetail.due_date)}
+                </dd>
+              </div>
+              <div>
+                <dt style={{ color: "var(--muted-foreground)" }}>
+                  Line-manager approval
+                </dt>
+                <dd
+                  className="mt-1 font-600"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {expenseRequestDetail.rejected_stage === "line_manager_review"
+                    ? "Returned for changes"
+                    : expenseRequestDetail.line_manager_reviewed_at
+                      ? `Approved ${fmtDate(expenseRequestDetail.line_manager_reviewed_at)}`
+                      : "Pending approval"}
+                </dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt style={{ color: "var(--muted-foreground)" }}>Purpose</dt>
+                <dd
+                  className="mt-1 whitespace-pre-wrap"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {expenseRequestDetail.purpose}
+                </dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt style={{ color: "var(--muted-foreground)" }}>
+                  Request comment
+                </dt>
+                <dd
+                  className="mt-1 whitespace-pre-wrap"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {expenseRequestDetail.request_comment}
+                </dd>
+              </div>
+            </dl>
+            <div
+              className="mt-4 border-t pt-3"
+              style={{ borderColor: "var(--border)" }}
+            >
+              <h3
+                className="mb-2 text-xs font-700"
+                style={{ color: "var(--foreground)" }}
+              >
+                Items
+              </h3>
+              <ul className="space-y-2">
+                {expenseRequestDetail.line_items.map((item, index) => (
+                  <li
+                    key={`${expenseRequestDetail.id}-detail-${index}`}
+                    className="flex justify-between gap-3 text-xs"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    <span>{item.description}</span>
+                    <span className="whitespace-nowrap">
+                      Qty {item.quantity}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setExpenseRequestDetail(null)}
+                className="rounded border px-3 py-2 text-xs font-600"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {editingExpenseRequest && expenseRequestEditDraft && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !savingExpenseRequest) {
+              setEditingExpenseRequest(null)
+              setExpenseRequestEditDraft(null)
+            }
+          }}
+        >
+          <form
+            onSubmit={(event) => void saveExpenseRequest(event)}
+            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border p-5"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <header className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2
+                  className="text-base font-700"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  Edit Expense Request
+                </h2>
+                <p
+                  className="mt-1 text-xs"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  {editingExpenseRequest.request_number} · Changes return it for
+                  line-manager approval.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={savingExpenseRequest}
+                onClick={() => {
+                  setEditingExpenseRequest(null)
+                  setExpenseRequestEditDraft(null)
+                }}
+                aria-label="Close expense request editor"
+              >
+                <X size={18} aria-hidden="true" />
+              </button>
+            </header>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label
+                className="text-xs font-600"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Expense name
+                <input
+                  required
+                  maxLength={200}
+                  value={expenseRequestEditDraft.expenseName}
+                  onChange={(event) =>
+                    setExpenseRequestEditDraft((draft) =>
+                      draft
+                        ? { ...draft, expenseName: event.target.value }
+                        : draft,
+                    )
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none"
+                  style={fieldStyle}
+                />
+              </label>
+              <label
+                className="text-xs font-600"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Due date
+                <input
+                  required
+                  type="date"
+                  value={expenseRequestEditDraft.dueDate}
+                  onChange={(event) =>
+                    setExpenseRequestEditDraft((draft) =>
+                      draft ? { ...draft, dueDate: event.target.value } : draft,
+                    )
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none"
+                  style={fieldStyle}
+                />
+              </label>
+              <label
+                className="text-xs font-600 sm:col-span-2"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Purpose
+                <textarea
+                  required
+                  maxLength={2000}
+                  rows={2}
+                  value={expenseRequestEditDraft.purpose}
+                  onChange={(event) =>
+                    setExpenseRequestEditDraft((draft) =>
+                      draft ? { ...draft, purpose: event.target.value } : draft,
+                    )
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none"
+                  style={fieldStyle}
+                />
+              </label>
+              <label
+                className="text-xs font-600 sm:col-span-2"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Expense category
+                <select
+                  required
+                  value={expenseRequestEditDraft.expenseCategoryId}
+                  onChange={(event) =>
+                    setExpenseRequestEditDraft((draft) =>
+                      draft
+                        ? { ...draft, expenseCategoryId: event.target.value }
+                        : draft,
+                    )
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none"
+                  style={fieldStyle}
+                >
+                  <option value="">Select a category</option>
+                  {expenseCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label
+                className="text-xs font-600 sm:col-span-2"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Request comment
+                <textarea
+                  required
+                  maxLength={2000}
+                  rows={2}
+                  value={expenseRequestEditDraft.comment}
+                  onChange={(event) =>
+                    setExpenseRequestEditDraft((draft) =>
+                      draft ? { ...draft, comment: event.target.value } : draft,
+                    )
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none"
+                  style={fieldStyle}
+                />
+              </label>
+            </div>
+            <div className="mt-4">
+              <h3
+                className="mb-2 text-xs font-700"
+                style={{ color: "var(--foreground)" }}
+              >
+                Items (unit rates are entered during initiation)
+              </h3>
+              <div className="space-y-2">
+                {expenseRequestEditDraft.items.map((item, index) => (
+                  <div
+                    key={`${editingExpenseRequest.id}-edit-item-${index}`}
+                    className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_auto]"
+                  >
+                    <input
+                      required
+                      maxLength={200}
+                      aria-label={`Description for item ${index + 1}`}
+                      value={item.description}
+                      onChange={(event) =>
+                        setExpenseRequestEditDraft((draft) =>
+                          draft
+                            ? {
+                                ...draft,
+                                items: draft.items.map(
+                                  (current, currentIndex) =>
+                                    currentIndex === index
+                                      ? {
+                                          ...current,
+                                          description: event.target.value,
+                                        }
+                                      : current,
+                                ),
+                              }
+                            : draft,
+                        )
+                      }
+                      className="w-full rounded border px-3 py-2 text-sm outline-none"
+                      style={fieldStyle}
+                    />
+                    <input
+                      required
+                      type="number"
+                      min="0.0001"
+                      step="0.0001"
+                      aria-label={`Quantity for item ${index + 1}`}
+                      value={item.quantity}
+                      onChange={(event) =>
+                        setExpenseRequestEditDraft((draft) =>
+                          draft
+                            ? {
+                                ...draft,
+                                items: draft.items.map(
+                                  (current, currentIndex) =>
+                                    currentIndex === index
+                                      ? {
+                                          ...current,
+                                          quantity: event.target.value,
+                                        }
+                                      : current,
+                                ),
+                              }
+                            : draft,
+                        )
+                      }
+                      className="w-full rounded border px-3 py-2 text-sm outline-none"
+                      style={fieldStyle}
+                    />
+                    <button
+                      type="button"
+                      disabled={expenseRequestEditDraft.items.length <= 1}
+                      onClick={() =>
+                        setExpenseRequestEditDraft((draft) =>
+                          draft
+                            ? {
+                                ...draft,
+                                items: draft.items.filter(
+                                  (_, currentIndex) => currentIndex !== index,
+                                ),
+                              }
+                            : draft,
+                        )
+                      }
+                      className="rounded border px-2 text-xs text-red-400 disabled:opacity-40"
+                      style={{ borderColor: "var(--border)" }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                disabled={expenseRequestEditDraft.items.length >= 50}
+                onClick={() =>
+                  setExpenseRequestEditDraft((draft) =>
+                    draft
+                      ? {
+                          ...draft,
+                          items: [
+                            ...draft.items,
+                            { description: "", quantity: "1" },
+                          ],
+                        }
+                      : draft,
+                  )
+                }
+                className="mt-2 inline-flex items-center gap-1 text-xs font-600"
+                style={{ color: "var(--primary)" }}
+              >
+                <Plus size={13} aria-hidden="true" /> Add item
+              </button>
+            </div>
+            {expenseRequestActionError && (
+              <p role="alert" className="mt-3 text-xs text-red-400">
+                {expenseRequestActionError}
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={savingExpenseRequest}
+                onClick={() => {
+                  setEditingExpenseRequest(null)
+                  setExpenseRequestEditDraft(null)
+                }}
+                className="rounded border px-3 py-2 text-xs font-600 disabled:opacity-50"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingExpenseRequest}
+                className="inline-flex items-center gap-2 rounded px-3 py-2 text-xs font-600 disabled:opacity-50"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                {savingExpenseRequest && (
+                  <Loader2
+                    size={13}
+                    className="animate-spin"
+                    aria-hidden="true"
+                  />
+                )}{" "}
+                Save changes
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {}
       {detailReq && (
         <div
@@ -1970,7 +2608,10 @@ export default function RequisitionsWorkspace() {
                   {detailReq.requisition_number}
                 </div>
                 {detailReq.source_expense_request_number && (
-                  <div className="mt-1 mono text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+                  <div
+                    className="mt-1 mono text-[10px]"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
                     From {detailReq.source_expense_request_number}
                   </div>
                 )}
@@ -2048,15 +2689,30 @@ export default function RequisitionsWorkspace() {
                   )}
                 </div>
                 {detailReq.source_expense_request_id && (
-                  <div className="mt-4 rounded border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
-                    <p className="font-600" style={{ color: "var(--foreground)" }}>
-                      Linked Expense Request {detailReq.source_expense_request_number}
+                  <div
+                    className="mt-4 rounded border p-3 text-sm"
+                    style={{ borderColor: "var(--border)" }}
+                  >
+                    <p
+                      className="font-600"
+                      style={{ color: "var(--foreground)" }}
+                    >
+                      Linked Expense Request{" "}
+                      {detailReq.source_expense_request_number}
                     </p>
-                    <p className="mt-1" style={{ color: "var(--muted-foreground)" }}>
-                      Requested by {detailReq.requested_by_name || "Staff member"}
+                    <p
+                      className="mt-1"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Requested by{" "}
+                      {detailReq.requested_by_name || "Staff member"}
                     </p>
-                    <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
-                      Initiated by the Administration Officer. Reviews and payment are managed on the linked Expense Request.
+                    <p
+                      className="mt-1 text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Initiated by the Administration Officer. Reviews and
+                      payment are managed on the linked Expense Request.
                     </p>
                   </div>
                 )}
@@ -2388,8 +3044,13 @@ export default function RequisitionsWorkspace() {
                       Approval Progress
                     </h3>
                     {detailReq.source_expense_request_id ? (
-                      <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
-                        The linked Expense Request contains the active line-manager, General Manager, Finance, Chairman, and cash-out approvals.
+                      <p
+                        className="text-sm"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        The linked Expense Request contains the active
+                        line-manager, General Manager, Finance, Chairman, and
+                        cash-out approvals.
                       </p>
                     ) : (
                       <ApprovalTimeline req={detailReq} />

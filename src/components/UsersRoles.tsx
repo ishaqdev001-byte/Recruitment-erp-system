@@ -303,6 +303,12 @@ const permissionCodeLabels: Record<string, string> = {
   "candidates.stage": "Update candidate stages",
 
   "attendance.view_reports": "View weekly and monthly reports",
+
+  "expense_requests.edit": "Edit Expense Requests before initiation",
+
+  "expense_requests.delete": "Delete Expense Requests before initiation",
+
+  "projects.view_full": "View full project details",
 }
 
 const permissionModuleOrder = [
@@ -1535,14 +1541,7 @@ export default function UsersRoles({
   const manageUser = async (
     user: UserRecord,
 
-    action:
-      | "change-role"
-      | "set-status"
-      | "unlink-account"
-      | "relink-account"
-      | "resend-invite"
-      | "revoke-invite"
-      | "delete-user",
+    action: "change-role" | "set-status" | "unlink-account" | "relink-account" | "resend-invite" | "revoke-invite" | "delete-user",
 
     roleId?: string,
 
@@ -2006,13 +2005,12 @@ export default function UsersRoles({
     !selectedExistingStaff &&
     staffNameSearchParts.length > 0 &&
     userName.trim().length >= 2
-      ? staffMembers
-          .filter((staff) => {
-            const normalizedStaffName = getNormalizedNameParts(staff.name)
-            return staffNameSearchParts.every((part) =>
-              normalizedStaffName.some((namePart) => namePart.includes(part)),
-            )
-          })
+      ? staffMembers.filter((staff) => {
+          const normalizedStaffName = getNormalizedNameParts(staff.name)
+          return staffNameSearchParts.every((part) =>
+            normalizedStaffName.some((namePart) => namePart.includes(part)),
+          )
+        })
       : []
   const staffNameMatches = staffNameCandidates
     .filter(
@@ -3696,10 +3694,7 @@ export default function UsersRoles({
                       </div>
                       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
                         {[
-                          [
-                            "Phone",
-                            userPhone.trim() || "Not provided",
-                          ],
+                          ["Phone", userPhone.trim() || "Not provided"],
                           [
                             "Branch",
                             branches.find(
@@ -4036,114 +4031,109 @@ export default function UsersRoles({
                           </label>
                           {Number(invitedStaffForm.weeklyTransportAllowance) >
                             0 && (
-                              <>
-                                <label
-                                  className="block text-xs font-700 uppercase tracking-wider"
-                                  style={{ color: "var(--muted-foreground)" }}
+                            <>
+                              <label
+                                className="block text-xs font-700 uppercase tracking-wider"
+                                style={{ color: "var(--muted-foreground)" }}
+                              >
+                                Transport allowance account selection
+                                <select
+                                  value={invitedStaffForm.transportAccountMode}
+                                  disabled={Boolean(selectedExistingStaff)}
+                                  onChange={(event) =>
+                                    setInvitedStaffForm((current) => ({
+                                      ...current,
+                                      transportAccountMode: event.target
+                                        .value as TransportAccountMode,
+                                      transportAccountId:
+                                        event.target.value === "fixed"
+                                          ? current.transportAccountId
+                                          : "",
+                                    }))
+                                  }
+                                  className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                                  style={fieldStyle}
                                 >
-                                  Transport allowance account selection
-                                  <select
-                                    value={
-                                      invitedStaffForm.transportAccountMode
-                                    }
-                                    disabled={Boolean(selectedExistingStaff)}
-                                    onChange={(event) =>
-                                      setInvitedStaffForm((current) => ({
-                                        ...current,
-                                        transportAccountMode:
-                                          event.target.value as TransportAccountMode,
-                                        transportAccountId:
-                                          event.target.value === "fixed"
-                                            ? current.transportAccountId
-                                            : "",
-                                      }))
-                                    }
-                                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
-                                    style={fieldStyle}
-                                  >
-                                    <option value="fixed">
-                                      Fixed account (selected now)
-                                    </option>
-                                    <option value="random">
-                                      Random account (Finance selects at payout)
-                                    </option>
-                                  </select>
-                                </label>
-                                {invitedStaffForm.transportAccountMode ===
-                                "fixed" ? (
-                                  staffAccounts.length ? (
-                                    <label
-                                      className="block text-xs font-700 uppercase tracking-wider"
-                                      style={{
-                                        color: "var(--muted-foreground)",
-                                      }}
-                                    >
-                                      Fixed funding account
-                                      <SearchableSelect
-                                        required
-                                        ariaLabel="Choose fixed account funding weekly transport allowance"
-                                        inlineOptions
-                                        value={
-                                          invitedStaffForm.transportAccountId
-                                        }
-                                        disabled={Boolean(selectedExistingStaff)}
-                                        onChange={(transportAccountId) =>
-                                          setInvitedStaffForm((current) => ({
-                                            ...current,
-                                            transportAccountId,
-                                          }))
-                                        }
-                                        options={staffAccounts.map(
-                                          (account) => ({
-                                            value: account.id,
-                                            label: account.name,
-                                            description: `${account.account_type.replace(/_/g, " ")} · ${account.account_number}`,
-                                            searchText: account.account_number,
-                                          }),
-                                        )}
-                                        placeholder="Select fixed funding account"
-                                        className="mt-1 normal-case tracking-normal"
-                                      />
-                                    </label>
-                                  ) : (
-                                    <p
-                                      role="alert"
-                                      className="text-sm text-red-500"
-                                    >
-                                      Add an active company account before
-                                      setting a fixed transport allowance.
-                                    </p>
-                                  )
-                                ) : (
-                                  <p
-                                    className="text-xs md:col-span-2"
+                                  <option value="fixed">
+                                    Fixed account (selected now)
+                                  </option>
+                                  <option value="random">
+                                    Random account (Finance selects at payout)
+                                  </option>
+                                </select>
+                              </label>
+                              {invitedStaffForm.transportAccountMode ===
+                              "fixed" ? (
+                                staffAccounts.length ? (
+                                  <label
+                                    className="block text-xs font-700 uppercase tracking-wider"
                                     style={{
                                       color: "var(--muted-foreground)",
                                     }}
                                   >
-                                    Finance will select an active company
-                                    account when this allowance is paid.
+                                    Fixed funding account
+                                    <SearchableSelect
+                                      required
+                                      ariaLabel="Choose fixed account funding weekly transport allowance"
+                                      inlineOptions
+                                      value={
+                                        invitedStaffForm.transportAccountId
+                                      }
+                                      disabled={Boolean(selectedExistingStaff)}
+                                      onChange={(transportAccountId) =>
+                                        setInvitedStaffForm((current) => ({
+                                          ...current,
+                                          transportAccountId,
+                                        }))
+                                      }
+                                      options={staffAccounts.map((account) => ({
+                                        value: account.id,
+                                        label: account.name,
+                                        description: `${account.account_type.replace(/_/g, " ")} · ${account.account_number}`,
+                                        searchText: account.account_number,
+                                      }))}
+                                      placeholder="Select fixed funding account"
+                                      className="mt-1 normal-case tracking-normal"
+                                    />
+                                  </label>
+                                ) : (
+                                  <p
+                                    role="alert"
+                                    className="text-sm text-red-500"
+                                  >
+                                    Add an active company account before setting
+                                    a fixed transport allowance.
                                   </p>
-                                )}
+                                )
+                              ) : (
                                 <p
                                   className="text-xs md:col-span-2"
                                   style={{
                                     color: "var(--muted-foreground)",
                                   }}
                                 >
-                                  Estimated monthly benefit (
-                                  {currentPayrollWorkingDays} working days):{" "}
-                                  UGX{" "}
-                                  {invitedMonthlyTransportBenefit.toLocaleString(
-                                    "en-UG",
-                                    {
-                                      minimumFractionDigits: 2,
-                                      maximumFractionDigits: 2,
-                                    },
-                                  )}
+                                  Finance will select an active company account
+                                  when this allowance is paid.
                                 </p>
-                              </>
-                            )}
+                              )}
+                              <p
+                                className="text-xs md:col-span-2"
+                                style={{
+                                  color: "var(--muted-foreground)",
+                                }}
+                              >
+                                Estimated monthly benefit (
+                                {currentPayrollWorkingDays} working days): UGX{" "}
+                                {invitedMonthlyTransportBenefit.toLocaleString(
+                                  "en-UG",
+                                  {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  },
+                                )}
+                              </p>
+                            </>
+                          )}
                         </>
                       )}
                       {staffLoading && (
@@ -4221,8 +4211,7 @@ export default function UsersRoles({
                         (staffLoading ||
                           (Number(invitedStaffForm.weeklyTransportAllowance) >
                             0 &&
-                            invitedStaffForm.transportAccountMode ===
-                              "fixed" &&
+                            invitedStaffForm.transportAccountMode === "fixed" &&
                             staffAccounts.length === 0)))
                     }
                     className="flex-1 rounded py-2 text-sm font-600 disabled:opacity-50"
@@ -5382,8 +5371,8 @@ export default function UsersRoles({
                           onChange={(event) =>
                             setStaffForm((current) => ({
                               ...current,
-                              transportAccountMode:
-                                event.target.value as TransportAccountMode,
+                              transportAccountMode: event.target
+                                .value as TransportAccountMode,
                               transportAccountId:
                                 event.target.value === "fixed"
                                   ? current.transportAccountId
@@ -5431,8 +5420,8 @@ export default function UsersRoles({
                           </label>
                         ) : (
                           <p role="alert" className="text-sm text-red-500">
-                            Add an active company account before setting a
-                            fixed transport allowance.
+                            Add an active company account before setting a fixed
+                            transport allowance.
                           </p>
                         )
                       ) : (

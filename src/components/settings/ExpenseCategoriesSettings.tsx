@@ -2,7 +2,16 @@
 
 import { useEffect, useState, type FormEvent } from "react"
 
-import { Plus, Tags, ToggleLeft, ToggleRight } from "lucide-react"
+import {
+  Check,
+  Pencil,
+  Plus,
+  Tags,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
+  X,
+} from "lucide-react"
 
 type ExpenseCategory = {
   id: string
@@ -26,6 +35,10 @@ export default function ExpenseCategoriesSettings() {
   const [canManage, setCanManage] = useState(false)
 
   const [name, setName] = useState("")
+
+  const [editingId, setEditingId] = useState("")
+
+  const [editingName, setEditingName] = useState("")
 
   const [loading, setLoading] = useState(true)
 
@@ -168,6 +181,173 @@ export default function ExpenseCategoriesSettings() {
       setUpdatingId("")
     }
   }
+
+  const saveCategoryName = async (category: ExpenseCategory) => {
+    setUpdatingId(category.id)
+    setError("")
+    setNotice("")
+
+    try {
+      const response = await fetch("/api/settings/expense-categories", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: category.id, name: editingName.trim() }),
+      })
+
+      const result = (await response.json()) as {
+        category?: ExpenseCategory
+        error?: string
+      }
+
+      if (!response.ok)
+        throw new Error(result.error ?? "Unable to rename expense category.")
+
+      if (result.category)
+        setCategories((current) =>
+          current
+            .map((item) => (item.id === category.id ? result.category! : item))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        )
+
+      setEditingId("")
+      setEditingName("")
+      setNotice("Expense category updated.")
+    } catch (updateError) {
+      setError(
+        updateError instanceof Error
+          ? updateError.message
+          : "Unable to rename expense category.",
+      )
+    } finally {
+      setUpdatingId("")
+    }
+  }
+
+  const deleteCategory = async (category: ExpenseCategory) => {
+    const confirmed = window.confirm(
+      `Delete "${category.name}"? Existing expenses and requests will keep their saved descriptions.`,
+    )
+    if (!confirmed) return
+
+    setUpdatingId(category.id)
+    setError("")
+    setNotice("")
+
+    try {
+      const response = await fetch("/api/settings/expense-categories", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: category.id }),
+      })
+
+      const result = (await response.json()) as { error?: string }
+      if (!response.ok)
+        throw new Error(result.error ?? "Unable to delete expense category.")
+
+      setCategories((current) =>
+        current.filter((item) => item.id !== category.id),
+      )
+      setNotice("Expense category deleted.")
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Unable to delete expense category.",
+      )
+    } finally {
+      setUpdatingId("")
+    }
+  }
+
+  const renderCategoryName = (category: ExpenseCategory) =>
+    editingId === category.id ? (
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void saveCategoryName(category)
+        }}
+      >
+        <input
+          required
+          maxLength={100}
+          autoFocus
+          value={editingName}
+          onChange={(event) => setEditingName(event.target.value)}
+          aria-label={`Rename ${category.name}`}
+          className="min-w-0 rounded border px-2 py-1 text-sm outline-none"
+          style={fieldStyle}
+        />
+        <button
+          type="submit"
+          disabled={updatingId === category.id}
+          aria-label="Save category name"
+          className="rounded p-1 text-emerald-600 disabled:opacity-50"
+        >
+          <Check size={16} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          disabled={updatingId === category.id}
+          onClick={() => {
+            setEditingId("")
+            setEditingName("")
+          }}
+          aria-label="Cancel category rename"
+          className="rounded p-1 disabled:opacity-50"
+          style={{ color: "var(--muted-foreground)" }}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      </form>
+    ) : (
+      category.name
+    )
+
+  const categoryActions = (category: ExpenseCategory) => (
+    <div className="flex flex-wrap justify-end gap-2">
+      {editingId !== category.id && (
+        <button
+          type="button"
+          disabled={updatingId === category.id}
+          onClick={() => {
+            setEditingId(category.id)
+            setEditingName(category.name)
+          }}
+          className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-xs font-600 disabled:opacity-50"
+          style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+        >
+          <Pencil size={14} aria-hidden="true" /> Edit
+        </button>
+      )}
+      <button
+        type="button"
+        disabled={updatingId === category.id}
+        onClick={() => void toggleCategory(category)}
+        className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-xs font-600 disabled:opacity-50"
+        style={{
+          borderColor: "var(--border)",
+          color: category.is_active ? "#b7791f" : "var(--primary)",
+        }}
+      >
+        {category.is_active ? (
+          <ToggleRight size={14} aria-hidden="true" />
+        ) : (
+          <ToggleLeft size={14} aria-hidden="true" />
+        )}
+        {category.is_active ? "Deactivate" : "Activate"}
+      </button>
+      <button
+        type="button"
+        disabled={updatingId === category.id}
+        onClick={() => void deleteCategory(category)}
+        className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-xs font-600 text-red-600 disabled:opacity-50"
+        style={{ borderColor: "var(--border)" }}
+      >
+        <Trash2 size={14} aria-hidden="true" /> Delete
+      </button>
+    </div>
+  )
 
   const active = categories.filter((category) => category.is_active)
 
@@ -319,23 +499,11 @@ export default function ExpenseCategoriesSettings() {
                         className="px-4 py-3 font-600"
                         style={{ color: "var(--foreground)" }}
                       >
-                        {category.name}
+                        {renderCategoryName(category)}
                       </td>
                       {canManage && (
                         <td className="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            disabled={updatingId === category.id}
-                            onClick={() => void toggleCategory(category)}
-                            className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-xs font-600 disabled:opacity-50"
-                            style={{
-                              borderColor: "var(--border)",
-                              color: "#b7791f",
-                            }}
-                          >
-                            <ToggleRight size={14} aria-hidden="true" />{" "}
-                            Deactivate
-                          </button>
+                          {categoryActions(category)}
                         </td>
                       )}
                     </tr>
@@ -373,21 +541,10 @@ export default function ExpenseCategoriesSettings() {
                         className="px-4 py-3"
                         style={{ color: "var(--muted-foreground)" }}
                       >
-                        {category.name}
+                        {renderCategoryName(category)}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          disabled={updatingId === category.id}
-                          onClick={() => void toggleCategory(category)}
-                          className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-xs font-600 disabled:opacity-50"
-                          style={{
-                            borderColor: "var(--border)",
-                            color: "var(--primary)",
-                          }}
-                        >
-                          <ToggleLeft size={14} aria-hidden="true" /> Activate
-                        </button>
+                        {categoryActions(category)}
                       </td>
                     </tr>
                   ))}

@@ -34,6 +34,8 @@ export default function ExpenseCategoriesSettings() {
 
   const [canManage, setCanManage] = useState(false)
 
+  const [enabled, setEnabled] = useState(false)
+
   const [name, setName] = useState("")
 
   const [editingId, setEditingId] = useState("")
@@ -45,6 +47,8 @@ export default function ExpenseCategoriesSettings() {
   const [saving, setSaving] = useState(false)
 
   const [updatingId, setUpdatingId] = useState("")
+
+  const [updatingSetting, setUpdatingSetting] = useState(false)
 
   const [error, setError] = useState("")
 
@@ -63,6 +67,7 @@ export default function ExpenseCategoriesSettings() {
       const result = (await response.json()) as {
         categories?: ExpenseCategory[]
         canManage?: boolean
+        enabled?: boolean
         error?: string
       }
 
@@ -72,6 +77,8 @@ export default function ExpenseCategoriesSettings() {
       setCategories(result.categories ?? [])
 
       setCanManage(Boolean(result.canManage))
+
+      setEnabled(Boolean(result.enabled))
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -131,6 +138,39 @@ export default function ExpenseCategoriesSettings() {
       )
     } finally {
       setSaving(false)
+    }
+  }
+
+  const toggleCategoriesEnabled = async () => {
+    setUpdatingSetting(true)
+    setError("")
+    setNotice("")
+    try {
+      const response = await fetch("/api/settings/expense-categories", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoriesEnabled: !enabled }),
+      })
+      const result = (await response.json()) as {
+        enabled?: boolean
+        error?: string
+      }
+      if (!response.ok)
+        throw new Error(result.error ?? "Unable to update category settings.")
+      setEnabled(Boolean(result.enabled))
+      setNotice(
+        result.enabled
+          ? "Expense category selection is enabled."
+          : "Expense category selection is disabled.",
+      )
+    } catch (toggleError) {
+      setError(
+        toggleError instanceof Error
+          ? toggleError.message
+          : "Unable to update category settings.",
+      )
+    } finally {
+      setUpdatingSetting(false)
     }
   }
 
@@ -427,6 +467,53 @@ export default function ExpenseCategoriesSettings() {
       )}
 
       <div className="min-h-0 flex-1 overflow-auto p-6">
+        {canManage && (
+          <section
+            className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded border p-4"
+            style={{
+              borderColor: "var(--border)",
+              background: "var(--card)",
+            }}
+          >
+            <div>
+              <h3
+                className="text-sm font-700"
+                style={{ color: "var(--foreground)" }}
+              >
+                Require expense categories
+              </h3>
+              <p
+                className="mt-1 text-xs"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                When disabled, expense requests and requisitions keep their
+                existing workflow and category selection is optional.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void toggleCategoriesEnabled()}
+              disabled={updatingSetting}
+              aria-pressed={enabled}
+              className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm font-600 disabled:opacity-50"
+              style={{
+                borderColor: "var(--border)",
+                color: enabled ? "var(--primary)" : "var(--muted-foreground)",
+              }}
+            >
+              {enabled ? (
+                <ToggleRight size={17} aria-hidden="true" />
+              ) : (
+                <ToggleLeft size={17} aria-hidden="true" />
+              )}
+              {updatingSetting
+                ? "Saving…"
+                : enabled
+                  ? "Enabled"
+                  : "Disabled"}
+            </button>
+          </section>
+        )}
         {loading && (
           <p
             className="py-10 text-center text-sm"

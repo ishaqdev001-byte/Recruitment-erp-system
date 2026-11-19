@@ -87,7 +87,7 @@ async function getAccess() {
 
       .from("company_roles")
 
-      .select("name, is_system_default")
+      .select("name")
 
       .eq("id", membership.role_id)
 
@@ -148,8 +148,6 @@ async function getAccess() {
     isLinkedStaff: Boolean(isLinkedStaff),
 
     roleName: role.name,
-
-    isSystemDefault: role.is_system_default,
 
     permissions,
   }
@@ -285,9 +283,37 @@ export async function GET() {
       )
     }
 
+    const creatorIds = [
+      ...new Set((requests ?? []).map((request) => request.created_by)),
+    ]
+    const { data: creatorProfiles, error: creatorProfilesError } = creatorIds
+      .length
+      ? await access.supabase
+          .from("profiles")
+          .select("id, display_name")
+          .in("id", creatorIds)
+      : { data: [], error: null }
+    if (creatorProfilesError) {
+      console.error("Expense request creator lookup failed", creatorProfilesError)
+      return NextResponse.json(
+        { error: "Unable to load expense request creator names." },
+        { status: 503, headers },
+      )
+    }
+    const creatorNames = new Map(
+      (creatorProfiles ?? []).map((profile) => [
+        profile.id,
+        profile.display_name,
+      ]),
+    )
+    const requestsWithCreatorNames = (requests ?? []).map((request) => ({
+      ...request,
+      created_by_name: creatorNames.get(request.created_by) ?? "",
+    }))
+
     return NextResponse.json(
       {
-        requests: requests ?? [],
+        requests: requestsWithCreatorNames,
 
         currentUserId: access.userId,
 
@@ -385,20 +411,23 @@ export async function POST(request: Request) {
         !comment ||
         comment.length > 2000 ||
         !isIsoDate(dueDate) ||
-        !expenseCategoryId ||
         items.length === 0 ||
         items.length > 50
       )
         return NextResponse.json(
           {
             error:
-              "Enter an expense name, purpose, category, due date, comment, and at least one line item.",
+              "Enter an expense name, purpose, due date, comment, and at least one line item.",
           },
 
           { status: 400, headers },
         )
 
-      const normalizedItems: { description: string; quantity: number }[] = []
+      const normalizedItems: {
+        description: string
+        quantity: number
+        catalog_item_id: string | null
+      }[] = []
 
       for (const item of items) {
         if (!item || typeof item !== "object")
@@ -414,12 +443,21 @@ export async function POST(request: Request) {
           typeof line.description === "string" ? line.description.trim() : ""
 
         const quantity = Number(line.quantity)
+        const catalogItemId =
+          line.catalog_item_id === null ||
+          line.catalog_item_id === undefined ||
+          line.catalog_item_id === ""
+            ? null
+            : isUuid(line.catalog_item_id)
+              ? line.catalog_item_id
+              : undefined
 
         if (
           !description ||
           description.length > 200 ||
           !Number.isFinite(quantity) ||
           quantity <= 0 ||
+          catalogItemId === undefined ||
           "rate" in line ||
           "unitRate" in line ||
           "amount" in line
@@ -432,7 +470,11 @@ export async function POST(request: Request) {
             { status: 400, headers },
           )
 
-        normalizedItems.push({ description, quantity })
+        normalizedItems.push({
+          description,
+          quantity,
+          catalog_item_id: catalogItemId,
+        })
       }
 
       const { data, error } = await access.supabase.rpc(
@@ -569,20 +611,23 @@ export async function POST(request: Request) {
         !comment ||
         comment.length > 2000 ||
         !isIsoDate(dueDate) ||
-        !expenseCategoryId ||
         items.length === 0 ||
         items.length > 50
       )
         return NextResponse.json(
           {
             error:
-              "Enter a valid expense name, purpose, category, due date, comment, and line items.",
+              "Enter a valid expense name, purpose, due date, comment, and line items.",
           },
 
           { status: 400, headers },
         )
 
-      const normalizedItems: { description: string; quantity: number }[] = []
+      const normalizedItems: {
+        description: string
+        quantity: number
+        catalog_item_id: string | null
+      }[] = []
 
       for (const item of items) {
         if (!item || typeof item !== "object")
@@ -598,12 +643,21 @@ export async function POST(request: Request) {
           typeof line.description === "string" ? line.description.trim() : ""
 
         const quantity = Number(line.quantity)
+        const catalogItemId =
+          line.catalog_item_id === null ||
+          line.catalog_item_id === undefined ||
+          line.catalog_item_id === ""
+            ? null
+            : isUuid(line.catalog_item_id)
+              ? line.catalog_item_id
+              : undefined
 
         if (
           !description ||
           description.length > 200 ||
           !Number.isFinite(quantity) ||
           quantity <= 0 ||
+          catalogItemId === undefined ||
           "rate" in line ||
           "unitRate" in line ||
           "amount" in line
@@ -617,7 +671,11 @@ export async function POST(request: Request) {
             { status: 400, headers },
           )
 
-        normalizedItems.push({ description, quantity })
+        normalizedItems.push({
+          description,
+          quantity,
+          catalog_item_id: catalogItemId,
+        })
       }
 
       const { data, error } = await access.supabase.rpc(
@@ -655,14 +713,11 @@ export async function POST(request: Request) {
 
     if (
       body.action === "initiate_requisition" &&
-      (access.roleName !== "Administration Officer" ||
-        !access.isSystemDefault ||
-        !access.permissions["expense_requests.initiate"])
+      !access.permissions["expense_requests.initiate"]
     )
       return NextResponse.json(
         {
-          error:
-            "Only the Administration Officer can initiate approved requests.",
+          error: "You do not have permission to initiate approved requests.",
         },
 
         { status: 403, headers },

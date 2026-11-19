@@ -202,6 +202,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url)
     const statusFilter = url.searchParams.get("status") ?? ""
     const myOnly = url.searchParams.get("mine") === "1"
+    const expenseRequestNumber =
+      url.searchParams.get("expenseRequestNumber")?.trim() ?? ""
     const [permissionResults, canCreate] = await Promise.all([
       Promise.all([
         access.supabase.rpc("current_user_has_company_permission", {
@@ -250,7 +252,14 @@ export async function GET(request: Request) {
       canDeleteExpenseRequests,
       canInitiateExpenseRequestPermission,
     ] = permissionResults.map((result) => Boolean(result.data))
-    if (!canView && !canCreate && !canReview && !canVerify && !canAuthorize) {
+    if (
+      !canView &&
+      !canCreate &&
+      !canReview &&
+      !canVerify &&
+      !canAuthorize &&
+      !canInitiateExpenseRequestPermission
+    ) {
       return NextResponse.json(
         { error: "You do not have permission to view requisitions." },
         { status: 403, headers: responseHeaders },
@@ -276,7 +285,7 @@ export async function GET(request: Request) {
       .limit(200)
 
     if (statusFilter) query = query.eq("status", statusFilter)
-    if (myOnly) query = query.eq("created_by", access.userId)
+    if (myOnly && canView) query = query.eq("created_by", access.userId)
     if (!access.isMainBranch) query = query.eq("branch_id", access.branchId!)
     if (!canView) query = query.eq("created_by", access.userId)
 
@@ -293,7 +302,7 @@ export async function GET(request: Request) {
     }
 
     let expenseRequests: Record<string, unknown>[] = []
-    if (canView) {
+    if (canView || canInitiateExpenseRequestPermission) {
       let expenseRequestQuery = access.supabase
         .from("expense_requests")
         .select(`
@@ -305,24 +314,30 @@ export async function GET(request: Request) {
         `)
         .eq("company_id", access.companyId)
         .is("deleted_at", null)
-        .is("requisition_id", null)
-        .in("status", [
-          "pending_line_manager_review",
-          "pending_administration_officer_initiation",
-        ])
-        .order("created_at", { ascending: true })
+        .order("created_at", { ascending: false })
         .limit(200)
       if (myOnly)
+        if (canView)
+          expenseRequestQuery = expenseRequestQuery.eq(
+            "created_by",
+            access.userId,
+          )
+      if (expenseRequestNumber)
         expenseRequestQuery = expenseRequestQuery.eq(
-          "created_by",
-          access.userId,
+          "request_number",
+          expenseRequestNumber,
+        )
+      if (!canView)
+        expenseRequestQuery = expenseRequestQuery.eq(
+          "status",
+          "pending_administration_officer_initiation",
         )
       if (!access.isMainBranch && access.branchId)
         expenseRequestQuery = expenseRequestQuery.eq(
           "branch_id",
           access.branchId,
         )
-      const { data: pendingRequests, error: pendingRequestError } =
+      const { data: visibleRequests, error: pendingRequestError } =
         await expenseRequestQuery
       if (pendingRequestError) {
         console.error(
@@ -337,7 +352,7 @@ export async function GET(request: Request) {
           { status: 503, headers: responseHeaders },
         )
       }
-      expenseRequests = pendingRequests ?? []
+      expenseRequests = visibleRequests ?? []
     }
 
     const sourceRequestIds = (requisitions ?? [])
@@ -379,13 +394,56 @@ export async function GET(request: Request) {
       )
     }
 
+    const visibleUserIds = new Set<string>()
+    for (const requisition of requisitions ?? []) {
+      if (requisition.created_by) visibleUserIds.add(requisition.created_by)
+    }
+    for (const expenseRequest of expenseRequests) {
+      if (typeof expenseRequest.created_by === "string")
+        visibleUserIds.add(expenseRequest.created_by)
+    }
+    const { data: creatorProfiles, error: creatorProfilesError } = visibleUserIds
+      .size
+      ? await access.supabase
+          .from("profiles")
+          .select("id, display_name")
+          .in("id", [...visibleUserIds])
+      : { data: [], error: null }
+    if (creatorProfilesError) {
+      console.error("Requisition creator lookup failed", creatorProfilesError)
+      return NextResponse.json(
+        { error: "Unable to load requisition requester names." },
+        { status: 503, headers: responseHeaders },
+      )
+    }
+    const creatorNames = new Map(
+      (creatorProfiles ?? []).map((profile) => [
+        profile.id,
+        profile.display_name,
+      ]),
+    )
+    const expenseRequestsWithCreatorNames: Record<string, unknown>[] =
+      expenseRequests.map((request) => ({
+        ...request,
+        created_by_name:
+          typeof request.created_by === "string"
+            ? creatorNames.get(request.created_by) ?? ""
+            : "",
+      }))
+    const requisitionsWithCreatorNames = requisitionsWithRequestMetadata.map(
+      (requisition) => ({
+        ...requisition,
+        created_by_name: creatorNames.get(requisition.created_by) ?? "",
+      }),
+    )
+
     return NextResponse.json(
       {
-        requisitions: requisitionsWithRequestMetadata,
-        expenseRequests,
+        requisitions: requisitionsWithCreatorNames,
+        expenseRequests: expenseRequestsWithCreatorNames,
         expenseRequestsToInitiate:
-          canCreate && canInitiateExpenseRequestPermission
-            ? expenseRequests.filter(
+          canInitiateExpenseRequestPermission
+            ? expenseRequestsWithCreatorNames.filter(
                 (request) =>
                   request.status ===
                   "pending_administration_officer_initiation",
@@ -399,8 +457,7 @@ export async function GET(request: Request) {
           canAuthorize,
           canEditExpenseRequests,
           canDeleteExpenseRequests,
-          canInitiateExpenseRequests:
-            canCreate && canInitiateExpenseRequestPermission,
+          canInitiateExpenseRequests: canInitiateExpenseRequestPermission,
         },
       },
       { headers: responseHeaders },
@@ -457,11 +514,6 @@ export async function POST(request: Request) {
         { error: "Enter a requisition title (up to 200 characters)." },
         { status: 400, headers: responseHeaders },
       )
-    if (!expenseCategoryId)
-      return NextResponse.json({ error: "Select an expense category." }, {
-        status: 400,
-        headers: responseHeaders,
-      })
     if (!dueDate)
       return NextResponse.json({ error: "Enter a valid due date." }, {
         status: 400,
@@ -485,6 +537,7 @@ export async function POST(request: Request) {
           : ""
       const qty = Number((item as Record<string, unknown>).quantity)
       const rate = Number((item as Record<string, unknown>).rate)
+      const catalogItemId = (item as Record<string, unknown>).catalog_item_id
       if (!desc)
         return NextResponse.json(
           { error: "Each item must have a description." },
@@ -500,6 +553,16 @@ export async function POST(request: Request) {
           { error: "Each item must have a non-negative rate." },
           { status: 400, headers: responseHeaders },
         )
+      if (
+        catalogItemId !== undefined &&
+        catalogItemId !== null &&
+        catalogItemId !== "" &&
+        !isUuid(catalogItemId)
+      )
+        return NextResponse.json(
+          { error: "Select a valid company catalog item." },
+          { status: 400, headers: responseHeaders },
+        )
     }
 
     const admin = createAdminClient()
@@ -511,25 +574,46 @@ export async function POST(request: Request) {
         },
         { status: 503, headers: responseHeaders },
       )
-    const { data: expenseCategory, error: categoryError } = await admin
-      .from("expense_categories")
-      .select("id")
-      .eq("id", expenseCategoryId)
-      .eq("company_id", access.companyId)
-      .eq("is_active", true)
+    const { data: companySettings, error: settingsError } = await admin
+      .from("companies")
+      .select("expense_categories_enabled")
+      .eq("id", access.companyId)
       .maybeSingle()
-    if (categoryError) {
-      console.error("Requisition expense category lookup failed", categoryError)
+    if (settingsError || !companySettings) {
+      console.error("Requisition settings lookup failed", settingsError)
       return NextResponse.json(
-        { error: "Unable to verify the selected expense category." },
+        { error: "Unable to verify company requisition settings." },
         { status: 503, headers: responseHeaders },
       )
     }
-    if (!expenseCategory)
+    if (companySettings.expense_categories_enabled && !expenseCategoryId)
       return NextResponse.json(
-        { error: "Select an active expense category from this company." },
+        { error: "Select an expense category." },
         { status: 400, headers: responseHeaders },
       )
+    let expenseCategory: { id: string } | null = null
+    if (expenseCategoryId) {
+      const { data, error: categoryError } = await admin
+        .from("expense_categories")
+        .select("id")
+        .eq("id", expenseCategoryId)
+        .eq("company_id", access.companyId)
+        .eq("is_active", true)
+        .maybeSingle()
+      if (categoryError) {
+        console.error("Requisition expense category lookup failed", categoryError)
+        return NextResponse.json(
+          { error: "Unable to verify the selected expense category." },
+          { status: 503, headers: responseHeaders },
+        )
+      }
+      if (!data)
+        return NextResponse.json(
+          { error: "Select an active expense category from this company." },
+          { status: 400, headers: responseHeaders },
+        )
+      expenseCategory = data
+    }
 
     // Call the security-definer RPC
     const { data, error } = await access.supabase.rpc("create_requisition", {
@@ -541,13 +625,15 @@ export async function POST(request: Request) {
       p_due_date: dueDate,
       p_notes: notes,
       p_branch_id: access.branchId,
-      p_expense_category_id: expenseCategory.id,
+      p_expense_category_id: expenseCategory?.id ?? null,
       p_items: items.map((item) => ({
         description: String(
           (item as Record<string, unknown>).description ?? "",
         ).trim(),
         quantity: Number((item as Record<string, unknown>).quantity),
         rate: Number((item as Record<string, unknown>).rate),
+        catalog_item_id:
+          (item as Record<string, unknown>).catalog_item_id ?? null,
       })),
     })
 
@@ -778,11 +864,6 @@ export async function PATCH(request: Request) {
         status: 400,
         headers: responseHeaders,
       })
-    if (!expenseCategoryId)
-      return NextResponse.json({ error: "Select an expense category." }, {
-        status: 400,
-        headers: responseHeaders,
-      })
     if (!dueDate)
       return NextResponse.json({ error: "Enter a valid due date." }, {
         status: 400,
@@ -793,6 +874,35 @@ export async function PATCH(request: Request) {
         status: 400,
         headers: responseHeaders,
       })
+    for (const item of items) {
+      if (!item || typeof item !== "object")
+        return NextResponse.json({ error: "Invalid line item." }, {
+          status: 400,
+          headers: responseHeaders,
+        })
+      const line = item as Record<string, unknown>
+      const description =
+        typeof line.description === "string" ? line.description.trim() : ""
+      const quantity = Number(line.quantity)
+      const rate = Number(line.rate)
+      const catalogItemId = line.catalog_item_id
+      if (!description || !Number.isFinite(quantity) || quantity <= 0 ||
+        !Number.isFinite(rate) || rate < 0)
+        return NextResponse.json(
+          { error: "Each item needs a description, positive quantity, and non-negative rate." },
+          { status: 400, headers: responseHeaders },
+        )
+      if (
+        catalogItemId !== undefined &&
+        catalogItemId !== null &&
+        catalogItemId !== "" &&
+        !isUuid(catalogItemId)
+      )
+        return NextResponse.json(
+          { error: "Select a valid company catalog item." },
+          { status: 400, headers: responseHeaders },
+        )
+    }
 
     const admin = createAdminClient()
     if (!admin)
@@ -803,25 +913,46 @@ export async function PATCH(request: Request) {
         },
         { status: 503, headers: responseHeaders },
       )
-    const { data: expenseCategory, error: categoryError } = await admin
-      .from("expense_categories")
-      .select("id")
-      .eq("id", expenseCategoryId)
-      .eq("company_id", access.companyId)
-      .eq("is_active", true)
+    const { data: companySettings, error: settingsError } = await admin
+      .from("companies")
+      .select("expense_categories_enabled")
+      .eq("id", access.companyId)
       .maybeSingle()
-    if (categoryError) {
-      console.error("Requisition expense category lookup failed", categoryError)
+    if (settingsError || !companySettings) {
+      console.error("Requisition settings lookup failed", settingsError)
       return NextResponse.json(
-        { error: "Unable to verify the selected expense category." },
+        { error: "Unable to verify company requisition settings." },
         { status: 503, headers: responseHeaders },
       )
     }
-    if (!expenseCategory)
+    if (companySettings.expense_categories_enabled && !expenseCategoryId)
       return NextResponse.json(
-        { error: "Select an active expense category from this company." },
+        { error: "Select an expense category." },
         { status: 400, headers: responseHeaders },
       )
+    let expenseCategory: { id: string } | null = null
+    if (expenseCategoryId) {
+      const { data, error: categoryError } = await admin
+        .from("expense_categories")
+        .select("id")
+        .eq("id", expenseCategoryId)
+        .eq("company_id", access.companyId)
+        .eq("is_active", true)
+        .maybeSingle()
+      if (categoryError) {
+        console.error("Requisition expense category lookup failed", categoryError)
+        return NextResponse.json(
+          { error: "Unable to verify the selected expense category." },
+          { status: 503, headers: responseHeaders },
+        )
+      }
+      if (!data)
+        return NextResponse.json(
+          { error: "Select an active expense category from this company." },
+          { status: 400, headers: responseHeaders },
+        )
+      expenseCategory = data
+    }
 
     const { data, error } = await access.supabase.rpc("update_requisition", {
       p_company_id: access.companyId,
@@ -832,13 +963,15 @@ export async function PATCH(request: Request) {
       p_service_provider_id: serviceProviderId,
       p_due_date: dueDate,
       p_notes: notes,
-      p_expense_category_id: expenseCategory.id,
+      p_expense_category_id: expenseCategory?.id ?? null,
       p_items: items.map((item) => ({
         description: String(
           (item as Record<string, unknown>).description ?? "",
         ).trim(),
         quantity: Number((item as Record<string, unknown>).quantity),
         rate: Number((item as Record<string, unknown>).rate),
+        catalog_item_id:
+          (item as Record<string, unknown>).catalog_item_id ?? null,
       })),
     })
 

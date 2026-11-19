@@ -107,6 +107,7 @@ type Requisition = {
   source_expense_request_number?: string | null
   requested_by_user_id?: string | null
   requested_by_name?: string
+  created_by_name?: string
   source_expense_request_serial_number?: number | null
   source_expense_request_line_manager_reviewed_at?: string | null
   source_expense_request_rejected_stage?: string | null
@@ -123,13 +124,20 @@ type ExpenseRequestToInitiate = {
   request_number: string
   expense_name: string
   requested_by_name: string
+  created_by_name?: string
   purpose: string
   amount: number
   due_date: string
   expense_category_id: string | null
   expense_category_name: string
   request_comment: string
-  line_items: { description: string; quantity: number; rate: number }[]
+  line_items: {
+    description: string
+    quantity: number
+    rate: number
+    catalog_item_id?: string | null
+    catalog_item_code?: number | null
+  }[]
   created_at: string
   created_by: string
   status: string
@@ -586,6 +594,13 @@ export default function RequisitionsWorkspace() {
   const [initiationRates, setInitiationRates] =
     useState<Record<string, string[]>>({})
   const [initiationMessage, setInitiationMessage] = useState("")
+  const [showInitiationLookup, setShowInitiationLookup] = useState(false)
+  const [lookupRequestNumber, setLookupRequestNumber] = useState("")
+  const [selectedInitiationRequest, setSelectedInitiationRequest] =
+    useState<ExpenseRequestToInitiate | null>(null)
+  const [lookupError, setLookupError] = useState("")
+  const [lookupLoading, setLookupLoading] = useState(false)
+  const [lookupComment, setLookupComment] = useState("")
   const [permissions, setPermissions] = useState<Permissions>({
     canCreate: false,
     canReview: false,
@@ -625,7 +640,12 @@ export default function RequisitionsWorkspace() {
   )
   const [categoryLoadError, setCategoryLoadError] = useState("")
   const [categoriesLoading, setCategoriesLoading] = useState(true)
+  const [expenseCategoriesEnabled, setExpenseCategoriesEnabled] =
+    useState(true)
   const [catalogItems, setCatalogItems] = useState<CompanyCatalogItem[]>([])
+  const [catalogEnabled, setCatalogEnabled] = useState(false)
+  const [canManageCatalog, setCanManageCatalog] = useState(false)
+  const [canUseCustomItems, setCanUseCustomItems] = useState(false)
   const [catalogLoadError, setCatalogLoadError] = useState("")
   const [verifierEditTarget, setVerifierEditTarget] =
     useState<Requisition | null>(null)
@@ -715,7 +735,10 @@ export default function RequisitionsWorkspace() {
     })
   }
 
-  const initiateExpenseRequest = async (request: ExpenseRequestToInitiate) => {
+  const initiateExpenseRequest = async (
+    request: ExpenseRequestToInitiate,
+    comment = "Initiated from the requisitions workflow.",
+  ) => {
     const unitRates = request.line_items.map((item, index) => {
       const savedRate = initiationRates[request.id]?.[index]
       return Number(savedRate ?? (Number(item.rate) > 0 ? item.rate : ""))
@@ -740,7 +763,7 @@ export default function RequisitionsWorkspace() {
         body: JSON.stringify({
           action: "initiate_requisition",
           requestId: request.id,
-          comment: "Initiated by the Administration Officer.",
+          comment,
           unitRates,
         }),
       })
@@ -753,6 +776,8 @@ export default function RequisitionsWorkspace() {
       setInitiationMessage(
         `${payload.request?.requisitionNumber ?? "Requisition"} was created from ${request.request_number}.`,
       )
+      setShowInitiationLookup(false)
+      setSelectedInitiationRequest(null)
       setInitiationRates((current) => {
         const remaining = { ...current }
         delete remaining[request.id]
@@ -864,9 +889,79 @@ export default function RequisitionsWorkspace() {
   }
 
   const openExpenseRequestInitiation = (requestId: string) => {
-    document
-      .getElementById(`expense-request-initiation-${requestId}`)
-      ?.scrollIntoView({ behavior: "smooth", block: "center" })
+    const request = expenseRequestsToInitiate.find(
+      (item) => item.id === requestId,
+    )
+    if (!request) {
+      setLookupError("This expense request is not available for initiation.")
+      setShowInitiationLookup(true)
+      return
+    }
+    setLookupRequestNumber(request.request_number)
+    setSelectedInitiationRequest(request)
+    setLookupComment("")
+    setLookupError("")
+    setShowInitiationLookup(true)
+  }
+
+  const findExpenseRequestForInitiation = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault()
+    const requestNumber = lookupRequestNumber.trim()
+    if (!requestNumber) {
+      setLookupError("Enter an Expense Request number.")
+      return
+    }
+    setLookupLoading(true)
+    setLookupError("")
+    setSelectedInitiationRequest(null)
+    try {
+      const params = new URLSearchParams({
+        expenseRequestNumber: requestNumber,
+      })
+      const response = await fetch(`/api/requisitions?${params}`, {
+        cache: "no-store",
+      })
+      const payload = (await response.json()) as {
+        expenseRequests?: ExpenseRequestToInitiate[]
+        error?: string
+      }
+      if (!response.ok)
+        throw new Error(payload.error ?? "Unable to find that expense request.")
+      const match = payload.expenseRequests?.find(
+        (request) =>
+          request.request_number.trim().toLocaleLowerCase() ===
+          requestNumber.toLocaleLowerCase(),
+      )
+      if (!match) {
+        setLookupError(
+          "No approved, visible expense request with that number is available to initiate.",
+        )
+        return
+      }
+      if (match.status !== "pending_administration_officer_initiation") {
+        setLookupError(
+          "This expense request has not completed line-manager approval or has already been initiated.",
+        )
+        return
+      }
+      setSelectedInitiationRequest(match)
+      setInitiationRates((current) => ({
+        ...current,
+        [match.id]: match.line_items.map((item) =>
+          Number(item.rate) > 0 ? String(item.rate) : "",
+        ),
+      }))
+    } catch (error) {
+      setLookupError(
+        error instanceof Error
+          ? error.message
+          : "Unable to find that expense request.",
+      )
+    } finally {
+      setLookupLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -880,11 +975,13 @@ export default function RequisitionsWorkspace() {
       })
       const result = (await response.json()) as {
         categories?: ExpenseCategory[]
+        enabled?: boolean
         error?: string
       }
       if (!response.ok)
         throw new Error(result.error ?? "Unable to load expense categories.")
       setExpenseCategories(result.categories ?? [])
+      setExpenseCategoriesEnabled(Boolean(result.enabled))
       setCategoryLoadError("")
     } catch (error) {
       setCategoryLoadError(
@@ -908,11 +1005,17 @@ export default function RequisitionsWorkspace() {
       })
       const result = (await response.json()) as {
         items?: CompanyCatalogItem[]
+        enabled?: boolean
+        canManage?: boolean
+        canUseCustomItems?: boolean
         error?: string
       }
       if (!response.ok)
         throw new Error(result.error ?? "Unable to load company items.")
       setCatalogItems(result.items ?? [])
+      setCatalogEnabled(Boolean(result.enabled))
+      setCanManageCatalog(Boolean(result.canManage))
+      setCanUseCustomItems(Boolean(result.canUseCustomItems))
       setCatalogLoadError("")
     } catch (error) {
       setCatalogLoadError(
@@ -1043,7 +1146,9 @@ export default function RequisitionsWorkspace() {
     resetForm()
     setFormError(
       categoryLoadError ||
-        (!categoriesLoading && expenseCategories.length === 0
+        (expenseCategoriesEnabled &&
+        !categoriesLoading &&
+        expenseCategories.length === 0
           ? "No active expense categories are available. Ask the Chairman to add one in Settings."
           : ""),
     )
@@ -1078,6 +1183,10 @@ export default function RequisitionsWorkspace() {
             payload.items.map((item) => ({
               _key: item.id,
               catalogItemId: item.catalog_item_id ?? null,
+              catalogItemCode:
+                catalogItems.find(
+                  (catalogItem) => catalogItem.id === item.catalog_item_id,
+                )?.item_code ?? null,
               description: item.description,
               quantity: String(item.quantity),
               rate: String(item.rate),
@@ -1116,6 +1225,7 @@ export default function RequisitionsWorkspace() {
           description: item.description.trim(),
           quantity: parseFloat(item.quantity),
           rate: parseFloat(item.rate),
+          catalog_item_id: item.catalogItemId,
         })),
       }
       const res = await fetch("/api/requisitions", {
@@ -1468,17 +1578,31 @@ export default function RequisitionsWorkspace() {
               </div>
             )}
           </div>
-          {permissions.canCreate && (
+          {(permissions.canCreate ||
+            permissions.canInitiateExpenseRequests) && (
             <button
               type="button"
-              onClick={openCreateForm}
+              onClick={
+                permissions.canInitiateExpenseRequests
+                  ? () => {
+                      setLookupRequestNumber("")
+                      setSelectedInitiationRequest(null)
+                      setLookupComment("")
+                      setLookupError("")
+                      setShowInitiationLookup(true)
+                    }
+                  : openCreateForm
+              }
               className="inline-flex items-center gap-2 rounded px-4 py-2 text-sm font-600"
               style={{
                 background: "var(--primary)",
                 color: "var(--primary-foreground)",
               }}
             >
-              <Plus size={16} aria-hidden="true" /> Create Requisition
+              <Plus size={16} aria-hidden="true" />{" "}
+              {permissions.canInitiateExpenseRequests
+                ? "Create Requisition"
+                : "Create Requisition"}
             </button>
           )}
         </div>
@@ -1561,6 +1685,226 @@ export default function RequisitionsWorkspace() {
         </div>
       )}
 
+      {showInitiationLookup && (
+        <div
+          className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:py-10"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowInitiationLookup(false)
+              setSelectedInitiationRequest(null)
+              setLookupError("")
+            }
+          }}
+        >
+          <section
+            aria-labelledby="expense-request-lookup-title"
+            className="w-full max-w-2xl rounded-lg border p-5 sm:p-6"
+            style={{
+              borderColor: "var(--border)",
+              background: "var(--card)",
+            }}
+          >
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h2
+                  id="expense-request-lookup-title"
+                  className="text-lg font-700"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  Create requisition from Expense Request
+                </h2>
+                <p
+                  className="mt-1 text-xs"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Enter the approved Expense Request number to load its saved
+                  items and quantities.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowInitiationLookup(false)
+                  setSelectedInitiationRequest(null)
+                  setLookupError("")
+                }}
+                aria-label="Close expense request lookup"
+                className="rounded p-1.5"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={findExpenseRequestForInitiation}
+              className="flex flex-col gap-2 sm:flex-row"
+            >
+              <input
+                required
+                value={lookupRequestNumber}
+                onChange={(event) => {
+                  setLookupRequestNumber(event.target.value)
+                  setSelectedInitiationRequest(null)
+                  setLookupError("")
+                }}
+                aria-label="Expense Request number"
+                placeholder="Enter Expense Request number"
+                className="min-w-0 flex-1 rounded border px-3 py-2.5 text-sm outline-none"
+                style={fieldStyle}
+              />
+              <button
+                type="submit"
+                disabled={lookupLoading}
+                className="inline-flex items-center justify-center gap-2 rounded px-4 py-2.5 text-sm font-600 disabled:opacity-50"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                <Search size={15} aria-hidden="true" />
+                {lookupLoading ? "Searching…" : "Find request"}
+              </button>
+            </form>
+
+            {lookupError && (
+              <p role="alert" className="mt-3 text-sm text-red-400">
+                {lookupError}
+              </p>
+            )}
+
+            {selectedInitiationRequest && (
+              <div className="mt-5 space-y-4">
+                <div className="rounded border p-3" style={{ borderColor: "var(--border)" }}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span
+                      className="mono text-xs font-700"
+                      style={{ color: "var(--primary)" }}
+                    >
+                      {selectedInitiationRequest.request_number}
+                    </span>
+                    <span
+                      className="text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {selectedInitiationRequest.expense_category_name ||
+                        "No category"}
+                    </span>
+                  </div>
+                  <h3
+                    className="mt-1 text-sm font-700"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    {selectedInitiationRequest.expense_name}
+                  </h3>
+                  <p
+                    className="mt-1 text-xs"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    Requested by{" "}
+                    {selectedInitiationRequest.requested_by_name ||
+                      selectedInitiationRequest.created_by_name ||
+                      "Team member"}{" "}
+                    · Due {fmtDate(selectedInitiationRequest.due_date)}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  {selectedInitiationRequest.line_items.map((item, index) => {
+                    const enteredRate =
+                      initiationRates[selectedInitiationRequest.id]?.[index] ??
+                      (Number(item.rate) > 0 ? String(item.rate) : "")
+                    return (
+                      <label
+                        key={`${selectedInitiationRequest.id}-lookup-${index}`}
+                        className="grid gap-2 text-xs sm:grid-cols-[minmax(0,1fr)_160px] sm:items-center"
+                      >
+                        <span style={{ color: "var(--foreground)" }}>
+                          {item.catalog_item_code
+                            ? `ITEM-${String(item.catalog_item_code).padStart(6, "0")} · `
+                            : ""}
+                          {item.description} · Quantity {item.quantity}
+                        </span>
+                        <input
+                          required
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          aria-label={`Unit rate for ${item.description}`}
+                          placeholder="Unit rate"
+                          value={enteredRate}
+                          onChange={(event) =>
+                            updateInitiationRate(
+                              selectedInitiationRequest,
+                              index,
+                              event.target.value,
+                            )
+                          }
+                          className="w-full rounded border px-2.5 py-2 text-xs outline-none"
+                          style={fieldStyle}
+                        />
+                      </label>
+                    )
+                  })}
+                </div>
+
+                <label className="block text-xs font-600">
+                  Initiation comment
+                  <textarea
+                    required
+                    maxLength={2000}
+                    rows={2}
+                    value={lookupComment}
+                    onChange={(event) => setLookupComment(event.target.value)}
+                    className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal outline-none"
+                    style={fieldStyle}
+                    placeholder="Add a comment for the initiation record"
+                  />
+                </label>
+
+                <div className="flex flex-wrap justify-end gap-2">
+                  {permissions.canCreate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowInitiationLookup(false)
+                        openCreateForm()
+                      }}
+                      className="rounded border px-3 py-2 text-xs font-600"
+                      style={{
+                        borderColor: "var(--border)",
+                        color: "var(--foreground)",
+                      }}
+                    >
+                      Create standalone requisition
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={initiatingRequestId === selectedInitiationRequest.id}
+                    onClick={() =>
+                      void initiateExpenseRequest(
+                        selectedInitiationRequest,
+                        lookupComment,
+                      )
+                    }
+                    className="rounded px-4 py-2 text-xs font-700 disabled:opacity-50"
+                    style={{
+                      background: "var(--primary)",
+                      color: "var(--primary-foreground)",
+                    }}
+                  >
+                    {initiatingRequestId === selectedInitiationRequest.id
+                      ? "Creating requisition…"
+                      : "Create requisition"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
       {expenseRequests.length > 0 && (
         <section
           aria-labelledby="expense-requests-table-title"
@@ -1579,10 +1923,10 @@ export default function RequisitionsWorkspace() {
               <tr className="border-y" style={{ borderColor: "var(--border)" }}>
                 {[
                   "S/N",
-                  "Requested by",
+                  "Requested / created by",
                   "Line manager approval",
-                  "EXP NO",
-                  "RQN",
+                  "Expense Request",
+                  "REQUISITION No",
                   "Actions",
                 ].map((heading) => (
                   <th
@@ -1617,7 +1961,7 @@ export default function RequisitionsWorkspace() {
                         className="block text-xs font-600"
                         style={{ color: "var(--foreground)" }}
                       >
-                        {request.requested_by_name}
+                        {request.requested_by_name || request.created_by_name || "Team member"}
                       </span>
                       <span
                         className="mt-1 block max-w-64 truncate text-[10px]"
@@ -1907,7 +2251,8 @@ export default function RequisitionsWorkspace() {
             >
               <tr className="border-b" style={{ borderColor: "var(--border)" }}>
                 {[
-                  "RQN",
+                  "Expense Request",
+                  "REQUISITION No",
                   "Title",
                   "Category",
                   "Department",
@@ -1943,20 +2288,16 @@ export default function RequisitionsWorkspace() {
                     onClick={() => void openDetail(req)}
                   >
                     <td
+                      className="whitespace-nowrap px-4 py-3 mono text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {req.source_expense_request_number || "—"}
+                    </td>
+                    <td
                       className="whitespace-nowrap px-4 py-3 mono text-xs font-600"
                       style={{ color: "var(--primary)" }}
                     >
-                      RQN {req.requisition_number}
-                      {req.source_expense_request_number && (
-                        <span
-                          className="mt-1 block text-[10px] font-400"
-                          style={{ color: "var(--muted-foreground)" }}
-                        >
-                          {req.source_expense_request_serial_number != null &&
-                            `S/N ${String(req.source_expense_request_serial_number).padStart(3, "0")} · `}
-                          EXP NO {req.source_expense_request_number}
-                        </span>
-                      )}
+                      {req.requisition_number}
                     </td>
                     <td className="px-4 py-3 max-w-44">
                       <span
@@ -1965,12 +2306,14 @@ export default function RequisitionsWorkspace() {
                       >
                         {req.title}
                       </span>
-                      {req.requested_by_name && (
+                      {(req.requested_by_name || req.created_by_name) && (
                         <span
                           className="mt-1 block text-[10px]"
                           style={{ color: "var(--muted-foreground)" }}
                         >
-                          Requested by {req.requested_by_name}
+                          {req.requested_by_name
+                            ? `Requested by ${req.requested_by_name}`
+                            : `Created by ${req.created_by_name}`}
                         </span>
                       )}
                       {req.source_expense_request_id && (
@@ -2163,8 +2506,7 @@ export default function RequisitionsWorkspace() {
                   style={{ color: "var(--muted-foreground)" }}
                 >
                   S/N{" "}
-                  {String(expenseRequestDetail.serial_number).padStart(3, "0")}{" "}
-                  · {expenseRequestDetail.requested_by_name}
+                  {String(expenseRequestDetail.serial_number).padStart(3, "0")}
                 </p>
               </div>
               <button
@@ -2176,6 +2518,21 @@ export default function RequisitionsWorkspace() {
               </button>
             </header>
             <dl className="grid gap-3 text-xs sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <dt style={{ color: "var(--muted-foreground)" }}>
+                  {expenseRequestDetail.requested_by_name
+                    ? "Requested by"
+                    : "Created by"}
+                </dt>
+                <dd
+                  className="mt-1 font-600"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {expenseRequestDetail.requested_by_name ||
+                    expenseRequestDetail.created_by_name ||
+                    "Team member"}
+                </dd>
+              </div>
               <div>
                 <dt style={{ color: "var(--muted-foreground)" }}>Expense</dt>
                 <dd
@@ -2621,6 +2978,14 @@ export default function RequisitionsWorkspace() {
                 >
                   {detailReq.title}
                 </h2>
+                <p
+                  className="mt-1 text-xs"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  {detailReq.requested_by_name
+                    ? `Requested by ${detailReq.requested_by_name}`
+                    : `Created by ${detailReq.created_by_name || "Team member"}`}
+                </p>
                 <div className="mt-1.5 flex flex-wrap gap-2">
                   <span
                     className="rounded px-2 py-0.5 text-xs font-600"
@@ -2699,13 +3064,6 @@ export default function RequisitionsWorkspace() {
                     >
                       Linked Expense Request{" "}
                       {detailReq.source_expense_request_number}
-                    </p>
-                    <p
-                      className="mt-1"
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      Requested by{" "}
-                      {detailReq.requested_by_name || "Staff member"}
                     </p>
                     <p
                       className="mt-1 text-xs"
@@ -3189,6 +3547,7 @@ export default function RequisitionsWorkspace() {
                   placeholder={`e.g. Office Supplies — ${currentMonthYear}`}
                 />
               </div>
+              {expenseCategoriesEnabled && (
               <div>
                 <label
                   className="mb-1 block text-xs font-600 uppercase tracking-wider"
@@ -3235,6 +3594,7 @@ export default function RequisitionsWorkspace() {
                     </p>
                   )}
               </div>
+              )}
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                 <div>
                   <label
@@ -3326,6 +3686,9 @@ export default function RequisitionsWorkspace() {
                 onItemsChange={setFormItems}
                 catalogItems={catalogItems}
                 onCreateCatalogItem={createCatalogItem}
+                catalogEnabled={catalogEnabled}
+                canManageCatalog={canManageCatalog}
+                canUseCustomItems={canUseCustomItems}
                 currencyCode={formCurrencyCode}
                 error={formItemError}
                 onErrorChange={setFormItemError}
@@ -3458,6 +3821,9 @@ export default function RequisitionsWorkspace() {
                 onItemsChange={setVerifierItems}
                 catalogItems={catalogItems}
                 onCreateCatalogItem={createCatalogItem}
+                catalogEnabled={catalogEnabled}
+                canManageCatalog={canManageCatalog}
+                canUseCustomItems={canUseCustomItems}
                 currencyCode={verifierEditTarget.currency_code}
                 error={verifierItemError}
                 onErrorChange={setVerifierItemError}

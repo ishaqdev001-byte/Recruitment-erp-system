@@ -77,7 +77,7 @@ async function getAccess() {
   const { data: company, error: companyError } = await admin
     .from("companies")
 
-    .select("primary_admin_user_id")
+    .select("primary_admin_user_id, expense_categories_enabled")
 
     .eq("id", membership.company_id)
 
@@ -94,6 +94,7 @@ async function getAccess() {
     userId: user.id,
 
     canManage: company.primary_admin_user_id === user.id,
+    enabled: company.expense_categories_enabled,
   }
 }
 
@@ -133,7 +134,11 @@ export async function GET() {
     }
 
     return NextResponse.json(
-      { categories: data ?? [], canManage: access.canManage },
+      {
+        categories: data ?? [],
+        canManage: access.canManage,
+        enabled: access.enabled,
+      },
       { headers },
     )
   } catch (error) {
@@ -233,6 +238,21 @@ export async function PATCH(request: Request) {
     const body = (await request
       .json()
       .catch(() => null)) as Record<string, unknown> | null
+
+    if (typeof body?.categoriesEnabled === "boolean") {
+      const { error } = await access.admin
+        .from("companies")
+        .update({ expense_categories_enabled: body.categoriesEnabled })
+        .eq("id", access.companyId)
+      if (error) {
+        console.error("Expense category feature toggle failed", error)
+        return NextResponse.json(
+          { error: "Unable to update the expense category setting." },
+          { status: 500, headers },
+        )
+      }
+      return NextResponse.json({ enabled: body.categoriesEnabled }, { headers })
+    }
 
     if (!body || !isUuid(body.id)) {
       return NextResponse.json({ error: "Provide a valid expense category." }, {

@@ -77,6 +77,40 @@ type PermissionRecord = { code: string; description: string }
 
 type RolePermissionRecord = { role_id: string; permission_code: string }
 
+async function readRoleMutationResponse<T>(
+  response: Response,
+  action: string,
+): Promise<T> {
+  const contentType = response.headers.get("content-type") ?? "unknown"
+
+  try {
+    const payload: unknown = await response.json()
+
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("Invalid API response.")
+    }
+
+    return payload as T
+  } catch {
+    console.error("Role management returned an invalid response", {
+      action,
+      status: response.status,
+      contentType,
+      redirected: response.redirected,
+    })
+
+    if (response.redirected) {
+      throw new Error(
+        "Your session may have expired. Refresh the page, sign in again, and retry.",
+      )
+    }
+
+    throw new Error(
+      `Could not ${action}: the server returned ${contentType} instead of JSON (HTTP ${response.status}). Refresh the page and try again.`,
+    )
+  }
+}
+
 type StaffPayType = "payroll" | "project" | "no_payroll"
 
 type TransportAccountMode = "fixed" | "random"
@@ -218,6 +252,8 @@ const permissionModuleLabels: Record<string, string> = {
 
   expense_requests: "Expense Requests",
 
+  expense_items: "Expense Items",
+
   employers: "Contractors",
 
   finance: "Finance",
@@ -308,6 +344,10 @@ const permissionCodeLabels: Record<string, string> = {
 
   "expense_requests.delete": "Delete Expense Requests before initiation",
 
+  "expense_items.manage": "Manage the company item catalog",
+
+  "expense_items.custom": "Use unlisted catalog items",
+
   "projects.view_full": "View full project details",
 }
 
@@ -355,6 +395,8 @@ const permissionModuleOrder = [
   "requisitions",
 
   "expense_requests",
+
+  "expense_items",
 
   "tasks",
 
@@ -1339,11 +1381,11 @@ export default function UsersRoles({
         }),
       })
 
-      const result = (await response.json()) as {
+      const result = await readRoleMutationResponse<{
         permissions?: string[]
 
         error?: string
-      }
+      }>(response, "create the role")
 
       if (!response.ok)
         throw new Error(result.error ?? "Unable to create role.")
@@ -1454,13 +1496,13 @@ export default function UsersRoles({
         }),
       })
 
-      const result = (await response.json()) as {
+      const result = await readRoleMutationResponse<{
         role?: RoleRecord
 
         permissions?: string[]
 
         error?: string
-      }
+      }>(response, "save role permissions")
 
       if (!response.ok)
         throw new Error(result.error ?? "Unable to update role.")

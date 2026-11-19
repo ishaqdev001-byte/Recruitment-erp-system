@@ -883,6 +883,7 @@ export async function POST(request: Request) {
 
       const expenseCategoryId =
         typeof body.expenseCategoryId === "string" ? body.expenseCategoryId : ""
+      const normalizedExpenseCategoryId = expenseCategoryId || null
 
       const description =
         typeof body.description === "string" ? body.description.trim() : ""
@@ -904,7 +905,8 @@ export async function POST(request: Request) {
 
       if (
         !itemUuidPattern.test(accountId) ||
-        !itemUuidPattern.test(expenseCategoryId) ||
+        (normalizedExpenseCategoryId !== null &&
+          !itemUuidPattern.test(normalizedExpenseCategoryId)) ||
         !description ||
         description.length > 500 ||
         paidTo.length > 200 ||
@@ -920,7 +922,7 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error:
-              "Select an expense category and enter a valid description, account, payment method, reference, date, and 1 to 100 line items.",
+              "Enter a valid description, account, payment method, reference, date, and 1 to 100 line items.",
           },
           { status: 400, headers },
         )
@@ -1014,7 +1016,7 @@ export async function POST(request: Request) {
 
           p_account_id: accountId,
 
-          p_expense_category_id: expenseCategoryId,
+          p_expense_category_id: normalizedExpenseCategoryId,
 
           p_description: description,
 

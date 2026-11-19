@@ -119,6 +119,9 @@ export default function AccountsWorkspace() {
     [],
   )
 
+  const [expenseCategoriesEnabled, setExpenseCategoriesEnabled] =
+    useState(true)
+
   const [canCreate, setCanCreate] = useState(false)
 
   const [canManageAccounts, setCanManageAccounts] = useState(false)
@@ -177,6 +180,12 @@ export default function AccountsWorkspace() {
 
   const [catalogLoadError, setCatalogLoadError] = useState("")
 
+  const [catalogEnabled, setCatalogEnabled] = useState(false)
+
+  const [canManageCatalog, setCanManageCatalog] = useState(false)
+
+  const [canUseCustomItems, setCanUseCustomItems] = useState(false)
+
   const [renameAccount, setRenameAccount] = useState<{
     id: string
     name: string
@@ -204,6 +213,21 @@ export default function AccountsWorkspace() {
       setExpenses(result.expenses ?? [])
 
       setExpenseCategories(result.expenseCategories ?? [])
+
+      const categoryResponse = await fetch("/api/settings/expense-categories", {
+        cache: "no-store",
+      })
+      const categorySettings = (await categoryResponse.json()) as {
+        categories?: ExpenseCategory[]
+        enabled?: boolean
+        error?: string
+      }
+      if (!categoryResponse.ok)
+        throw new Error(
+          categorySettings.error ?? "Unable to load expense category settings.",
+        )
+      setExpenseCategories(categorySettings.categories ?? [])
+      setExpenseCategoriesEnabled(Boolean(categorySettings.enabled))
 
       setCanCreate(Boolean(result.permissions?.canCreate))
 
@@ -234,6 +258,10 @@ export default function AccountsWorkspace() {
       const result = (await response.json()) as {
         items?: CompanyCatalogItem[]
 
+        enabled?: boolean
+        canManage?: boolean
+        canUseCustomItems?: boolean
+
         error?: string
       }
 
@@ -241,6 +269,10 @@ export default function AccountsWorkspace() {
         throw new Error(result.error ?? "Unable to load company items.")
 
       setCatalogItems(result.items ?? [])
+
+      setCatalogEnabled(Boolean(result.enabled))
+      setCanManageCatalog(Boolean(result.canManage))
+      setCanUseCustomItems(Boolean(result.canUseCustomItems))
 
       setCatalogLoadError("")
     } catch (loadError) {
@@ -1389,40 +1421,42 @@ export default function AccountsWorkspace() {
           <form onSubmit={saveAccountAction} className="space-y-4">
             {accountAction === "expense" ? (
               <>
-                <label
-                  className={labelClass}
-                  style={{ color: "var(--muted-foreground)" }}
-                >
-                  Expense category
-                  <select
-                    required
-                    value={expenseForm.expenseCategoryId}
-                    onChange={(event) =>
-                      setExpenseForm((current) => ({
-                        ...current,
-                        expenseCategoryId: event.target.value,
-                      }))
-                    }
-                    className={inputClass}
-                    style={fieldStyle}
+                {expenseCategoriesEnabled && (
+                  <label
+                    className={labelClass}
+                    style={{ color: "var(--muted-foreground)" }}
                   >
-                    <option value="">Select a category</option>
-                    {expenseCategories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
-                  {expenseCategories.length === 0 && (
-                    <span
-                      className="mt-1 block text-xs normal-case tracking-normal"
-                      style={{ color: "#b7791f" }}
+                    Expense category
+                    <select
+                      required
+                      value={expenseForm.expenseCategoryId}
+                      onChange={(event) =>
+                        setExpenseForm((current) => ({
+                          ...current,
+                          expenseCategoryId: event.target.value,
+                        }))
+                      }
+                      className={inputClass}
+                      style={fieldStyle}
                     >
-                      No active categories. Ask the Chairman to add one in
-                      Settings.
-                    </span>
-                  )}
-                </label>
+                      <option value="">Select a category</option>
+                      {expenseCategories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                    {expenseCategories.length === 0 && (
+                      <span
+                        className="mt-1 block text-xs normal-case tracking-normal"
+                        style={{ color: "#b7791f" }}
+                      >
+                        No active categories. Ask the Chairman to add one in
+                        Settings.
+                      </span>
+                    )}
+                  </label>
+                )}
                 <label
                   className={labelClass}
                   style={{ color: "var(--muted-foreground)" }}
@@ -1482,6 +1516,9 @@ export default function AccountsWorkspace() {
                   onItemsChange={setExpenseItems}
                   catalogItems={catalogItems}
                   onCreateCatalogItem={createCatalogItem}
+                  catalogEnabled={catalogEnabled}
+                  canManageCatalog={canManageCatalog}
+                  canUseCustomItems={canUseCustomItems}
                   currencyCode="UGX"
                   error={expenseItemError}
                   onErrorChange={setExpenseItemError}

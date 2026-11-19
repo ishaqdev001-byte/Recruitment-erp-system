@@ -365,6 +365,12 @@ const ExpenseCategoriesSettings = dynamic(
   { loading: PageLoading },
 )
 
+const CompanyItemsSettings = dynamic(
+  () => import("./components/settings/CompanyItemsSettings"),
+
+  { loading: PageLoading },
+)
+
 const CandidateSourcesSettings = dynamic(
   () => import("./components/settings/CandidateSourcesSettings"),
 
@@ -457,6 +463,8 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
       import("./components/settings/ServiceProvidersSettings"),
 
       import("./components/settings/ExpenseCategoriesSettings"),
+
+      import("./components/settings/CompanyItemsSettings"),
 
       import("./components/settings/CandidateSourcesSettings"),
     ]),
@@ -4221,7 +4229,13 @@ export default function App() {
         )
 
       case "settings":
-        return <SettingsPage company={activeCompany} user={activeUser} />
+        return (
+          <SettingsPage
+            company={activeCompany}
+            user={activeUser}
+            permissions={session?.permissions}
+          />
+        )
 
       case "profile":
         return <ProfileSettings />
@@ -7067,17 +7081,27 @@ function SettingsPage({
   company,
 
   user,
+  permissions = [],
 }: {
   company?: CompanyProfile
 
   user?: CompanyUser
+  permissions?: string[]
 }) {
   const isChairman = user?.role === "Chairman"
+  const canManageItems =
+    isChairman || permissions.includes("expense_items.manage")
 
-  const [settingsTab, setSettingsTab] =
-    useState<"general" | "candidate-sources" | "departments" | "currencies" | "service-providers" | "expense-categories" | "attendance">(
-      "general",
-    )
+  const [settingsTab, setSettingsTab] = useState<
+    | "general"
+    | "candidate-sources"
+    | "departments"
+    | "currencies"
+    | "service-providers"
+    | "expense-categories"
+    | "expense-items"
+    | "attendance"
+  >("general")
 
   const permissionRows = [
     ["Candidates", "View / Create / Edit / Approve", "Recruitment Agent"],
@@ -7103,6 +7127,10 @@ function SettingsPage({
     { id: "service-providers", label: "Service Providers" },
 
     { id: "expense-categories", label: "Expense Categories" },
+
+    ...(canManageItems
+      ? [{ id: "expense-items" as const, label: "Expense Items" }]
+      : []),
 
     ...(isChairman ? [{ id: "attendance" as const, label: "Attendance" }] : []),
   ]
@@ -7398,6 +7426,7 @@ function SettingsPage({
         {settingsTab === "currencies" && <CurrenciesSettings />}
         {settingsTab === "service-providers" && <ServiceProvidersSettings />}
         {settingsTab === "expense-categories" && <ExpenseCategoriesSettings />}
+        {settingsTab === "expense-items" && <CompanyItemsSettings />}
         {settingsTab === "attendance" && isChairman && company?.id && (
           <AttendanceSettings
             companyId={company.id}

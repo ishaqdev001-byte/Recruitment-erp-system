@@ -72,6 +72,20 @@ export async function GET(
         headers: responseHeaders,
       })
 
+    const { data: creatorProfile, error: creatorProfileError } =
+      await access.supabase
+        .from("profiles")
+        .select("display_name")
+        .eq("id", requisition.created_by)
+        .maybeSingle()
+    if (creatorProfileError) {
+      console.error("Requisition creator lookup failed", creatorProfileError)
+      return NextResponse.json(
+        { error: "Unable to load requisition requester details." },
+        { status: 503, headers: responseHeaders },
+      )
+    }
+
     const { data: items, error: itemsError } = await access.supabase
       .from("company_requisition_items")
       .select(
@@ -89,9 +103,16 @@ export async function GET(
       )
     }
 
-    return NextResponse.json({ requisition, items: items ?? [] }, {
-      headers: responseHeaders,
-    })
+    return NextResponse.json(
+      {
+        requisition: {
+          ...requisition,
+          created_by_name: creatorProfile?.display_name ?? "",
+        },
+        items: items ?? [],
+      },
+      { headers: responseHeaders },
+    )
   } catch (err) {
     console.error("Requisition detail GET failed", err)
     return NextResponse.json({ error: "Requisition detail is unavailable." }, {

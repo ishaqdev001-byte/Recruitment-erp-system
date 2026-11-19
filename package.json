@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "npx --yes --package=node@22.23.3 --call \"node node_modules/next/dist/bin/next dev --hostname 0.0.0.0\"",
+    "dev": "npx --yes --package=node@22.23.3 --call \"node node_modules/next/dist/bin/next dev --hostname 0.0.0.0 --port 37737\"",
     "build": "next build",
-    "start": "next start --hostname 0.0.0.0",
+    "start": "next start --hostname 0.0.0.0 --port 37737",
     "format": "oxfmt",
     "test:supabase-migration": "node scripts/test-supabase-migration.mjs",
     "webdav:company-drive": "node scripts/company-drive-webdav.mjs",

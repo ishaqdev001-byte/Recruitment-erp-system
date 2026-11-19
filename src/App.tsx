@@ -377,6 +377,12 @@ const CandidateSourcesSettings = dynamic(
   { loading: PageLoading },
 )
 
+const PositionsSettings = dynamic(
+  () => import("./components/settings/PositionsSettings"),
+
+  { loading: PageLoading },
+)
+
 const AttendanceSettings = dynamic(
   () => import("./components/AttendanceSettings"),
 
@@ -467,6 +473,8 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
       import("./components/settings/CompanyItemsSettings"),
 
       import("./components/settings/CandidateSourcesSettings"),
+
+      import("./components/settings/PositionsSettings"),
     ]),
 }
 
@@ -7100,6 +7108,7 @@ function SettingsPage({
     | "service-providers"
     | "expense-categories"
     | "expense-items"
+    | "positions"
     | "attendance"
   >("general")
 
@@ -7130,6 +7139,10 @@ function SettingsPage({
 
     ...(canManageItems
       ? [{ id: "expense-items" as const, label: "Expense Items" }]
+      : []),
+
+    ...(isChairman || permissions.includes("staff.positions.manage")
+      ? [{ id: "positions" as const, label: "Positions" }]
       : []),
 
     ...(isChairman ? [{ id: "attendance" as const, label: "Attendance" }] : []),
@@ -7166,15 +7179,19 @@ function SettingsPage({
 
       {}
       <div
-        className="shrink-0 flex border-b"
+        role="tablist"
+        aria-label="Company settings sections"
+        className="shrink-0 flex overflow-x-auto border-b scroll-smooth"
         style={{ borderColor: "var(--border)", background: "var(--card)" }}
       >
         {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
+            role="tab"
+            aria-selected={settingsTab === t.id}
             onClick={() => setSettingsTab(t.id)}
-            className="px-5 py-3 text-sm font-600 transition-colors"
+            className="shrink-0 whitespace-nowrap px-5 py-3 text-sm font-600 transition-colors"
             style={{
               color:
                 settingsTab === t.id
@@ -7427,6 +7444,7 @@ function SettingsPage({
         {settingsTab === "service-providers" && <ServiceProvidersSettings />}
         {settingsTab === "expense-categories" && <ExpenseCategoriesSettings />}
         {settingsTab === "expense-items" && <CompanyItemsSettings />}
+        {settingsTab === "positions" && <PositionsSettings />}
         {settingsTab === "attendance" && isChairman && company?.id && (
           <AttendanceSettings
             companyId={company.id}

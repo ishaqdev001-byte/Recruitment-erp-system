@@ -132,6 +132,8 @@ type StaffRecord = {
 
   name: string
 
+  positionId: string
+
   position: string
 
   phone: string
@@ -174,7 +176,7 @@ type UserEditForm = {
   branchId: string
   status: "active" | "disabled" | "invited"
   userType: "staff" | "member"
-  position: string
+  positionId: string
   staffStatus: StaffRecord["status"]
   dateJoined: string
   lineManagerStaffId: string
@@ -215,6 +217,12 @@ type BranchOption = {
   code: string
 
   isMainBranch: boolean
+}
+
+type StaffPosition = {
+  id: string
+  name: string
+  is_active: boolean
 }
 
 const fieldStyle = {
@@ -282,6 +290,8 @@ const permissionModuleLabels: Record<string, string> = {
 
   settings: "Settings",
 
+  staff: "Staff Management",
+
   suppliers: "Partners",
 
   tasks: "Tasks",
@@ -348,6 +358,8 @@ const permissionCodeLabels: Record<string, string> = {
 
   "expense_items.custom": "Use unlisted catalog items",
 
+  "staff.positions.manage": "Manage position settings",
+
   "projects.view_full": "View full project details",
 }
 
@@ -385,6 +397,8 @@ const permissionModuleOrder = [
   "invoices",
 
   "users",
+
+  "staff",
 
   "roles",
 
@@ -657,7 +671,7 @@ function matchesSelectedPermissions(
 const emptyStaffForm = {
   name: "",
 
-  position: "",
+  positionId: "",
 
   status: "Active" as StaffRecord["status"],
 
@@ -681,7 +695,7 @@ const emptyStaffForm = {
 }
 
 const emptyInvitedStaffForm = {
-  position: "",
+  positionId: "",
 
   dateJoined: new Date().toISOString().slice(0, 10),
 
@@ -706,7 +720,7 @@ const emptyUserEditForm = (): UserEditForm => ({
   branchId: "",
   status: "active",
   userType: "member",
-  position: "",
+  positionId: "",
   staffStatus: "Active",
   dateJoined: "",
   lineManagerStaffId: "",
@@ -764,6 +778,8 @@ export default function UsersRoles({
   const [editingStaffId, setEditingStaffId] = useState("")
 
   const [staffMembers, setStaffMembers] = useState<StaffRecord[]>([])
+
+  const [staffPositions, setStaffPositions] = useState<StaffPosition[]>([])
 
   const [staffAccounts, setStaffAccounts] = useState<StaffAccount[]>([])
 
@@ -986,6 +1002,8 @@ export default function UsersRoles({
         const result = (await response.json()) as {
           staff?: StaffRecord[]
 
+          positions?: StaffPosition[]
+
           accounts?: StaffAccount[]
 
           workCalendar?: CompanyWorkCalendar
@@ -1006,6 +1024,8 @@ export default function UsersRoles({
 
         if (!cancelled) {
           setStaffMembers(result.staff ?? [])
+
+          setStaffPositions(result.positions ?? [])
 
           setStaffAccounts(result.accounts ?? [])
 
@@ -1218,6 +1238,7 @@ export default function UsersRoles({
       })
       const result = (await response.json()) as {
         staff?: StaffRecord[]
+        positions?: StaffPosition[]
         accounts?: StaffAccount[]
         branches?: BranchOption[]
         error?: string
@@ -1235,6 +1256,7 @@ export default function UsersRoles({
 
       const staff = linkedRecords[0] ?? null
       setStaffMembers(result.staff ?? [])
+      setStaffPositions(result.positions ?? [])
       setStaffAccounts(result.accounts ?? [])
       setStaffBranches(result.branches ?? [])
       setEditingUserStaff(staff)
@@ -1254,7 +1276,7 @@ export default function UsersRoles({
               ? "invited"
               : "active",
         userType: user.userType,
-        position: staff?.position ?? "",
+        positionId: staff?.positionId ?? "",
         staffStatus: staff?.status ?? "Active",
         dateJoined: staff?.dateJoined ?? "",
         lineManagerStaffId: staff?.lineManagerStaffId ?? "",
@@ -1312,7 +1334,7 @@ export default function UsersRoles({
           ...(editUserForm.userType === "staff"
             ? {
                 staff: {
-                  position: editUserForm.position,
+                  positionId: editUserForm.positionId,
                   status: editUserForm.staffStatus,
                   dateJoined: editUserForm.dateJoined,
                   lineManagerStaffId: editUserForm.lineManagerStaffId,
@@ -1696,7 +1718,7 @@ export default function UsersRoles({
     setStaffForm({
       name: member.name,
 
-      position: member.position,
+      positionId: member.positionId,
 
       status: member.status,
 
@@ -2068,7 +2090,7 @@ export default function UsersRoles({
     setUserPhone(staff.phone)
     setUserBranchId(staff.branchId)
     setInvitedStaffForm({
-      position: staff.position,
+      positionId: staff.positionId,
       dateJoined: staff.dateJoined,
       payType: staff.payType,
       baseSalary: String(staff.baseSalary),
@@ -3898,22 +3920,27 @@ export default function UsersRoles({
                         style={{ color: "var(--muted-foreground)" }}
                       >
                         Position
-                        <input
+                        <select
                           required
-                          maxLength={150}
-                          value={invitedStaffForm.position}
-                          disabled={Boolean(selectedExistingStaff)}
+                          value={invitedStaffForm.positionId}
                           onChange={(event) =>
                             setInvitedStaffForm((current) => ({
                               ...current,
-
-                              position: event.target.value,
+                              positionId: event.target.value,
                             }))
                           }
                           className="mt-1 w-full rounded border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                           style={fieldStyle}
-                          placeholder="Position"
-                        />
+                        >
+                          <option value="">Select position</option>
+                          {staffPositions
+                            .filter((position) => position.is_active)
+                            .map((position) => (
+                              <option key={position.id} value={position.id}>
+                                {position.name}
+                              </option>
+                            ))}
+                        </select>
                       </label>
                       <label
                         className="block text-xs font-700 uppercase tracking-wider"
@@ -4559,7 +4586,7 @@ export default function UsersRoles({
                     !editUserForm.roleId ||
                     !editUserForm.branchId ||
                     (editUserForm.userType === "staff" &&
-                      (!editUserForm.position.trim() ||
+                      (!editUserForm.positionId ||
                         !editUserForm.dateJoined ||
                         (editUserForm.payType === "payroll" &&
                           Number(editUserForm.baseSalary) <= 0) ||
@@ -5187,21 +5214,32 @@ export default function UsersRoles({
                 style={{ color: "var(--muted-foreground)" }}
               >
                 Position
-                <input
+                <select
                   required
-                  maxLength={150}
-                  value={staffForm.position}
+                  value={staffForm.positionId}
                   onChange={(event) =>
                     setStaffForm((current) => ({
                       ...current,
-
-                      position: event.target.value,
+                      positionId: event.target.value,
                     }))
                   }
                   className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none"
                   style={fieldStyle}
-                  placeholder="Position"
-                />
+                >
+                  <option value="">Select position</option>
+                  {staffPositions
+                    .filter(
+                      (position) =>
+                        position.is_active ||
+                        position.id === staffForm.positionId,
+                    )
+                    .map((position) => (
+                      <option key={position.id} value={position.id}>
+                        {position.name}
+                        {position.is_active ? "" : " (Inactive — current)"}
+                      </option>
+                    ))}
+                </select>
               </label>
               <label
                 className="block text-xs font-700 uppercase tracking-wider"

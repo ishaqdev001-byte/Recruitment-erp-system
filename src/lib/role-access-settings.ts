@@ -29,6 +29,7 @@ export function isRecruitmentAgentRestrictedPermission(
 ): boolean {
   if (permissionCode === "communications.agent_notes.view") return false
   return (
+    permissionCode === "staff.positions.manage" ||
     permissionCode === "human_resources.view" ||
     [
       "attendance.",

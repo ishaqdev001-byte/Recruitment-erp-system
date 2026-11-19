@@ -11,7 +11,7 @@ export type TransportAccountMode = typeof transportAccountModes[number]
 export type StaffInput = {
   name: string
 
-  position: string
+  positionId: string
 
   status: typeof staffStatuses[number]
 
@@ -41,7 +41,8 @@ export function parseStaffInput(
 ): StaffInput | null {
   const name = typeof body.name === "string" ? body.name.trim() : ""
 
-  const position = typeof body.position === "string" ? body.position.trim() : ""
+  const positionId =
+    typeof body.positionId === "string" ? body.positionId.trim() : ""
 
   const dateJoined = typeof body.dateJoined === "string" ? body.dateJoined : ""
 
@@ -81,8 +82,7 @@ export function parseStaffInput(
   if (
     !name ||
     name.length > 200 ||
-    !position ||
-    position.length > 150 ||
+    !isUuid(positionId) ||
     !validDate ||
     !staffStatuses.includes(status as typeof staffStatuses[number]) ||
     !staffPayTypes.includes(payType as StaffPayType) ||
@@ -115,7 +115,7 @@ export function parseStaffInput(
   return {
     name,
 
-    position,
+    positionId,
 
     status: status as StaffInput["status"],
 

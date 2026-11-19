@@ -172,6 +172,8 @@ function mapStaff(record: Record<string, unknown>) {
 
     name: String(record.name),
 
+    positionId: String(record.position_id ?? ""),
+
     position: String(record.position),
 
     phone: String(record.phone ?? ""),
@@ -279,6 +281,8 @@ export async function GET() {
 
       { data: branches, error: branchesError },
 
+      { data: positions, error: positionsError },
+
       workCalendar,
     ] = await Promise.all([
       (() => {
@@ -286,7 +290,7 @@ export async function GET() {
           .from("company_staff_members")
 
           .select(
-            "id, staff_id, name, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id",
+            "id, staff_id, name, position_id, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id",
           )
 
           .eq("company_id", access.companyId)
@@ -326,11 +330,17 @@ export async function GET() {
         return q.order("name")
       })(),
 
+      access.admin
+        .from("company_positions")
+        .select("id, name, is_active")
+        .eq("company_id", access.companyId)
+        .order("name"),
+
       loadCompanyWorkCalendar(access.admin, access.companyId),
     ])
 
-    if (staffError || accountsError || branchesError)
-      throw staffError ?? accountsError ?? branchesError
+    if (staffError || accountsError || branchesError || positionsError)
+      throw staffError ?? accountsError ?? branchesError ?? positionsError
 
     return NextResponse.json(
       {
@@ -339,6 +349,8 @@ export async function GET() {
         ),
 
         accounts: accounts ?? [],
+
+        positions: positions ?? [],
 
         workCalendar,
 
@@ -476,6 +488,22 @@ export async function POST(request: Request) {
           error:
             "Choose a pay arrangement. Payroll staff need a positive base salary; a weekly transport allowance needs an active funding account.",
         },
+        { status: 400, headers },
+      )
+
+    const { data: position, error: positionError } = await access.admin
+      .from("company_positions")
+      .select("id, name")
+      .eq("id", input.positionId)
+      .eq("company_id", access.companyId)
+      .eq("is_active", true)
+      .maybeSingle()
+
+    if (positionError) throw positionError
+
+    if (!position)
+      return NextResponse.json(
+        { error: "Select an active position from Settings." },
         { status: 400, headers },
       )
 
@@ -624,7 +652,9 @@ export async function POST(request: Request) {
         ...{
           name: input.name,
 
-          position: input.position,
+          position_id: position.id,
+
+          position: position.name,
 
           status: input.status,
 
@@ -644,7 +674,7 @@ export async function POST(request: Request) {
         },
       })
       .select(
-        "id, staff_id, name, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id",
+        "id, staff_id, name, position_id, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id",
       )
       .single()
 
@@ -1032,12 +1062,47 @@ export async function PATCH(request: Request) {
         )
     }
 
+    const { data: currentStaff, error: currentStaffError } = await access.admin
+      .from("company_staff_members")
+      .select("position_id")
+      .eq("company_id", access.companyId)
+      .eq("id", id)
+      .maybeSingle()
+
+    if (currentStaffError) throw currentStaffError
+
+    if (!currentStaff)
+      return NextResponse.json({ error: "Staff member not found." }, {
+        status: 404,
+        headers,
+      })
+
+    const { data: position, error: positionError } = await access.admin
+      .from("company_positions")
+      .select("id, name, is_active")
+      .eq("id", input.positionId)
+      .eq("company_id", access.companyId)
+      .maybeSingle()
+
+    if (positionError) throw positionError
+
+    if (
+      !position ||
+      (!position.is_active && currentStaff.position_id !== input.positionId)
+    )
+      return NextResponse.json(
+        { error: "Select an active position from Settings." },
+        { status: 400, headers },
+      )
+
     let updateQuery = access.admin
       .from("company_staff_members")
       .update({
         name: input.name,
 
-        position: input.position,
+        position_id: position.id,
+
+        position: position.name,
 
         status: input.status,
 
@@ -1070,7 +1135,7 @@ export async function PATCH(request: Request) {
     const { data: staff, error } = await updateQuery
 
       .select(
-        "id, staff_id, name, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id",
+        "id, staff_id, name, position_id, position, phone, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id",
       )
 
       .maybeSingle()

@@ -84,6 +84,17 @@ async function validateStaffInvitation(
   canChooseAnyAccount: boolean,
   currentBranchId: string | null,
 ) {
+  const { data: position, error: positionError } = await admin
+    .from("company_positions")
+    .select("id, name")
+    .eq("id", staffInput.positionId)
+    .eq("company_id", companyId)
+    .eq("is_active", true)
+    .maybeSingle()
+  if (positionError) throw positionError
+  if (!position)
+    return "Choose an active position from Settings before inviting staff."
+
   if (staffInput.lineManagerStaffId) {
     let managerQuery = admin
       .from("company_staff_members")
@@ -116,6 +127,24 @@ async function validateStaffInvitation(
   return null
 }
 
+async function getCompanyPosition(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  companyId: string,
+  positionId: string,
+  allowInactivePositionId: string | null = null,
+) {
+  const { data: position, error } = await admin
+    .from("company_positions")
+    .select("id, name, is_active")
+    .eq("id", positionId)
+    .eq("company_id", companyId)
+    .maybeSingle()
+  if (error) throw error
+  if (!position || (!position.is_active && position.id !== allowInactivePositionId))
+    return null
+  return position
+}
+
 async function insertInvitedStaffRecord(
   admin: NonNullable<ReturnType<typeof createAdminClient>>,
   companyId: string,
@@ -135,6 +164,13 @@ async function insertInvitedStaffRecord(
   } | null
   if (!sequence) throw new Error("Staff ID sequence is not configured.")
 
+  const position = await getCompanyPosition(
+    admin,
+    companyId,
+    staffInput.positionId,
+  )
+  if (!position) throw new Error("Choose an active position from Settings.")
+
   const { data: staff, error } = await admin
     .from("company_staff_members")
     .insert({
@@ -145,7 +181,8 @@ async function insertInvitedStaffRecord(
       line_manager_staff_id: staffInput.lineManagerStaffId,
       name: staffInput.name,
       phone,
-      position: staffInput.position,
+      position_id: position.id,
+      position: position.name,
       status: staffInput.status,
       date_joined: staffInput.dateJoined,
       pay_type: staffInput.payType,
@@ -994,7 +1031,7 @@ export async function POST(request: Request) {
         admin
           .from("company_staff_members")
           .select(
-            "id, staff_id, name, phone, position, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id, updated_by",
+            "id, staff_id, name, phone, position_id, position, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id, updated_by",
           )
           .eq("company_id", access.companyId)
           .eq("linked_user_id", userId)
@@ -1053,6 +1090,19 @@ export async function POST(request: Request) {
           { status: 400, headers: responseHeaders },
         )
       }
+      const staffPosition = staffInput
+        ? await getCompanyPosition(
+            admin,
+            access.companyId,
+            staffInput.positionId,
+            currentStaff?.position_id ?? null,
+          )
+        : null
+      if (staffInput && !staffPosition)
+        return NextResponse.json(
+          { error: "Choose an active position from Settings." },
+          { status: 400, headers: responseHeaders },
+        )
       if (userType === "member" && currentStaff) {
         const { count, error: reportsError } = await admin
           .from("company_staff_members")
@@ -1307,7 +1357,7 @@ export async function POST(request: Request) {
         if (profileUpdateError) throw profileUpdateError
         profileUpdated = true
 
-        if (userType === "staff" && staffInput) {
+        if (userType === "staff" && staffInput && staffPosition) {
           if (currentStaff) {
             const { data: updatedStaff, error: staffUpdateError } = await admin
               .from("company_staff_members")
@@ -1316,7 +1366,8 @@ export async function POST(request: Request) {
                 line_manager_staff_id: staffInput.lineManagerStaffId,
                 name,
                 phone,
-                position: staffInput.position,
+                position_id: staffPosition.id,
+                position: staffPosition.name,
                 status: staffInput.status,
                 date_joined: staffInput.dateJoined,
                 linked_user_id: userId,
@@ -1869,7 +1920,7 @@ export async function POST(request: Request) {
 
       const staffInput = parseStaffInput({
         name,
-        position: staffBody.position,
+        positionId: staffBody.positionId,
         status: "Active",
         dateJoined: staffBody.dateJoined,
         branchId: branch.id,

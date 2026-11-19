@@ -344,6 +344,10 @@ const permissionActionLabels: Record<string, string> = {
 }
 
 const permissionCodeLabels: Record<string, string> = {
+  "candidates.delete": "Delete candidates and inquiries",
+
+  "finance.delete": "Delete finance transactions",
+
   "candidates.project_submit": "Submit candidates to projects",
 
   "candidates.stage": "Update candidate stages",

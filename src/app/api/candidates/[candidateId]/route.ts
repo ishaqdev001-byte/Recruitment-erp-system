@@ -138,6 +138,7 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
           return NextResponse.json({ error: "Select a source configured for this company." }, { status: 400, headers });
         }
       }
+
       const currentDetails = currentCandidate.details && typeof currentCandidate.details === "object" && !Array.isArray(currentCandidate.details)
         ? currentCandidate.details as Record<string, unknown>
         : {};
@@ -297,5 +298,66 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
   } catch (error) {
     console.error("Candidate update request failed", error);
     return NextResponse.json({ error: "Candidate update is unavailable." }, { status: 503, headers });
+  }
+}
+
+export async function DELETE(_request: Request, context: RouteContext<"/api/candidates/[candidateId]">) {
+  const headers = { "Cache-Control": "private, no-store" };
+
+  try {
+    const { candidateId } = await context.params;
+    if (!isUuid(candidateId)) return NextResponse.json({ error: "Candidate not found." }, { status: 404, headers });
+
+    const supabase = await createSupabaseServerClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) return NextResponse.json({ error: "Authentication required." }, { status: 401, headers });
+
+    const { data: membership, error: membershipError } = await supabase
+      .from("company_memberships")
+      .select("company_id")
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .limit(1)
+      .maybeSingle();
+    if (membershipError || !membership) {
+      return NextResponse.json({ error: "Active company membership not found." }, { status: 403, headers });
+    }
+
+    const { data: canDelete, error: permissionError } = await supabase.rpc(
+      "current_user_has_company_permission",
+      {
+        requested_company_id: membership.company_id,
+        requested_permission: "candidates.delete",
+      },
+    );
+    if (permissionError) {
+      console.error("Candidate delete permission lookup failed", permissionError);
+      return NextResponse.json({ error: "Unable to verify candidate delete permission." }, { status: 503, headers });
+    }
+    if (!canDelete) {
+      return NextResponse.json({ error: "You do not have permission to delete candidates." }, { status: 403, headers });
+    }
+
+    const { data, error } = await supabase
+      .from("candidates")
+      .delete()
+      .eq("id", candidateId)
+      .eq("company_id", membership.company_id)
+      .select("id")
+      .maybeSingle();
+
+    if (error) {
+      console.error("Candidate deletion failed", error);
+      if (error.code === "23503") {
+        return NextResponse.json({ error: "This candidate has linked records and cannot be deleted." }, { status: 409, headers });
+      }
+      return NextResponse.json({ error: "Unable to delete this candidate." }, { status: 503, headers });
+    }
+    if (!data) return NextResponse.json({ error: "Candidate not found or not available for deletion." }, { status: 404, headers });
+
+    return new Response(null, { status: 204, headers });
+  } catch (error) {
+    console.error("Candidate deletion request failed", error);
+    return NextResponse.json({ error: "Candidate deletion is unavailable." }, { status: 503, headers });
   }
 }

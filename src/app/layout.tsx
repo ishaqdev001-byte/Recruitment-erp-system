@@ -4,18 +4,9 @@ import "../index.css";
 export const metadata: Metadata = {
   title: "Kilax Smart Recruit | Recruitment ERP",
   description: "Kilax Smart Recruit — intelligent recruitment operations management system",
-  manifest: "/manifest.webmanifest",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "black-translucent",
-    title: "Kilax Smart Recruit",
-  },
   icons: {
     icon: "/branding/kilax-icon.svg",
     shortcut: "/branding/kilax-icon.svg",
-  },
-  other: {
-    "mobile-web-app-capable": "yes",
   },
 };
 
@@ -33,21 +24,6 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" data-scroll-behavior="smooth">
-      <head>
-        {/* Service worker registration */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              if ('serviceWorker' in navigator) {
-                window.addEventListener('load', function() {
-                  navigator.serviceWorker.register('/sw.js', { scope: '/' })
-                    .catch(function(err) { console.warn('SW registration failed:', err); });
-                });
-              }
-            `,
-          }}
-        />
-      </head>
       <body>{children}</body>
     </html>
   );

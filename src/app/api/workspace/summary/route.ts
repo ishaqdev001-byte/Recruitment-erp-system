@@ -7,11 +7,26 @@ export const runtime = "nodejs"
 const responseHeaders = { "Cache-Control": "private, no-store" }
 
 const pageSize = 1000
+const pageBatchSize = 4
 
 type CandidateSummaryRow = {
   created_at: string
 
-  details: unknown
+  visa_received_at: string | null
+
+  assigned_project_id: string | null
+
+  visa_project_id: string | null
+
+  assigned_contracts: string | null
+
+  visa_project_name: string | null
+
+  stage: string | null
+
+  travel_status: string | null
+
+  visa_status: string | null
 }
 
 type ProjectSummaryRow = {
@@ -41,14 +56,11 @@ type VisaTrend = {
   }[]
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function readText(record: Record<string, unknown>, key: string) {
-  const value = record[key]
-
-  return typeof value === "string" ? value.trim() : ""
+function readCandidateText(
+  candidate: CandidateSummaryRow,
+  key: keyof Omit<CandidateSummaryRow, "created_at">,
+) {
+  return candidate[key]?.trim() ?? ""
 }
 
 async function loadAll<T>(
@@ -63,14 +75,21 @@ async function loadAll<T>(
 ) {
   const rows: T[] = []
 
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await queryPage(from, from + pageSize - 1)
+  for (let batchStart = 0; ; batchStart += pageSize * pageBatchSize) {
+    const pages = await Promise.all(
+      Array.from({ length: pageBatchSize }, (_, pageIndex) => {
+        const from = batchStart + pageIndex * pageSize
+        return queryPage(from, from + pageSize - 1)
+      }),
+    )
 
-    if (error) throw error
+    for (const { data, error } of pages) {
+      if (error) throw error
 
-    rows.push(...(data ?? []))
+      rows.push(...(data ?? []))
 
-    if (!data || data.length < pageSize) return rows
+      if (!data || data.length < pageSize) return rows
+    }
   }
 }
 
@@ -117,9 +136,7 @@ function makeVisaTrend(
   const countsByContractor = new Map<string, number[]>()
 
   for (const candidate of candidates) {
-    if (!isRecord(candidate.details)) continue
-
-    const receivedAt = readText(candidate.details, "visaReceivedAt")
+    const receivedAt = readCandidateText(candidate, "visa_received_at")
 
     const receivedDate = new Date(receivedAt)
 
@@ -130,12 +147,12 @@ function makeVisaTrend(
     if (monthIndex === undefined) continue
 
     const projectId =
-      readText(candidate.details, "visaProjectId") ||
-      readText(candidate.details, "assignedProjectId")
+      readCandidateText(candidate, "visa_project_id") ||
+      readCandidateText(candidate, "assigned_project_id")
 
     const projectName =
-      readText(candidate.details, "visaProjectName") ||
-      readText(candidate.details, "assignedContracts")
+      readCandidateText(candidate, "visa_project_name") ||
+      readCandidateText(candidate, "assigned_contracts")
 
     const project =
       projectsById.get(projectId) ||
@@ -205,13 +222,11 @@ function makeDeploymentSummary(
   let total = 0
 
   for (const candidate of candidates) {
-    if (!isRecord(candidate.details)) continue
+    const stage = readCandidateText(candidate, "stage").toLocaleLowerCase()
 
-    const stage = readText(candidate.details, "stage").toLocaleLowerCase()
-
-    const travelStatus = readText(
-      candidate.details,
-      "travelStatus",
+    const travelStatus = readCandidateText(
+      candidate,
+      "travel_status",
     ).toLocaleLowerCase()
 
     if (stage !== "travelled" && travelStatus !== "travelled") continue
@@ -219,12 +234,12 @@ function makeDeploymentSummary(
     total += 1
 
     const projectId =
-      readText(candidate.details, "assignedProjectId") ||
-      readText(candidate.details, "visaProjectId")
+      readCandidateText(candidate, "assigned_project_id") ||
+      readCandidateText(candidate, "visa_project_id")
 
     const projectName =
-      readText(candidate.details, "assignedContracts") ||
-      readText(candidate.details, "visaProjectName")
+      readCandidateText(candidate, "assigned_contracts") ||
+      readCandidateText(candidate, "visa_project_name")
 
     const project =
       projectsById.get(projectId) ||
@@ -397,7 +412,9 @@ export async function GET(request: NextRequest) {
 
               .from("candidates")
 
-              .select("created_at, details")
+              .select(
+                "created_at, visa_received_at:details->>visaReceivedAt, assigned_project_id:details->>assignedProjectId, visa_project_id:details->>visaProjectId, assigned_contracts:details->>assignedContracts, visa_project_name:details->>visaProjectName, stage:details->>stage, travel_status:details->>travelStatus, visa_status:details->>visaStatus",
+              )
 
               .eq("company_id", companyId)
 
@@ -551,36 +568,30 @@ export async function GET(request: NextRequest) {
           : null,
 
         withdrawnCandidateCount: canViewCandidates
-          ? candidates.filter((candidate) => {
-              if (!isRecord(candidate.details)) return false
-
-              return (
-                readText(candidate.details, "stage").toLocaleLowerCase() ===
+          ? candidates.filter(
+              (candidate) =>
+                readCandidateText(candidate, "stage").toLocaleLowerCase() ===
                   "withdrawn" ||
-                readText(
-                  candidate.details,
-                  "travelStatus",
-                ).toLocaleLowerCase() === "withdrawn"
-              )
-            }).length
+                readCandidateText(
+                  candidate,
+                  "travel_status",
+                ).toLocaleLowerCase() === "withdrawn",
+            ).length
           : null,
 
         cancelledCandidateCount: canViewCandidates
           ? candidates.filter((candidate) => {
-              if (!isRecord(candidate.details)) return false
-
-              const stage = readText(
-                candidate.details,
+              const stage = readCandidateText(
+                candidate,
                 "stage",
               ).toLocaleLowerCase()
-
-              const visaStatus = readText(
-                candidate.details,
-                "visaStatus",
+              const visaStatus = readCandidateText(
+                candidate,
+                "visa_status",
               ).toLocaleLowerCase()
-              const travelStatus = readText(
-                candidate.details,
-                "travelStatus",
+              const travelStatus = readCandidateText(
+                candidate,
+                "travel_status",
               ).toLocaleLowerCase()
               return (
                 stage === "cancelled" ||

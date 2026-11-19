@@ -87,7 +87,7 @@ export async function GET(request: Request) {
 
       item.projectName ?? "",
 
-      item.amount,
+      item.direction === "debit" ? -item.amount : item.amount,
 
       item.paymentMethod,
 
@@ -110,8 +110,8 @@ export async function GET(request: Request) {
       worksheet.addRow([project ? `Project: ${project.name}` : "All projects"])
 
       worksheet.addRow([
-        "Received (Kampala)",
-        "Receipt",
+        "Date (Kampala)",
+        "Transaction",
         "Received from",
         "Category",
         "Project",
@@ -275,7 +275,7 @@ export async function GET(request: Request) {
       })
 
       page.drawText(
-        `Total: UGX ${transactions.reduce((sum, item) => sum + item.amount, 0).toLocaleString("en-UG")}`,
+        `Net total: UGX ${transactions.reduce((sum, item) => sum + (item.direction === "debit" ? -item.amount : item.amount), 0).toLocaleString("en-UG")}`,
         {
           x: 630,
           y: 34,

@@ -178,6 +178,14 @@ const candidateInquiryMultipleJobsMigration = await readFile(
   "utf8",
 )
 
+const candidateRecordDeletionMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261119133849_candidate_record_deletion.sql",
+    import.meta.url,
+  ),
+  "utf8",
+)
+
 const recruitmentAgentAccessControlsMigration = await readFile(
   new URL(
     "../supabase/migrations/20261030064119_recruitment_agent_access_controls.sql",
@@ -1873,6 +1881,10 @@ try {
 
   await database.exec(candidateInquiryMultipleJobsMigration)
 
+  await database.exec(candidateRecordDeletionMigration)
+
+  await database.exec(candidateRecordDeletionMigration)
+
   const migratedJobInterests = await database.query(
     "select job_of_interest from public.candidate_inquiries where id = $1",
     [legacyInquiryId],
@@ -1904,6 +1916,18 @@ try {
 
     [convertedInquiryCandidateId, companyA, userA, convertedInquiryId],
   )
+
+  await database.exec("reset role; set role service_role")
+
+  await assert.rejects(
+    database.query(
+      "delete from public.candidate_inquiries where id = $1",
+      [convertedInquiryId],
+    ),
+    /already been registered and cannot be deleted/,
+  )
+
+  await database.exec("reset role")
 
   const convertedInquiry = await database.query(
     "select status, job_of_interest from public.candidate_inquiries where id = $1",

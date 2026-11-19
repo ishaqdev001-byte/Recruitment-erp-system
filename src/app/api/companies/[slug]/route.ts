@@ -8,6 +8,9 @@ type CompanyInfo = {
   name: string;
   slug: string;
   logo_url: string | null;
+  city: string | null;
+  country: string | null;
+  office_address: string | null;
   primary_admin_user_id: string;
   primary_admin_email: string;
   primary_admin_phone: string | null;
@@ -41,7 +44,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
     // Fetch company by slug
     const { data: company, error: companyError } = await admin
       .from("companies")
-      .select("id, name, logo_url, primary_admin_user_id, slug")
+      .select(
+        "id, name, logo_url, city, country, office_address, primary_admin_user_id, slug",
+      )
       .eq("slug", slug)
       .limit(1)
       .maybeSingle();
@@ -94,6 +99,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       name: company.name,
       slug: slug,
       logo_url: company.logo_url || null,
+      city: company.city || null,
+      country: company.country || null,
+      office_address: company.office_address || null,
       primary_admin_user_id: company.primary_admin_user_id,
       primary_admin_email: adminEmail || "admin@company.local",
       primary_admin_phone: adminPhone || null,

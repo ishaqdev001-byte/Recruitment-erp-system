@@ -199,6 +199,11 @@ const TopBar = dynamic(() => import("./components/TopBar"), {
   loading: PageLoading,
 })
 
+const PwaInstallPrompt = dynamic(
+  () => import("./components/PwaInstallPrompt"),
+  { loading: () => null },
+)
+
 const Dashboard = dynamic(() => import("./components/LiveDashboard"), {
   loading: PageLoading,
 })
@@ -767,7 +772,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     .from("company_memberships")
 
     .select(
-      "company_id, company:companies!inner(id, name, slug, status, logo_url, registration_number, country, city, office_address, phone, email, website, primary_admin_user_id), role:company_roles!inner(id, name, access_settings)",
+      "company_id, branch_id, branch:company_branches(id, name, is_main_branch), company:companies!inner(id, name, slug, status, logo_url, registration_number, country, city, office_address, phone, email, website, primary_admin_user_id), role:company_roles!inner(id, name, access_settings)",
     )
 
     .eq("user_id", user.id)
@@ -864,46 +869,59 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   if (!companyRecord || !roleRecord)
     throw new Error("Your company membership is incomplete.")
 
-  const { data: isLinkedStaff, error: staffStatusError } = await supabase.rpc(
-    "current_user_is_linked_company_staff",
-    { requested_company_id: companyRecord.id },
-  )
+  const isPrimaryAdmin = companyRecord.primary_admin_user_id === user.id
+  const permissionRequest = isPrimaryAdmin
+    ? loadCompanyPermissionCodes(companyRecord.id)
+    : supabase
+        .from("role_permissions")
+        .select("permission_code")
+        .eq("role_id", roleRecord.id)
+        .eq("company_id", companyRecord.id)
+        .then(({ data, error }) => {
+          if (error) throw new Error("Unable to load your permissions.")
+          return (data ?? [])
+            .map((rp) => rp.permission_code)
+            .filter(
+              (permission) =>
+                !isRecruitmentAgentRole(roleRecord.name) ||
+                !isRecruitmentAgentRestrictedPermission(permission),
+            )
+            .filter(
+              (permission) =>
+                permission !== "agent_finance.view" ||
+                (isRecruitmentAgentRole(roleRecord.name) &&
+                  roleAccessSettings(
+                    roleRecord.access_settings,
+                    roleRecord.name,
+                  ).agent_visa_finance),
+            )
+            .concat(
+              isRecruitmentAgentRole(roleRecord.name)
+                ? ["communications.agent_notes.view"]
+                : [],
+            )
+        })
 
-  if (staffStatusError)
+  const [staffStatusResult, permissions, userProfileResult] =
+    await Promise.all([
+      supabase.rpc("current_user_is_linked_company_staff", {
+        requested_company_id: companyRecord.id,
+      }),
+      permissionRequest,
+      supabase
+        .from("profiles")
+        .select("display_name, phone, avatar_url, must_change_password")
+        .eq("id", user.id)
+        .maybeSingle(),
+    ])
+
+  if (staffStatusResult.error)
     throw new Error("Unable to verify your linked staff status.")
 
-  let permissions: string[]
-  if (companyRecord.primary_admin_user_id === user.id) {
-    permissions = await loadCompanyPermissionCodes(companyRecord.id)
-  } else {
-    const { data: rolePerms, error: permsError } = await supabase
-      .from("role_permissions")
-      .select("permission_code")
-      .eq("role_id", roleRecord.id)
-      .eq("company_id", companyRecord.id)
-
-    if (permsError) throw new Error("Unable to load your permissions.")
-
-    permissions = (rolePerms ?? [])
-      .map((rp) => rp.permission_code)
-      .filter(
-        (permission) =>
-          !isRecruitmentAgentRole(roleRecord.name) ||
-          !isRecruitmentAgentRestrictedPermission(permission),
-      )
-      .filter(
-        (permission) =>
-          permission !== "agent_finance.view" ||
-          (isRecruitmentAgentRole(roleRecord.name) &&
-            roleAccessSettings(roleRecord.access_settings, roleRecord.name)
-              .agent_visa_finance),
-      )
-      .concat(
-        isRecruitmentAgentRole(roleRecord.name)
-          ? ["communications.agent_notes.view"]
-          : [],
-      )
-  }
+  const isLinkedStaff = staffStatusResult.data
+  const userProfile = userProfileResult.data
+  if (userProfileResult.error)
+    console.error("Current user profile lookup failed", userProfileResult.error)
 
   const knownRoles: WorkspaceRole[] = [
     "Chairman",
@@ -945,23 +963,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     ) ??
     roleRecord.name as WorkspaceRole
 
-  const { data: membershipBranch } = await supabase
-
-    .from("company_memberships")
-
-    .select("branch_id, branch:company_branches(id, name, is_main_branch)")
-
-    .eq("user_id", user.id)
-
-    .eq("company_id", companyRecord.id)
-
-    .eq("status", "active")
-
-    .limit(1)
-
-    .maybeSingle()
-
-  const branchValue = membershipBranch?.branch as unknown as {
+  const branchValue = membership.branch as unknown as {
     id: string
 
     name: string
@@ -979,19 +981,6 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     companyRecord.primary_admin_user_id === user.id ||
     !branchRecord ||
     Boolean(branchRecord.is_main_branch)
-
-  const { data: userProfile, error: userProfileError } = await supabase
-
-    .from("profiles")
-
-    .select("display_name, phone, avatar_url")
-
-    .eq("id", user.id)
-
-    .maybeSingle()
-
-  if (userProfileError)
-    console.error("Current user profile lookup failed", userProfileError)
 
   const company: CompanyProfile = {
     id: companyRecord.id,
@@ -1106,9 +1095,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
       onboarded: true,
 
-      branchId:
-        membershipBranch?.branch_id ??
-        null,
+      branchId: membership.branch_id ?? null,
 
       branchName,
 
@@ -1118,6 +1105,10 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
       permissions,
     } satisfies Session,
+    mustChangePassword: Boolean(
+      (userProfile as { must_change_password?: boolean } | null)
+        ?.must_change_password,
+    ),
   }
 }
 
@@ -1243,28 +1234,6 @@ function readPendingCompanyLogo() {
     console.error("Unable to read the pending company logo.", error)
 
     return null
-  }
-}
-
-async function checkMustChangePassword(userId: string): Promise<boolean> {
-  try {
-    const supabase = createSupabaseBrowserClient()
-
-    const { data } = await supabase
-
-      .from("profiles")
-
-      .select("must_change_password")
-
-      .eq("id", userId)
-
-      .maybeSingle()
-
-    return Boolean(
-      (data as { must_change_password?: boolean } | null)?.must_change_password,
-    )
-  } catch {
-    return false
   }
 }
 
@@ -2114,9 +2083,8 @@ export default function App() {
 
             setRole(workspace.user.role)
 
-            const mustChange = await checkMustChangePassword(workspace.user.id)
-
-            if (!cancelled) setMustChangePassword(mustChange)
+            if (!cancelled)
+              setMustChangePassword(workspace.mustChangePassword)
 
             try {
               const lastView = localStorage.getItem(
@@ -2978,6 +2946,72 @@ export default function App() {
       verify: "/register",
     }
 
+    const workspacePathSegments = new Set([
+      "dashboard",
+      "candidates",
+      "candidate-inquiries",
+      "agents",
+      "suppliers",
+      "jobs",
+      "interviews",
+      "offers",
+      "analytics",
+      "finance",
+      "accounts",
+      "payments",
+      "paychecks",
+      "passport",
+      "documents",
+      "ai",
+      "reports",
+      "users",
+      "settings",
+      "contractors",
+      "projects",
+      "invoices",
+      "agent-invoices",
+      "tasks",
+      "communications",
+      "staff-chat",
+      "attendance",
+      "leave",
+      "human-resources",
+      "medical-appointments",
+      "medical-management",
+      "hospital-management",
+      "branches",
+      "approvals",
+      "requisitions",
+      "expense-requests",
+      "drive",
+    ])
+    const pathSegments = window.location.pathname
+      .split("/")
+      .filter(Boolean)
+    const authPathSegments = new Set([
+      "login",
+      "register",
+      "invite",
+      "reset-password",
+      "forgot-password",
+    ])
+    const secondSegment = pathSegments[1]
+    const companySlug =
+      (pathSegments.length > 1 &&
+      (authPathSegments.has(secondSegment) ||
+        workspacePathSegments.has(secondSegment))
+        ? pathSegments[0]
+        : pathSegments.length === 1 &&
+            !authPathSegments.has(pathSegments[0]) &&
+            !workspacePathSegments.has(pathSegments[0])
+          ? pathSegments[0]
+          : null) ?? ""
+    const authPath = authPaths[authView] ?? "/login"
+    const targetPath = companySlug
+      ? `/${encodeURIComponent(companySlug)}${
+          authPath === "/" ? "/login" : authPath
+        }`
+      : authPath
     const titles: Record<string, string> = {
       login: "Sign In — Kilax Smart Recruit",
 
@@ -2995,10 +3029,6 @@ export default function App() {
     document.title =
       titles[authView] ??
       "Kilax Smart Recruit | Recruitment ERP"
-
-    const targetPath =
-      authPaths[authView] ??
-      "/login"
 
     const hasSpecialParams =
       window.location.search.includes("invite=1") ||
@@ -3424,9 +3454,7 @@ export default function App() {
 
       setSession(workspace.session)
 
-      const mustChange = await checkMustChangePassword(workspace.user.id)
-
-      setMustChangePassword(mustChange)
+      setMustChangePassword(workspace.mustChangePassword)
 
       try {
         const lastView = localStorage.getItem(
@@ -4539,6 +4567,11 @@ export default function App() {
           permissions={session.permissions}
           onLogout={handleLogout}
         />
+        <PwaInstallPrompt
+          companySlug={session.companySlug}
+          companyName={session.companyName}
+          companyLogo={session.companyLogo}
+        />
         <div className="flex-1 flex flex-col overflow-hidden">
           <TopBar
             onMenuClick={() => setMobileNavOpen(true)}
@@ -4557,6 +4590,7 @@ export default function App() {
               )
             }
             companyName={session.companyName}
+            companyId={session.companyId}
             companyLogo={session.companyLogo}
             userId={session.userId}
             userName={session.userName}

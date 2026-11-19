@@ -11,13 +11,24 @@ export async function GET() {
     const access = await getInvoiceAccess("finance.view");
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers: responseHeaders });
 
-    const [{ transactions, projects }, { data: canRecord }] = await Promise.all([
+    const [
+      { transactions, projects },
+      { data: canRecord, error: recordPermissionError },
+      { data: canDelete, error: deletePermissionError },
+    ] = await Promise.all([
       loadPaymentLedger(access),
       access.supabase.rpc("current_user_has_company_permission", {
         requested_company_id: access.companyId,
         requested_permission: "finance.create",
       }),
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "finance.delete",
+      }),
     ]);
+    if (recordPermissionError || deletePermissionError) {
+      throw recordPermissionError ?? deletePermissionError;
+    }
 
     let candidates: { candidate_id: string; file_number: string; candidate_name: string }[] = [];
     if (canRecord) {
@@ -34,9 +45,10 @@ export async function GET() {
       transactions,
       projects,
       candidates,
-      permissions: { canRecord: Boolean(canRecord) },
+      permissions: { canRecord: Boolean(canRecord), canDelete: Boolean(canDelete) },
       totals: {
-        totalReceived: transactions.reduce((sum, transaction) => sum + transaction.amount, 0),
+        totalReceived: transactions.filter((transaction) => transaction.direction === "credit").reduce((sum, transaction) => sum + transaction.amount, 0),
+        totalCashOut: transactions.filter((transaction) => transaction.direction === "debit").reduce((sum, transaction) => sum + transaction.amount, 0),
         candidateDeposits: candidateDeposits.reduce((sum, transaction) => sum + transaction.amount, 0),
         invoicePayments: transactions.filter((transaction) => transaction.entryType === "invoice_payment").reduce((sum, transaction) => sum + transaction.amount, 0),
         otherIncome: transactions.filter((transaction) => transaction.entryType === "other_income").reduce((sum, transaction) => sum + transaction.amount, 0),
@@ -45,6 +57,40 @@ export async function GET() {
   } catch (error) {
     console.error("Payments list request failed", error);
     return NextResponse.json({ error: "Payments and deposits are unavailable." }, { status: 503, headers: responseHeaders });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const access = await getInvoiceAccess("finance.view");
+    if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers: responseHeaders });
+
+    const body = await request.json().catch(() => null) as { recordId?: unknown; recordType?: unknown } | null;
+    const recordId = typeof body?.recordId === "string" ? body.recordId : "";
+    const recordType = body?.recordType;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(recordId)
+      || (recordType !== "receipt" && recordType !== "invoice_payment" && recordType !== "company_expense")) {
+      return NextResponse.json({ error: "Select a valid finance transaction to delete." }, { status: 400, headers: responseHeaders });
+    }
+
+    const { error } = await access.supabase.rpc("delete_finance_transaction", {
+      requested_company_id: access.companyId,
+      requested_record_type: recordType,
+      requested_record_id: recordId,
+    });
+    if (error) {
+      if (error.code === "42501") return NextResponse.json({ error: error.message }, { status: 403, headers: responseHeaders });
+      if (error.code === "P0002") return NextResponse.json({ error: error.message }, { status: 404, headers: responseHeaders });
+      if (error.code === "23503") return NextResponse.json({ error: error.message }, { status: 409, headers: responseHeaders });
+      if (error.code === "22023") return NextResponse.json({ error: error.message }, { status: 400, headers: responseHeaders });
+      console.error("Finance transaction deletion failed", error);
+      return NextResponse.json({ error: "Unable to delete this finance transaction." }, { status: 500, headers: responseHeaders });
+    }
+
+    return NextResponse.json({ success: true }, { headers: responseHeaders });
+  } catch (error) {
+    console.error("Finance transaction DELETE request failed", error);
+    return NextResponse.json({ error: "Unable to delete this finance transaction." }, { status: 503, headers: responseHeaders });
   }
 }
 

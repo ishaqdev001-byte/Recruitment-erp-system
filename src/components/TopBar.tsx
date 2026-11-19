@@ -98,6 +98,7 @@ export default function TopBar({
   density,
   onDensityChange,
   companyName,
+  companyId,
   companyLogo,
   userId,
   userName,
@@ -115,6 +116,7 @@ export default function TopBar({
   density: "comfortable" | "compact";
   onDensityChange: () => void;
   companyName?: string;
+  companyId: string;
   companyLogo?: string;
   userId: string;
   userName?: string;
@@ -142,6 +144,8 @@ export default function TopBar({
   const [pushSettings, setPushSettings] = useState<PushSettings | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMessage, setPushMessage] = useState("");
+  const [showPushOptInPrompt, setShowPushOptInPrompt] = useState(false);
+  const [pwaInstallPromptOpen, setPwaInstallPromptOpen] = useState(false);
   const topbarRef = useRef<HTMLDivElement>(null);
   const notificationButtonRef = useRef<HTMLButtonElement>(null);
   const notificationPanelRef = useRef<HTMLDivElement>(null);
@@ -290,11 +294,6 @@ export default function TopBar({
 
   useEffect(() => {
     let cancelled = false;
-    if ("serviceWorker" in navigator && window.isSecureContext) {
-      void navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" })
-        .catch((error: unknown) => console.error("Service worker registration failed", error));
-    }
-
     const loadPushSettings = async () => {
       try {
         const response = await fetch("/api/notifications/push", { cache: "no-store" });
@@ -311,6 +310,56 @@ export default function TopBar({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const syncPwaPromptState = () => {
+      const isOpen =
+        document.documentElement.dataset.pwaInstallPromptOpen === "true";
+      setPwaInstallPromptOpen(isOpen);
+      if (isOpen) setShowPushOptInPrompt(false);
+    };
+
+    window.addEventListener("kilax:pwa-install-prompt", syncPwaPromptState);
+    syncPwaPromptState();
+    return () =>
+      window.removeEventListener(
+        "kilax:pwa-install-prompt",
+        syncPwaPromptState,
+      );
+  }, []);
+
+  useEffect(() => {
+    if (
+      !pushSettings?.configured ||
+      pushSettings.subscribed ||
+      pwaInstallPromptOpen ||
+      !("Notification" in window) ||
+      !("serviceWorker" in navigator) ||
+      !("PushManager" in window) ||
+      window.Notification.permission === "denied"
+    ) {
+      return;
+    }
+
+    const promptKey = `kilax.push-opt-in:${companyId}:${userId}`;
+    try {
+      if (!window.localStorage.getItem(promptKey)) {
+        setShowPushOptInPrompt(true);
+      }
+    } catch (error) {
+      console.warn("Unable to read the notification prompt preference.", error);
+    }
+  }, [companyId, pwaInstallPromptOpen, pushSettings, userId]);
+
+  const dismissPushOptInPrompt = () => {
+    const promptKey = `kilax.push-opt-in:${companyId}:${userId}`;
+    try {
+      window.localStorage.setItem(promptKey, "dismissed");
+    } catch (error) {
+      console.warn("Unable to save the notification prompt preference.", error);
+    }
+    setShowPushOptInPrompt(false);
+  };
 
   useEffect(() => {
     if (!showNotifs) return;
@@ -700,6 +749,62 @@ export default function TopBar({
 
   return (
     <>
+      {showPushOptInPrompt && (
+        <div
+          className="fixed inset-0 z-[80] flex items-end justify-center bg-black/60 p-4 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="push-opt-in-title"
+        >
+          <section
+            className="w-full max-w-md rounded-2xl border p-5 shadow-2xl sm:p-6"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <h2
+              id="push-opt-in-title"
+              className="text-lg font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Enable notifications?
+            </h2>
+            <p
+              className="mt-2 text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Get important company updates and reminders on this device. Your
+              browser will ask you to confirm.
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={dismissPushOptInPrompt}
+                className="rounded border px-4 py-2 text-sm font-600"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              >
+                Not now
+              </button>
+              <button
+                type="button"
+                disabled={pushBusy}
+                onClick={() => {
+                  setShowPushOptInPrompt(false);
+                  void enableBrowserAlerts();
+                }}
+                className="rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                {pushBusy ? "Enabling…" : "Allow notifications"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       <div
         ref={topbarRef}
         className="topbar flex flex-wrap items-center gap-2 px-3 py-2 border-b shrink-0 lg:flex-nowrap lg:gap-4 lg:px-6 lg:py-2.5"

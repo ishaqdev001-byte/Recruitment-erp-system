@@ -113,6 +113,7 @@ export async function GET() {
       { data: canCreateCandidateInquiries, error: inquiryCreatePermissionError },
       { data: canViewAgentFinance, error: agentFinancePermissionError },
       { data: canManageCandidateSources, error: sourcePermissionError },
+      { data: canDeleteCandidates, error: deletePermissionError },
       { data: canUpdateCandidateStages, error: stagePermissionError },
       { data: canSubmitCandidatesToProjects, error: projectSubmissionPermissionError },
       { data: canSendSms, error: smsPermissionError },
@@ -146,6 +147,10 @@ export async function GET() {
       }),
       supabase.rpc("current_user_has_company_permission", {
         requested_company_id: membership.company_id,
+        requested_permission: "candidates.delete",
+      }),
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
         requested_permission: "candidates.stage",
       }),
       supabase.rpc("current_user_has_company_permission", {
@@ -157,7 +162,7 @@ export async function GET() {
         requested_permission: "communications.sms.send",
       }),
     ]);
-    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || inquiryCreatePermissionError || sourcePermissionError || stagePermissionError || projectSubmissionPermissionError || smsPermissionError) {
+    if (financePermissionError || editPermissionError || registerPermissionError || legacyCreatePermissionError || inquiryCreatePermissionError || sourcePermissionError || deletePermissionError || stagePermissionError || projectSubmissionPermissionError || smsPermissionError) {
       return NextResponse.json({ error: "Unable to verify candidate access." }, { status: 503, headers });
     }
     if (agentFinancePermissionError) {
@@ -216,6 +221,7 @@ export async function GET() {
         canViewAgentFinance: Boolean(canViewAgentFinance && !agentFinancePermissionError),
         canViewActivityLogs,
         canEditCandidates: Boolean(canEditCandidates),
+        canDeleteCandidates: Boolean(canDeleteCandidates),
         canUpdateCandidateStages: Boolean(canUpdateCandidateStages),
         canSubmitCandidatesToProjects: Boolean(canSubmitCandidatesToProjects),
         canRegisterCandidates: (Boolean(canRegisterCandidates) || Boolean(canCreateCandidates)) && canRegister,

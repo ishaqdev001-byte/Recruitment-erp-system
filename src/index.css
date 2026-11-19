@@ -637,6 +637,12 @@ img {
 }
 
 @media (max-width: 639px) {
+  [role='dialog'] > :first-child {
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
   .grid-cols-6,
   .grid-cols-4,
   .grid-cols-3,
@@ -688,6 +694,10 @@ img {
 
   .app-shell main :where(button, input, select, textarea) {
     scroll-margin: 1rem;
+  }
+
+  .app-shell [role='dialog'] {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
   }
 
   .app-shell main :where([role='tablist']) {

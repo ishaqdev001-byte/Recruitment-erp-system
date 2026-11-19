@@ -279,6 +279,7 @@ export async function GET(request: Request) {
       { data: ledger, error: ledgerError },
       { data: expenses, error: expenseError },
       { data: canCreate, error: createError },
+      { data: canDeleteExpenses, error: deleteError },
       { data: expenseCategories, error: categoriesError },
     ] = await Promise.all([
       accountsQuery,
@@ -295,6 +296,11 @@ export async function GET(request: Request) {
         },
       ),
 
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "finance.delete",
+      }),
+
       categoriesQuery,
     ])
 
@@ -303,6 +309,7 @@ export async function GET(request: Request) {
       ledgerError ||
       expenseError ||
       createError ||
+      deleteError ||
       categoriesError
     )
       throw (
@@ -310,6 +317,7 @@ export async function GET(request: Request) {
         ledgerError ??
         expenseError ??
         createError ??
+        deleteError ??
         categoriesError
       )
 
@@ -368,7 +376,7 @@ export async function GET(request: Request) {
           canCreate: Boolean(canCreate),
           canManageAccounts: access.canManageAccounts,
           canAdministerAccounts: access.canAdministerAccounts,
-          canDeleteExpenses: access.isChairman,
+          canDeleteExpenses: Boolean(canDeleteExpenses),
         },
       },
       { headers },
@@ -395,12 +403,6 @@ export async function DELETE(request: Request) {
         status: access.status,
         headers,
       })
-
-    if (!access.isChairman)
-      return NextResponse.json(
-        { error: "Only the Chairman can delete company expenses." },
-        { status: 403, headers },
-      )
 
     const body = (await request.json().catch(() => null)) as
       | Record<string, unknown>

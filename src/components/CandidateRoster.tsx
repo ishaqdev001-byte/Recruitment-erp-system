@@ -8,6 +8,7 @@ import {
   Pencil,
   RefreshCw,
   Send,
+  Trash2,
   UserPlus,
   X,
 } from "lucide-react"
@@ -614,6 +615,8 @@ export default function CandidateRoster({
 
     canEditCandidates?: boolean
 
+    canDeleteCandidates?: boolean
+
     canUpdateCandidateStages?: boolean
 
     canSubmitCandidatesToProjects?: boolean
@@ -653,6 +656,10 @@ export default function CandidateRoster({
   const [inquiryError, setInquiryError] = useState("")
 
   const [inquiryNotice, setInquiryNotice] = useState("")
+
+  const [recordActionError, setRecordActionError] = useState("")
+
+  const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null)
 
   const [registrationNotice, setRegistrationNotice] = useState("")
 
@@ -1525,6 +1532,66 @@ export default function CandidateRoster({
     onNavigate("candidates")
   }
 
+  const deleteRecord = async (
+    recordType: "candidate" | "inquiry",
+    recordId: string,
+    recordName: string,
+  ) => {
+    const recordLabel = recordType === "candidate" ? "candidate" : "inquiry"
+    if (
+      !window.confirm(
+        `Permanently delete ${recordLabel} ${recordName}? This cannot be undone.`,
+      )
+    ) {
+      return
+    }
+
+    setDeletingRecordId(recordId)
+    setRecordActionError("")
+
+    try {
+      const response = await fetch(
+        recordType === "candidate"
+          ? `/api/candidates/${encodeURIComponent(recordId)}`
+          : `/api/candidate-inquiries/${encodeURIComponent(recordId)}`,
+        { method: "DELETE" },
+      )
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          payload.error ?? `Unable to delete this ${recordLabel}.`,
+        )
+      }
+
+      clearClientApiCache()
+      if (recordType === "candidate") {
+        setCandidates((current) =>
+          current.filter((candidate) => candidate.id !== recordId),
+        )
+        setSelectedIds((current) =>
+          current.filter((candidateId) => candidateId !== recordId),
+        )
+        setRegistrationNotice(`${recordName} was deleted.`)
+      } else {
+        setInquiries((current) =>
+          current.filter((inquiry) => inquiry.id !== recordId),
+        )
+        setInquiryNotice(`${recordName} was deleted.`)
+      }
+    } catch (deleteError) {
+      setRecordActionError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : `Unable to delete this ${recordLabel}.`,
+      )
+    } finally {
+      setDeletingRecordId(null)
+    }
+  }
+
   const saveCandidate = async (form: Candidate) => {
     const {
       id,
@@ -1817,6 +1884,14 @@ export default function CandidateRoster({
           className="border-b border-amber-600/30 bg-amber-600/10 px-6 py-3 text-sm text-amber-800"
         >
           {registrationNotice}
+        </p>
+      )}
+      {recordActionError && (
+        <p
+          role="alert"
+          className="border-b border-red-500/30 bg-red-500/10 px-6 py-3 text-sm text-red-600"
+        >
+          {recordActionError}
         </p>
       )}
       {bulkSmsNotice && (
@@ -2120,6 +2195,25 @@ export default function CandidateRoster({
                           </button>
                         </>
                       )}
+                      {permissions.canDeleteCandidates && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void deleteRecord(
+                              "candidate",
+                              candidate.id,
+                              `${candidate.first_name} ${candidate.last_name}`,
+                            )
+                          }
+                          disabled={deletingRecordId === candidate.id}
+                          aria-label={`Delete ${candidate.first_name} ${candidate.last_name}`}
+                          title="Delete candidate"
+                          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                          style={{ color: "#b43c45" }}
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                        </button>
+                      )}
                     </div>
                   </td>
                   <td
@@ -2357,20 +2451,40 @@ export default function CandidateRoster({
                         {new Date(inquiry.created_at).toLocaleDateString()}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-right">
-                        {permissions.canRegisterCandidates && (
-                          <button
-                            type="button"
-                            onClick={() => registerFromInquiry(inquiry)}
-                            className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
-                            style={{
-                              borderColor: "var(--border)",
-                              color: "var(--foreground)",
-                            }}
-                          >
-                            <ArrowRight size={14} aria-hidden="true" />
-                            Complete Registration
-                          </button>
-                        )}
+                        <div className="inline-flex items-center gap-2">
+                          {permissions.canRegisterCandidates && (
+                            <button
+                              type="button"
+                              onClick={() => registerFromInquiry(inquiry)}
+                              className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                              style={{
+                                borderColor: "var(--border)",
+                                color: "var(--foreground)",
+                              }}
+                            >
+                              <ArrowRight size={14} aria-hidden="true" />
+                              Complete Registration
+                            </button>
+                          )}
+                          {permissions.canDeleteCandidates && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void deleteRecord(
+                                  "inquiry",
+                                  inquiry.id,
+                                  `${inquiry.inquiry_number} (${inquiry.first_name} ${inquiry.last_name})`,
+                                )
+                              }
+                              disabled={deletingRecordId === inquiry.id}
+                              aria-label={`Delete inquiry ${inquiry.inquiry_number} for ${inquiry.first_name} ${inquiry.last_name}`}
+                              title="Delete inquiry"
+                              className="inline-flex h-8 w-8 items-center justify-center border border-red-500/30 text-red-700 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                            >
+                              <Trash2 size={14} aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

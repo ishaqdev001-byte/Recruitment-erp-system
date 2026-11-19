@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ArrowUpRight, CircleDollarSign, FileSpreadsheet, FileText, Plus, Search, X } from "lucide-react";
+import { ArrowUpRight, CircleDollarSign, FileSpreadsheet, FileText, Plus, Search, Trash2, X } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
 import { matchesSearch } from "@/lib/search";
 
-type ReceiptType = "candidate_deposit" | "other_income" | "invoice_payment";
+type ReceiptType = "candidate_deposit" | "other_income" | "invoice_payment" | "company_expense";
 type CandidateOption = { candidate_id: string; file_number: string; candidate_name: string; account_id: string | null };
 type AccountOption = { id: string; name: string; account_type: string; account_number: string };
 type ProjectOption = { id: string; name: string };
 type PaymentTransaction = {
   id: string;
-  recordType: "receipt" | "invoice_payment";
+  recordId: string;
+  recordType: "receipt" | "invoice_payment" | "company_expense";
   reference: string;
   entryType: ReceiptType;
+  direction: "credit" | "debit";
   category: string;
   receivedFrom: string;
   candidateId: string | null;
@@ -31,14 +33,14 @@ type LedgerPayload = {
   projects?: ProjectOption[];
   candidates?: CandidateOption[];
   accounts?: AccountOption[];
-  permissions?: { canRecord?: boolean };
-  totals?: { totalReceived: number; candidateDeposits: number; invoicePayments: number; otherIncome: number };
+  permissions?: { canRecord?: boolean; canDelete?: boolean };
+  totals?: { totalReceived: number; totalCashOut: number; candidateDeposits: number; invoicePayments: number; otherIncome: number };
   error?: string;
 };
 
 const methods = ["Cash", "Bank transfer", "Mobile money", "Cheque", "Other"];
-const typeLabel: Record<ReceiptType, string> = { candidate_deposit: "Candidate deposit", other_income: "Other income", invoice_payment: "Invoice payment" };
-const typeColor: Record<ReceiptType, string> = { candidate_deposit: "#2878a8", other_income: "#b7791f", invoice_payment: "#17845b" };
+const typeLabel: Record<ReceiptType, string> = { candidate_deposit: "Candidate deposit", other_income: "Other income", invoice_payment: "Invoice payment", company_expense: "Cash-out" };
+const typeColor: Record<ReceiptType, string> = { candidate_deposit: "#2878a8", other_income: "#b7791f", invoice_payment: "#17845b", company_expense: "#c2413b" };
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 const money = (amount: number) => `UGX ${amount.toLocaleString("en-UG", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const localDate = () => {
@@ -52,7 +54,8 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
   const [candidates, setCandidates] = useState<CandidateOption[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [canRecord, setCanRecord] = useState(false);
-  const [totals, setTotals] = useState({ totalReceived: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
+  const [canDelete, setCanDelete] = useState(false);
+  const [totals, setTotals] = useState({ totalReceived: 0, totalCashOut: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
   const [loading, setLoading] = useState(true);
@@ -71,6 +74,7 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
   const [notes, setNotes] = useState("");
   const [receivedAt, setReceivedAt] = useState(localDate);
   const [reloadKey, setReloadKey] = useState(0);
+  const [deletingId, setDeletingId] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -94,7 +98,8 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
         setCandidates(payload.candidates ?? []);
         setAccounts(accountsPayload.accounts ?? []);
         setCanRecord(Boolean(payload.permissions?.canRecord));
-        setTotals(payload.totals ?? { totalReceived: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
+        setCanDelete(Boolean(payload.permissions?.canDelete));
+        setTotals(payload.totals ?? { totalReceived: 0, totalCashOut: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load receipts.");
       } finally {
@@ -169,16 +174,41 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
     }
   };
 
+  const deleteTransaction = async (transaction: PaymentTransaction) => {
+    const balanceEffect = transaction.direction === "debit"
+      ? "This reverses the cash-out and restores the amount to its account."
+      : "This removes the amount from the account it was received into.";
+    if (!window.confirm(`Delete ${typeLabel[transaction.entryType].toLowerCase()} ${transaction.reference}? ${balanceEffect}`)) return;
+
+    setDeletingId(transaction.id);
+    setError("");
+    try {
+      const response = await fetch("/api/payments", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recordType: transaction.recordType, recordId: transaction.recordId }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to delete this finance transaction.");
+      setReloadKey((key) => key + 1);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete this finance transaction.");
+    } finally {
+      setDeletingId("");
+    }
+  };
+
   return (
     <section className="flex h-full min-h-0 flex-col" aria-labelledby="payments-title">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4" style={{ borderColor: "var(--border)" }}>
-        <div><h1 id="payments-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Payments &amp; Deposits</h1><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Candidate deposits, other income, and invoice receipts</p></div>
+        <div><h1 id="payments-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Payments &amp; Deposits</h1><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Candidate deposits, other income, invoice receipts, and company cash-outs</p></div>
         <button type="button" onClick={() => { resetForm(); setError(""); setShowAdd(true); }} disabled={!canRecord || loading} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />Record receipt</button>
       </header>
 
-      <div className="grid grid-cols-2 border-b sm:grid-cols-4" style={{ borderColor: "var(--border)" }}>
+      <div className="grid grid-cols-2 border-b sm:grid-cols-5" style={{ borderColor: "var(--border)" }}>
         {[
           { label: "Total received", value: totals.totalReceived, color: "var(--foreground)" },
+          { label: "Total cash-out", value: totals.totalCashOut, color: "#c2413b" },
           { label: "Candidate deposits", value: totals.candidateDeposits, color: "#2878a8" },
           { label: "Invoice receipts", value: totals.invoicePayments, color: "#17845b" },
           { label: "Other income", value: totals.otherIncome, color: "#b7791f" },
@@ -187,7 +217,7 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex w-full max-w-md items-center gap-2 border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search receipts" placeholder="Search receipt, candidate, source, or invoice" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
+          <label className="flex w-full max-w-md items-center gap-2 border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search transactions" placeholder="Search transaction, candidate, source, or invoice" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
           <label className="sr-only" htmlFor="payments-project-filter">Filter by project</label>
           <select id="payments-project-filter" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="border px-3 py-2 text-sm outline-none" style={fieldStyle}>
             <option value="all">All projects</option>
@@ -196,17 +226,17 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
           <button type="button" onClick={() => void exportPayments("pdf")} disabled={Boolean(exporting) || loading} className="inline-flex items-center gap-2 border px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><FileText size={14} aria-hidden="true" />{exporting === "pdf" ? "Preparing PDF…" : "PDF"}</button>
           <button type="button" onClick={() => void exportPayments("excel")} disabled={Boolean(exporting) || loading} className="inline-flex items-center gap-2 border px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><FileSpreadsheet size={14} aria-hidden="true" />{exporting === "excel" ? "Preparing Excel…" : "Excel"}</button>
         </div>
-        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{filteredTransactions.length} receipts</span>
+        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>{filteredTransactions.length} transactions</span>
       </div>
 
       {error && <div role="alert" className="mx-6 mt-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="finance-table-scroll border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <table className="w-full min-w-240 text-sm">
-            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Received", "Receipt", "Project", "Received from", "Type", "Category", "Account", "Method", "Amount", "Reference", "Invoice", "Notes"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Date", "Transaction", "Project", "Received from / Paid to", "Type", "Category", "Account", "Method", "Amount", "Reference", "Invoice", "Notes", ...(canDelete ? ["Actions"] : [])].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={12} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading receipt history…</td></tr>}
-              {!loading && !error && filteredTransactions.length === 0 && <tr><td colSpan={12} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{transactions.length ? "No receipts match these filters." : "No receipts recorded yet."}</td></tr>}
+              {loading && <tr><td colSpan={canDelete ? 13 : 12} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading transaction history…</td></tr>}
+              {!loading && !error && filteredTransactions.length === 0 && <tr><td colSpan={canDelete ? 13 : 12} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{transactions.length ? "No transactions match these filters." : "No payments, deposits, or cash-outs recorded yet."}</td></tr>}
               {!loading && filteredTransactions.map((transaction) => <tr key={transaction.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{new Date(transaction.receivedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "var(--primary)" }}>{transaction.reference}</td>
@@ -216,10 +246,11 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{transaction.category}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--foreground)" }}>{accounts.find((account) => account.id === transaction.accountId)?.name ?? "—"}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{transaction.paymentMethod}</td>
-                <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: "#17845b" }}>{money(transaction.amount)}</td>
+                <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: transaction.direction === "debit" ? "#c2413b" : "#17845b" }}>{transaction.direction === "debit" ? "-" : "+"}{money(transaction.amount)}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{transaction.externalReference || "—"}</td>
                 <td className="whitespace-nowrap px-3 py-3">{transaction.invoiceNumber ? <button type="button" onClick={onOpenInvoices} className="inline-flex items-center gap-1 text-xs font-600 underline underline-offset-2" style={{ color: "var(--primary)" }}>{transaction.invoiceNumber}<ArrowUpRight size={12} aria-hidden="true" /></button> : <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>—</span>}</td>
                 <td className="max-w-56 truncate px-3 py-3 text-xs" title={transaction.notes} style={{ color: "var(--muted-foreground)" }}>{transaction.notes || "—"}</td>
+                {canDelete && <td className="whitespace-nowrap px-3 py-3"><button type="button" onClick={() => void deleteTransaction(transaction)} disabled={Boolean(deletingId)} aria-label={`Delete transaction ${transaction.reference}`} className="inline-flex items-center gap-1 border px-2 py-1 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "#c2413b" }}><Trash2 size={13} aria-hidden="true" />{deletingId === transaction.id ? "Deleting…" : "Delete"}</button></td>}
               </tr>)}
             </tbody>
           </table>

@@ -306,7 +306,7 @@ export async function GET(request: Request) {
       let expenseRequestQuery = access.supabase
         .from("expense_requests")
         .select(`
-          id, serial_number, request_number, expense_name, requested_by_name,
+          id, requisition_id, serial_number, request_number, expense_name, requested_by_name,
           purpose, amount, due_date, expense_category_id, expense_category_name,
           request_comment, line_items, created_at, created_by, status,
           line_manager_reviewed_at, line_manager_comment, rejected_stage,
@@ -353,6 +353,46 @@ export async function GET(request: Request) {
         )
       }
       expenseRequests = visibleRequests ?? []
+      const linkedRequisitionIds = [
+        ...new Set(
+          expenseRequests
+            .map((request) => request.requisition_id)
+            .filter((id): id is string => typeof id === "string"),
+        ),
+      ]
+      if (linkedRequisitionIds.length > 0) {
+        const { data: linkedRequisitions, error: linkedRequisitionError } =
+          await access.supabase
+            .from("company_requisitions")
+            .select("id, requisition_number")
+            .eq("company_id", access.companyId)
+            .in("id", linkedRequisitionIds)
+        if (linkedRequisitionError) {
+          console.error(
+            "Linked requisition number lookup failed",
+            linkedRequisitionError,
+          )
+          return NextResponse.json(
+            { error: "Unable to load requisition numbers." },
+            { status: 503, headers: responseHeaders },
+          )
+        }
+        const requisitionNumbers = new Map(
+          (linkedRequisitions ?? []).map((requisition) => [
+            requisition.id,
+            requisition.requisition_number,
+          ]),
+        )
+        expenseRequests = expenseRequests.map((request) => ({
+          ...request,
+          requisition_number:
+            requisitionNumbers.get(
+              typeof request.requisition_id === "string"
+                ? request.requisition_id
+                : "",
+            ) ?? request.requisition_number,
+        }))
+      }
     }
 
     const sourceRequestIds = (requisitions ?? [])

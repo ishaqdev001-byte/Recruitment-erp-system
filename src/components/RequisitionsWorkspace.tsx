@@ -60,6 +60,7 @@ import {
   Eye,
   FileText,
   Loader2,
+  Printer,
   Plus,
   Search,
   ShieldCheck,
@@ -619,6 +620,8 @@ export default function RequisitionsWorkspace() {
   const [detailItems, setDetailItems] = useState<RequisitionItem[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailPayments, setDetailPayments] = useState<RequisitionPayment[]>([])
+  const [documentActionError, setDocumentActionError] = useState("")
+  const [documentActionLoading, setDocumentActionLoading] = useState("")
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [formSaving, setFormSaving] = useState(false)
@@ -1089,6 +1092,7 @@ export default function RequisitionsWorkspace() {
   }
   const openDetail = async (req: Requisition) => {
     setDetailReq(req)
+    setDocumentActionError("")
     setDetailItems([])
     setDetailPayments([])
     setDetailLoading(true)
@@ -1118,6 +1122,73 @@ export default function RequisitionsWorkspace() {
       if (paymentsRes.ok) setDetailPayments(paymentsPayload.payments ?? [])
     } catch {}
     setDetailLoading(false)
+  }
+
+  const openRequisitionDocument = async (
+    req: Requisition,
+    forPrint: boolean,
+  ) => {
+    const printWindow = forPrint ? window.open("about:blank", "_blank") : null
+    if (forPrint && !printWindow) {
+      setDocumentActionError("Allow pop-ups to open the print dialog.")
+      return
+    }
+
+    setDocumentActionError("")
+    setDocumentActionLoading(req.id)
+    try {
+      const response = await fetch(
+        `/api/requisitions/${req.id}/pdf${forPrint ? "?print=1" : ""}`,
+        { cache: "no-store" },
+      )
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string
+        } | null
+        throw new Error(payload?.error ?? "Unable to generate requisition PDF.")
+      }
+
+      const pdfUrl = URL.createObjectURL(await response.blob())
+      if (forPrint && printWindow) {
+        printWindow.document.title = `Requisition ${req.requisition_number}`
+        printWindow.document.body.style.margin = "0"
+        const frame = printWindow.document.createElement("iframe")
+        frame.title = `Requisition ${req.requisition_number}`
+        frame.src = pdfUrl
+        frame.style.border = "0"
+        frame.style.height = "100vh"
+        frame.style.width = "100vw"
+        frame.onload = () => {
+          window.setTimeout(() => {
+            printWindow.focus()
+            frame.contentWindow?.print()
+          }, 300)
+        }
+        printWindow.document.body.append(frame)
+        printWindow.addEventListener(
+          "beforeunload",
+          () => URL.revokeObjectURL(pdfUrl),
+          { once: true },
+        )
+      } else {
+        const link = document.createElement("a")
+        link.href = pdfUrl
+        link.download = `${req.requisition_number}.pdf`
+        document.body.append(link)
+        link.click()
+        link.remove()
+        window.setTimeout(() => URL.revokeObjectURL(pdfUrl), 60_000)
+      }
+    } catch (error) {
+      printWindow?.close()
+      setDocumentActionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to generate requisition PDF.",
+      )
+    } finally {
+      setDocumentActionLoading("")
+    }
   }
 
   const closeDetail = () => {
@@ -1347,11 +1418,16 @@ export default function RequisitionsWorkspace() {
           note: reviewNote.trim(),
         }),
       })
-      const result = (await res.json()) as { ok?: boolean; error?: string }
+      const result = (await res.json()) as {
+        ok?: boolean
+        error?: string
+        warning?: string
+      }
       if (!res.ok) throw new Error(result.error ?? "Unable to submit review.")
       setReviewTarget(null)
       await loadList()
       await loadNotifications()
+      if (result.warning) setListError(result.warning)
       if (detailReq?.id === reviewTarget.req.id) await openDetail(detailReq)
     } catch (err) {
       setReviewError(
@@ -3417,6 +3493,62 @@ export default function RequisitionsWorkspace() {
 
                   {}
                   <div className="flex flex-col gap-2">
+                    {detailReq.status === "approved" &&
+                      detailReq.payment_status === "paid" &&
+                      Number(detailReq.amount_paid) >=
+                        Number(detailReq.total_amount) && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void openRequisitionDocument(detailReq, false)
+                            }
+                            disabled={documentActionLoading === detailReq.id}
+                            className="w-full rounded py-2.5 text-sm font-600 disabled:opacity-50"
+                            style={{ background: "#0f766e", color: "#fff" }}
+                          >
+                            {documentActionLoading === detailReq.id ? (
+                              <Loader2
+                                size={15}
+                                className="mr-2 inline animate-spin"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <FileText
+                                size={15}
+                                className="mr-2 inline"
+                                aria-hidden="true"
+                              />
+                            )}
+                            Generate PDF
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void openRequisitionDocument(detailReq, true)
+                            }
+                            disabled={documentActionLoading === detailReq.id}
+                            className="w-full rounded py-2.5 text-sm font-600 disabled:opacity-50"
+                            style={{
+                              background: "var(--secondary)",
+                              color: "var(--foreground)",
+                              border: "1px solid var(--border)",
+                            }}
+                          >
+                            <Printer
+                              size={15}
+                              className="mr-2 inline"
+                              aria-hidden="true"
+                            />
+                            Print
+                          </button>
+                        </div>
+                      )}
+                    {documentActionError && (
+                      <p className="text-xs text-red-500" role="alert">
+                        {documentActionError}
+                      </p>
+                    )}
                     {canVerifierEdit(detailReq) && (
                       <button
                         type="button"

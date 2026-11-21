@@ -22,13 +22,18 @@ async function getAccess() {
   if (authError || !user) return { error: "Authentication required.", status: 401 as const };
   const { data: membership } = await supabase
     .from("company_memberships")
-    .select("company_id")
+    .select("company_id, role_id")
     .eq("user_id", user.id)
     .eq("status", "active")
     .limit(1)
     .maybeSingle();
   if (!membership) return { error: "Active company membership not found.", status: 403 as const };
-  return { supabase, companyId: membership.company_id, userId: user.id };
+  return {
+    supabase,
+    companyId: membership.company_id,
+    roleId: membership.role_id,
+    userId: user.id,
+  };
 }
 
 async function insertNotification(
@@ -138,6 +143,42 @@ export async function POST(request: Request) {
 
     const result = data as { status: string; decision: string };
     const admin = createAdminClient();
+    let auditWarning: string | undefined;
+    if (admin) {
+      const [profileResult, roleResult] = await Promise.all([
+        admin.from("profiles").select("display_name").eq("id", access.userId).maybeSingle(),
+        admin.from("company_roles").select("name")
+          .eq("id", access.roleId)
+          .eq("company_id", access.companyId)
+          .maybeSingle(),
+      ]);
+      if (profileResult.error || roleResult.error) {
+        console.error("Requisition approval actor lookup failed", {
+          profile: profileResult.error,
+          role: roleResult.error,
+        });
+        auditWarning = "Review saved, but its action details could not be recorded.";
+      } else {
+        const { error: auditError } = await admin.from("approval_history").insert({
+          company_id: access.companyId,
+          request_id: requisitionId,
+          request_type: "requisition",
+          stage,
+          action: decision,
+          actor_id: access.userId,
+          actor_name: profileResult.data?.display_name ?? null,
+          actor_role: roleResult.data?.name ?? null,
+          notes: note || null,
+        });
+        if (auditError) {
+          console.error("Requisition approval audit insert failed", auditError);
+          auditWarning = "Review saved, but its action details could not be recorded.";
+        }
+      }
+    } else {
+      console.error("Requisition approval audit requires the service role client.");
+      auditWarning = "Review saved, but its action details could not be recorded.";
+    }
     const stageLabel = stageLabels[stage] ?? stage;
     const reqTitle = `${req.requisition_number} — ${req.title}`;
 
@@ -167,7 +208,15 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ ok: true, status: result.status, decision: result.decision }, { headers: responseHeaders });
+    return NextResponse.json(
+      {
+        ok: true,
+        status: result.status,
+        decision: result.decision,
+        ...(auditWarning ? { warning: auditWarning } : {}),
+      },
+      { headers: responseHeaders },
+    );
   } catch (err) {
     console.error("Requisitions review POST failed", err);
     return NextResponse.json({ error: "Requisition review is unavailable." }, { status: 503, headers: responseHeaders });

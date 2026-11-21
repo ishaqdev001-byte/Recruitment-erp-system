@@ -955,11 +955,11 @@ export default function TopBar({
                       <div className="text-xs font-600" style={{ color: "var(--foreground)" }}>
                         {pushSettings?.subscribed ? "Browser alerts are enabled" : "Browser and system alerts"}
                       </div>
-                      <div className="mt-1 text-[11px]" style={{ color: "var(--muted-foreground)" }}>
-                        {pushSettings?.dispatchConfigured
-                          ? "A 1-minute server schedule is still required for closed-browser alerts."
-                          : "Closed-browser delivery needs a scheduled server dispatcher."}
-                      </div>
+                      {!pushSettings?.subscribed && (
+                        <div className="mt-1 text-[11px]" style={{ color: "var(--muted-foreground)" }}>
+                          Closed-browser delivery needs a scheduled server dispatcher.
+                        </div>
+                      )}
                     </div>
                     {pushSettings?.configured ? (
                       <button

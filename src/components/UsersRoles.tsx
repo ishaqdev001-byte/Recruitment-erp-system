@@ -73,12 +73,19 @@ type RoleRecord = {
   access_settings?: RoleAccessSettings
 }
 
-type PermissionRecord = { code: string; description: string }
+type PermissionRecord = {
+  code: string
+  description: string
+}
 
-type RolePermissionRecord = { role_id: string; permission_code: string }
+type RolePermissionRecord = {
+  role_id: string
+  permission_code: string
+}
 
 async function readRoleMutationResponse<T>(
   response: Response,
+
   action: string,
 ): Promise<T> {
   const contentType = response.headers.get("content-type") ?? "unknown"
@@ -94,8 +101,11 @@ async function readRoleMutationResponse<T>(
   } catch {
     console.error("Role management returned an invalid response", {
       action,
+
       status: response.status,
+
       contentType,
+
       redirected: response.redirected,
     })
 
@@ -161,29 +171,49 @@ type StaffRecord = {
 
 function getNormalizedNameParts(value: string) {
   return value
+
     .normalize("NFD")
+
     .replace(/\p{M}/gu, "")
+
     .toLocaleLowerCase()
+
     .split(/[^\p{L}\p{N}]+/u)
+
     .filter(Boolean)
 }
 
 type UserEditForm = {
   name: string
+
   email: string
+
   phone: string
+
   roleId: string
+
   branchId: string
+
   status: "active" | "disabled" | "invited"
+
   userType: "staff" | "member"
+
   positionId: string
+
   staffStatus: StaffRecord["status"]
+
   dateJoined: string
+
   lineManagerStaffId: string
+
   payType: StaffPayType
+
   baseSalary: string
+
   weeklyTransportAllowance: string
+
   transportAccountMode: TransportAccountMode
+
   transportAccountId: string
 }
 
@@ -221,7 +251,9 @@ type BranchOption = {
 
 type StaffPosition = {
   id: string
+
   name: string
+
   is_active: boolean
 }
 
@@ -361,6 +393,12 @@ const permissionCodeLabels: Record<string, string> = {
   "expense_items.manage": "Manage the company item catalog",
 
   "expense_items.custom": "Use unlisted catalog items",
+
+  "requisitions.items.create": "Add items to linked Expense Requests",
+
+  "requisitions.items.edit": "Edit linked Expense Request items",
+
+  "requisitions.items.delete": "Delete linked Expense Request items",
 
   "staff.positions.manage": "Manage position settings",
 
@@ -718,20 +756,35 @@ const emptyInvitedStaffForm = {
 
 const emptyUserEditForm = (): UserEditForm => ({
   name: "",
+
   email: "",
+
   phone: "",
+
   roleId: "",
+
   branchId: "",
+
   status: "active",
+
   userType: "member",
+
   positionId: "",
+
   staffStatus: "Active",
+
   dateJoined: "",
+
   lineManagerStaffId: "",
+
   payType: "no_payroll",
+
   baseSalary: "0",
+
   weeklyTransportAllowance: "0",
+
   transportAccountMode: "fixed",
+
   transportAccountId: "",
 })
 
@@ -789,6 +842,7 @@ export default function UsersRoles({
 
   const [workCalendar, setWorkCalendar] = useState<CompanyWorkCalendar>({
     schedule: DEFAULT_WORK_SCHEDULE,
+
     closureDates: [],
   })
 
@@ -996,6 +1050,7 @@ export default function UsersRoles({
 
     const loadStaff = async () => {
       setStaffLoading(true)
+
       setStaffLoadError("")
 
       try {
@@ -1036,6 +1091,7 @@ export default function UsersRoles({
           setWorkCalendar(
             result.workCalendar ?? {
               schedule: DEFAULT_WORK_SCHEDULE,
+
               closureDates: [],
             },
           )
@@ -1062,7 +1118,9 @@ export default function UsersRoles({
             loadError instanceof Error
               ? loadError.message
               : "Unable to load staff records."
+
           setStaffLoadError(message)
+
           setError(message)
         }
       } finally {
@@ -1082,6 +1140,7 @@ export default function UsersRoles({
 
     if (userInviteMode === "email-link" && !userPhone.trim()) {
       setError("Enter a phone number before sending the invitation.")
+
       return
     }
 
@@ -1094,7 +1153,9 @@ export default function UsersRoles({
     try {
       const userDetails = {
         userType,
+
         phone: userPhone,
+
         existingStaffId: selectedExistingStaffId || undefined,
 
         ...(userType === "staff"
@@ -1188,7 +1249,9 @@ export default function UsersRoles({
 
         const result = (await response.json()) as {
           error?: string
+
           invitationEmailSent?: boolean
+
           invitationEmailWarning?: string
         }
 
@@ -1233,63 +1296,96 @@ export default function UsersRoles({
 
   const openEditUserType = async (user: UserRecord) => {
     setUserActionPending(user.id)
+
     setEditUserLoading(true)
+
     setError("")
+
     setNotice("")
+
     try {
       const response = await fetch("/api/workspace/staff", {
         cache: "no-store",
       })
+
       const result = (await response.json()) as {
         staff?: StaffRecord[]
+
         positions?: StaffPosition[]
+
         accounts?: StaffAccount[]
+
         branches?: BranchOption[]
+
         error?: string
       }
+
       if (!response.ok)
         throw new Error(result.error ?? "Unable to load staff details.")
 
       const linkedRecords = (result.staff ?? []).filter(
         (staff) => staff.linkedUserId === user.id,
       )
+
       if (linkedRecords.length > 1)
         throw new Error(
           "This user has multiple linked staff records. Contact support.",
         )
 
       const staff = linkedRecords[0] ?? null
+
       setStaffMembers(result.staff ?? [])
+
       setStaffPositions(result.positions ?? [])
+
       setStaffAccounts(result.accounts ?? [])
+
       setStaffBranches(result.branches ?? [])
+
       setEditingUserStaff(staff)
+
       setEditUserForm({
         name: user.name,
+
         email: user.email,
+
         phone: staff?.phone ?? user.phone,
+
         roleId: user.roleId,
+
         branchId:
           user.branchId ??
           result.branches?.find((branch) => branch.isMainBranch)?.id ??
           "",
+
         status:
           user.status === "disabled"
             ? "disabled"
             : user.status === "invited"
               ? "invited"
               : "active",
+
         userType: user.userType,
+
         positionId: staff?.positionId ?? "",
+
         staffStatus: staff?.status ?? "Active",
+
         dateJoined: staff?.dateJoined ?? "",
+
         lineManagerStaffId: staff?.lineManagerStaffId ?? "",
+
         payType: staff?.payType ?? "no_payroll",
+
         baseSalary: String(staff?.baseSalary ?? 0),
+
         weeklyTransportAllowance: String(staff?.weeklyTransportAllowance ?? 0),
+
         transportAccountMode: staff?.transportAccountMode ?? "fixed",
+
         transportAccountId: staff?.transportAccountId ?? "",
       })
+
       setEditingUserType(user)
     } catch (loadError) {
       setError(
@@ -1299,12 +1395,14 @@ export default function UsersRoles({
       )
     } finally {
       setEditUserLoading(false)
+
       setUserActionPending("")
     }
   }
 
   const submitUserType = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
     if (!editingUserType) return
 
     if (
@@ -1318,56 +1416,85 @@ export default function UsersRoles({
     }
 
     setSaving(true)
+
     setUserActionPending(editingUserType.id)
+
     setError("")
+
     setNotice("")
+
     try {
       const response = await fetch("/api/workspace/users", {
         method: "POST",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({
           action: "edit-user-details",
+
           userId: editingUserType.id,
+
           name: editUserForm.name,
+
           email: editUserForm.email,
+
           phone: editUserForm.phone,
+
           roleId: editUserForm.roleId,
+
           branchId: editUserForm.branchId,
+
           status: editUserForm.status,
+
           userType: editUserForm.userType,
+
           ...(editUserForm.userType === "staff"
             ? {
                 staff: {
                   positionId: editUserForm.positionId,
+
                   status: editUserForm.staffStatus,
+
                   dateJoined: editUserForm.dateJoined,
+
                   lineManagerStaffId: editUserForm.lineManagerStaffId,
+
                   payType: editUserForm.payType,
+
                   baseSalary: editUserForm.baseSalary,
+
                   weeklyTransportAllowance:
                     editUserForm.weeklyTransportAllowance,
+
                   transportAccountMode: editUserForm.transportAccountMode,
+
                   transportAccountId: editUserForm.transportAccountId,
                 },
               }
             : {}),
         }),
       })
+
       const result = (await response.json()) as {
         error?: string
+
         emailChangePending?: boolean
+
         emailChangeWarning?: string
       }
+
       if (!response.ok)
         throw new Error(result.error ?? "Unable to update user details.")
 
       setEditingUserType(null)
+
       setNotice(
         result.emailChangeWarning ??
           (result.emailChangePending
             ? `${editUserForm.name} was updated. Confirm the email change using the links sent to the current and new addresses.`
             : `${editUserForm.name} was updated.`),
       )
+
       setReloadKey((key) => key + 1)
     } catch (saveError) {
       setError(
@@ -1377,6 +1504,7 @@ export default function UsersRoles({
       )
     } finally {
       setSaving(false)
+
       setUserActionPending("")
     }
   }
@@ -1588,6 +1716,7 @@ export default function UsersRoles({
 
       const result = (await response.json()) as {
         ok?: boolean
+
         error?: string
       }
 
@@ -1638,6 +1767,7 @@ export default function UsersRoles({
 
     if (action === "relink-account" && !email?.trim()) {
       setError("Enter the new login email address.")
+
       return
     }
 
@@ -1693,6 +1823,7 @@ export default function UsersRoles({
 
       if (action === "relink-account") {
         setRelinkingUserId("")
+
         setRelinkEmail("")
       }
 
@@ -1795,9 +1926,11 @@ export default function UsersRoles({
 
   const deleteStaff = async (member: StaffRecord) => {
     const hasLinkedUser = Boolean(member.linkedUserId)
+
     const linkedUser = data.users.find(
       (user) => user.id === member.linkedUserId,
     )
+
     const accountDetails = hasLinkedUser
       ? ` Their membership in this company will also be removed${
           linkedUser?.email ? ` (${linkedUser.email})` : ""
@@ -1812,28 +1945,37 @@ export default function UsersRoles({
       return
 
     setDeletingStaffId(member.id)
+
     setError("")
+
     setNotice("")
 
     try {
       const response = await fetch("/api/workspace/staff", {
         method: "DELETE",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({ id: member.id }),
       })
+
       const result = (await response.json()) as {
         error?: string
+
         removedCompanyMembership?: boolean
       }
+
       if (!response.ok)
         throw new Error(result.error ?? "Unable to delete staff record.")
 
       clearClientApiCache()
+
       setNotice(
         result.removedCompanyMembership
           ? `${member.name} and their company membership were deleted.`
           : `${member.name}'s staff record was deleted.`,
       )
+
       setReloadKey((key) => key + 1)
     } catch (deleteError) {
       setError(
@@ -2008,7 +2150,9 @@ export default function UsersRoles({
   )
 
   const currentUser = data.users.find((user) => user.id === currentUserId)
+
   const canEditUserType = Boolean(currentUser?.isPrimaryAdmin)
+
   const canViewBranchMembers = Boolean(
     currentUser &&
       (currentUser.isPrimaryAdmin ||
@@ -2031,6 +2175,7 @@ export default function UsersRoles({
   const visibleUsers = data.users.filter((user) => {
     const matchesType =
       userTypeFilter === "all" || user.userType === userTypeFilter
+
     const matchesBranch =
       userBranchFilter === "all" || user.branchId === userBranchFilter
 
@@ -2048,26 +2193,41 @@ export default function UsersRoles({
   const selectedExistingStaff = staffMembers.find(
     (staff) => staff.id === selectedExistingStaffId,
   )
+
   const currentPayrollPeriod = getCurrentPayPeriod()
+
   const currentPayrollWorkingDays = getWorkingDaysInMonth(
     currentPayrollPeriod,
+
     workCalendar.schedule,
+
     workCalendar.closureDates,
   )
+
   const staffMonthlyTransportBenefit = calculateMonthlyTransportAllowance(
     Number(staffForm.weeklyTransportAllowance),
+
     currentPayrollPeriod,
+
     workCalendar.schedule,
+
     workCalendar.closureDates,
   )
+
   const invitedMonthlyTransportBenefit = calculateMonthlyTransportAllowance(
     Number(invitedStaffForm.weeklyTransportAllowance),
+
     currentPayrollPeriod,
+
     workCalendar.schedule,
+
     workCalendar.closureDates,
   )
+
   const companyUserIds = new Set(data.users.map((user) => user.id))
+
   const staffNameSearchParts = getNormalizedNameParts(userName)
+
   const staffNameCandidates =
     userType === "staff" &&
     !selectedExistingStaff &&
@@ -2075,62 +2235,98 @@ export default function UsersRoles({
     userName.trim().length >= 2
       ? staffMembers.filter((staff) => {
           const normalizedStaffName = getNormalizedNameParts(staff.name)
+
           return staffNameSearchParts.every((part) =>
             normalizedStaffName.some((namePart) => namePart.includes(part)),
           )
         })
       : []
+
   const staffNameMatches = staffNameCandidates
+
     .filter(
       (staff) =>
         staff.status.trim().toLocaleLowerCase() === "active" &&
         (!staff.linkedUserId || !companyUserIds.has(staff.linkedUserId)),
     )
+
     .slice(0, 8)
 
   const selectExistingStaff = (staff: StaffRecord) => {
     setSelectedExistingStaffId(staff.id)
+
     setUserName(staff.name)
+
     setUserPhone(staff.phone)
+
     setUserBranchId(staff.branchId)
+
     setInvitedStaffForm({
       positionId: staff.positionId,
+
       dateJoined: staff.dateJoined,
+
       payType: staff.payType,
+
       baseSalary: String(staff.baseSalary),
+
       weeklyTransportAllowance: String(staff.weeklyTransportAllowance),
+
       transportAccountMode: staff.transportAccountMode,
+
       transportAccountId: staff.transportAccountId,
+
       lineManagerStaffId: staff.lineManagerStaffId,
     })
+
     setInviteStep("details")
   }
 
   const openNewUser = () => {
     setError("")
+
     setUserName("")
+
     setUserPhone("")
+
     setUserEmail("")
+
     setSelectedExistingStaffId("")
+
     setUserDefaultPassword("")
+
     setUserInviteMode("email-link")
+
     setUserType("member")
+
     setInviteStep("account-type")
+
     setInvitedStaffForm(emptyInvitedStaffForm)
+
     setShowNewUser(true)
   }
 
   const closeNewUser = () => {
     setShowNewUser(false)
+
     setError("")
+
     setUserName("")
+
     setUserPhone("")
+
     setUserEmail("")
+
     setSelectedExistingStaffId("")
+
     setUserDefaultPassword("")
+
     setUserInviteMode("email-link")
+
     setUserType("member")
+
     setInviteStep("account-type")
+
     setInvitedStaffForm(emptyInvitedStaffForm)
   }
 
@@ -2309,6 +2505,7 @@ export default function UsersRoles({
                   userBranchFilter === "all"
                     ? "var(--primary)"
                     : "var(--border)",
+
                 color:
                   userBranchFilter === "all"
                     ? "var(--primary)"
@@ -2321,7 +2518,9 @@ export default function UsersRoles({
               const memberCount = data.users.filter(
                 (user) => user.branchId === branch.id,
               ).length
+
               const selected = userBranchFilter === branch.id
+
               return (
                 <button
                   key={branch.id}
@@ -2331,6 +2530,7 @@ export default function UsersRoles({
                   className="rounded border px-3 py-1.5 text-xs font-600"
                   style={{
                     borderColor: selected ? "var(--primary)" : "var(--border)",
+
                     color: selected
                       ? "var(--primary)"
                       : "var(--muted-foreground)",
@@ -2573,6 +2773,7 @@ export default function UsersRoles({
                                 className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                                 style={{
                                   borderColor: "var(--border)",
+
                                   color: "var(--primary)",
                                 }}
                               >
@@ -2598,10 +2799,14 @@ export default function UsersRoles({
                               <form
                                 onSubmit={(event) => {
                                   event.preventDefault()
+
                                   void manageUser(
                                     user,
+
                                     "relink-account",
+
                                     undefined,
+
                                     relinkEmail,
                                   )
                                 }}
@@ -2626,6 +2831,7 @@ export default function UsersRoles({
                                   className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                                   style={{
                                     borderColor: "var(--border)",
+
                                     color: "var(--primary)",
                                   }}
                                 >
@@ -2636,11 +2842,13 @@ export default function UsersRoles({
                                   disabled={userActionPending === user.id}
                                   onClick={() => {
                                     setRelinkingUserId("")
+
                                     setRelinkEmail("")
                                   }}
                                   className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                                   style={{
                                     borderColor: "var(--border)",
+
                                     color: "var(--muted-foreground)",
                                   }}
                                 >
@@ -2653,6 +2861,7 @@ export default function UsersRoles({
                                 disabled={userActionPending === user.id}
                                 onClick={() => {
                                   setRelinkingUserId(user.id)
+
                                   setRelinkEmail(
                                     user.status === "invited" ? user.email : "",
                                   )
@@ -2660,6 +2869,7 @@ export default function UsersRoles({
                                 className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                                 style={{
                                   borderColor: "var(--border)",
+
                                   color: "var(--primary)",
                                 }}
                               >
@@ -2713,6 +2923,7 @@ export default function UsersRoles({
                               className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                               style={{
                                 borderColor: "var(--border)",
+
                                 color: "#f59e0b",
                               }}
                             >
@@ -3343,6 +3554,7 @@ export default function UsersRoles({
                                   className="rounded border px-3 py-1.5 text-xs font-600 disabled:opacity-50"
                                   style={{
                                     borderColor: "#ef444440",
+
                                     color: "#ef4444",
                                   }}
                                 >
@@ -3397,8 +3609,10 @@ export default function UsersRoles({
             onSubmit={(event) => {
               if (inviteStep !== "details") {
                 event.preventDefault()
+
                 return
               }
+
               void submitUser(event)
             }}
             className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded border p-6"
@@ -3450,16 +3664,23 @@ export default function UsersRoles({
                   type="button"
                   onClick={() => {
                     setUserType("staff")
+
                     setUserName("")
+
                     setUserPhone("")
+
                     setUserEmail("")
+
                     setSelectedExistingStaffId("")
+
                     setInvitedStaffForm(emptyInvitedStaffForm)
+
                     setInviteStep("staff-search")
                   }}
                   className="w-full rounded border p-4 text-left"
                   style={{
                     borderColor: "var(--border)",
+
                     background: "var(--secondary)",
                   }}
                 >
@@ -3481,16 +3702,23 @@ export default function UsersRoles({
                   type="button"
                   onClick={() => {
                     setUserType("member")
+
                     setUserName("")
+
                     setUserPhone("")
+
                     setUserEmail("")
+
                     setSelectedExistingStaffId("")
+
                     setInvitedStaffForm(emptyInvitedStaffForm)
+
                     setInviteStep("details")
                   }}
                   className="w-full rounded border p-4 text-left"
                   style={{
                     borderColor: "var(--border)",
+
                     background: "var(--secondary)",
                   }}
                 >
@@ -3513,6 +3741,7 @@ export default function UsersRoles({
                   className="w-full rounded border py-2 text-sm"
                   style={{
                     borderColor: "var(--border)",
+
                     color: "var(--muted-foreground)",
                   }}
                 >
@@ -3589,6 +3818,7 @@ export default function UsersRoles({
                     className="max-h-56 overflow-y-auto rounded border py-1"
                     style={{
                       background: "var(--card)",
+
                       borderColor: "var(--border)",
                     }}
                   >
@@ -3640,6 +3870,7 @@ export default function UsersRoles({
                     className="flex-1 rounded border py-2 text-sm"
                     style={{
                       borderColor: "var(--border)",
+
                       color: "var(--muted-foreground)",
                     }}
                   >
@@ -3653,13 +3884,17 @@ export default function UsersRoles({
                         type="button"
                         onClick={() => {
                           setSelectedExistingStaffId("")
+
                           setUserPhone("")
+
                           setInvitedStaffForm(emptyInvitedStaffForm)
+
                           setInviteStep("details")
                         }}
                         className="flex-1 rounded border py-2 text-sm"
                         style={{
                           borderColor: "var(--border)",
+
                           color: "var(--foreground)",
                         }}
                       >
@@ -3750,8 +3985,11 @@ export default function UsersRoles({
                           type="button"
                           onClick={() => {
                             setSelectedExistingStaffId("")
+
                             setUserPhone("")
+
                             setInvitedStaffForm(emptyInvitedStaffForm)
+
                             setInviteStep("staff-search")
                           }}
                           className="shrink-0 text-xs font-600"
@@ -3763,37 +4001,49 @@ export default function UsersRoles({
                       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
                         {[
                           ["Phone", userPhone.trim() || "Not provided"],
+
                           [
                             "Branch",
+
                             branches.find(
                               (branch) =>
                                 branch.id === selectedExistingStaff.branchId,
                             )?.name ?? "Company branch",
                           ],
+
                           [
                             "Line manager",
+
                             staffMembers.find(
                               (staff) =>
                                 staff.id ===
                                 selectedExistingStaff.lineManagerStaffId,
                             )?.name ?? "None",
                           ],
+
                           [
                             "Joined",
+
                             selectedExistingStaff.dateJoined || "Not provided",
                           ],
+
                           [
                             "Pay arrangement",
+
                             selectedExistingStaff.payType.replace(/_/g, " "),
                           ],
+
                           [
                             "Monthly salary",
+
                             selectedExistingStaff.baseSalary
                               ? `${selectedExistingStaff.baseSalary}`
                               : "Not applicable",
                           ],
+
                           [
                             "Weekly transport",
+
                             selectedExistingStaff.weeklyTransportAllowance
                               ? `${selectedExistingStaff.weeklyTransportAllowance}`
                               : "0",
@@ -3896,9 +4146,12 @@ export default function UsersRoles({
                         value={userBranchId}
                         onChange={(e) => {
                           setUserBranchId(e.target.value)
+
                           setInvitedStaffForm((current) => ({
                             ...current,
+
                             lineManagerStaffId: "",
+
                             transportAccountId: "",
                           }))
                         }}
@@ -3930,6 +4183,7 @@ export default function UsersRoles({
                           onChange={(event) =>
                             setInvitedStaffForm((current) => ({
                               ...current,
+
                               positionId: event.target.value,
                             }))
                           }
@@ -3938,7 +4192,9 @@ export default function UsersRoles({
                         >
                           <option value="">Select position</option>
                           {staffPositions
+
                             .filter((position) => position.is_active)
+
                             .map((position) => (
                               <option key={position.id} value={position.id}>
                                 {position.name}
@@ -3966,6 +4222,7 @@ export default function UsersRoles({
                         >
                           <option value="">No line manager</option>
                           {staffMembers
+
                             .filter(
                               (manager) =>
                                 manager.status === "Active" ||
@@ -4062,6 +4319,7 @@ export default function UsersRoles({
                               onChange={(event) =>
                                 setInvitedStaffForm((current) => ({
                                   ...current,
+
                                   baseSalary: event.target.value,
                                 }))
                               }
@@ -4116,8 +4374,10 @@ export default function UsersRoles({
                                   onChange={(event) =>
                                     setInvitedStaffForm((current) => ({
                                       ...current,
+
                                       transportAccountMode: event.target
                                         .value as TransportAccountMode,
+
                                       transportAccountId:
                                         event.target.value === "fixed"
                                           ? current.transportAccountId
@@ -4156,13 +4416,17 @@ export default function UsersRoles({
                                       onChange={(transportAccountId) =>
                                         setInvitedStaffForm((current) => ({
                                           ...current,
+
                                           transportAccountId,
                                         }))
                                       }
                                       options={staffAccounts.map((account) => ({
                                         value: account.id,
+
                                         label: account.name,
+
                                         description: `${account.account_type.replace(/_/g, " ")} · ${account.account_number}`,
+
                                         searchText: account.account_number,
                                       }))}
                                       placeholder="Select fixed funding account"
@@ -4199,8 +4463,10 @@ export default function UsersRoles({
                                 {currentPayrollWorkingDays} working days): UGX{" "}
                                 {invitedMonthlyTransportBenefit.toLocaleString(
                                   "en-UG",
+
                                   {
                                     minimumFractionDigits: 2,
+
                                     maximumFractionDigits: 2,
                                   },
                                 )}
@@ -4306,9 +4572,12 @@ export default function UsersRoles({
                       if (userType === "staff") {
                         if (selectedExistingStaff) {
                           setSelectedExistingStaffId("")
+
                           setUserPhone("")
+
                           setInvitedStaffForm(emptyInvitedStaffForm)
                         }
+
                         setInviteStep("staff-search")
                       } else {
                         setInviteStep("account-type")
@@ -4317,6 +4586,7 @@ export default function UsersRoles({
                     className="flex-1 rounded border py-2 text-sm"
                     style={{
                       borderColor: "var(--border)",
+
                       color: "var(--muted-foreground)",
                     }}
                   >
@@ -4328,6 +4598,7 @@ export default function UsersRoles({
                     className="flex-1 rounded border py-2 text-sm"
                     style={{
                       borderColor: "var(--border)",
+
                       color: "var(--muted-foreground)",
                     }}
                   >
@@ -4353,7 +4624,9 @@ export default function UsersRoles({
               className="rounded border p-6 text-sm"
               style={{
                 background: "var(--card)",
+
                 borderColor: "var(--border)",
+
                 color: "var(--muted-foreground)",
               }}
             >
@@ -4365,6 +4638,7 @@ export default function UsersRoles({
               className="max-h-[92dvh] w-full max-w-3xl overflow-y-auto rounded border p-6"
               style={{
                 background: "var(--card)",
+
                 borderColor: "var(--border)",
               }}
             >
@@ -4395,6 +4669,7 @@ export default function UsersRoles({
                     onChange={(event) =>
                       setEditUserForm((form) => ({
                         ...form,
+
                         name: event.target.value,
                       }))
                     }
@@ -4413,6 +4688,7 @@ export default function UsersRoles({
                     onChange={(event) =>
                       setEditUserForm((form) => ({
                         ...form,
+
                         phone: event.target.value,
                       }))
                     }
@@ -4433,6 +4709,7 @@ export default function UsersRoles({
                     onChange={(event) =>
                       setEditUserForm((form) => ({
                         ...form,
+
                         email: event.target.value,
                       }))
                     }
@@ -4451,6 +4728,7 @@ export default function UsersRoles({
                     onChange={(event) =>
                       setEditUserForm((form) => ({
                         ...form,
+
                         roleId: event.target.value,
                       }))
                     }
@@ -4459,7 +4737,9 @@ export default function UsersRoles({
                   >
                     <option value="">Select role</option>
                     {data.roles
+
                       .filter((role) => !isPrimaryAdministratorRole(role.name))
+
                       .map((role) => (
                         <option key={role.id} value={role.id}>
                           {role.name}
@@ -4478,6 +4758,7 @@ export default function UsersRoles({
                     onChange={(event) =>
                       setEditUserForm((form) => ({
                         ...form,
+
                         branchId: event.target.value,
                       }))
                     }
@@ -4502,6 +4783,7 @@ export default function UsersRoles({
                     onChange={(event) =>
                       setEditUserForm((form) => ({
                         ...form,
+
                         status: event.target.value as UserEditForm["status"],
                       }))
                     }
@@ -4527,6 +4809,7 @@ export default function UsersRoles({
                     onChange={(event) =>
                       setEditUserForm((form) => ({
                         ...form,
+
                         userType: event.target
                           .value as UserEditForm["userType"],
                       }))
@@ -4549,6 +4832,7 @@ export default function UsersRoles({
                   className="mt-4 rounded border p-3 text-xs"
                   style={{
                     borderColor: "var(--border)",
+
                     color: "var(--muted-foreground)",
                   }}
                 >
@@ -4576,6 +4860,7 @@ export default function UsersRoles({
                   className="rounded border px-4 py-2 text-sm disabled:opacity-50"
                   style={{
                     borderColor: "var(--border)",
+
                     color: "var(--muted-foreground)",
                   }}
                 >
@@ -4600,6 +4885,7 @@ export default function UsersRoles({
                   className="rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
                   style={{
                     background: "var(--primary)",
+
                     color: "var(--primary-foreground)",
                   }}
                 >
@@ -4966,11 +5252,13 @@ export default function UsersRoles({
                 {([
                   [
                     "candidate_registration",
+
                     "Allow registering candidates from inquiries",
                   ],
 
                   [
                     "agent_visa_finance",
+
                     "Allow agent-specific invoices and candidate receipts",
                   ],
                 ] as const)
@@ -5224,6 +5512,7 @@ export default function UsersRoles({
                   onChange={(event) =>
                     setStaffForm((current) => ({
                       ...current,
+
                       positionId: event.target.value,
                     }))
                   }
@@ -5232,11 +5521,13 @@ export default function UsersRoles({
                 >
                   <option value="">Select position</option>
                   {staffPositions
+
                     .filter(
                       (position) =>
                         position.is_active ||
                         position.id === staffForm.positionId,
                     )
+
                     .map((position) => (
                       <option key={position.id} value={position.id}>
                         {position.name}
@@ -5442,6 +5733,7 @@ export default function UsersRoles({
                         {currentPayrollWorkingDays} working days): UGX{" "}
                         {staffMonthlyTransportBenefit.toLocaleString("en-UG", {
                           minimumFractionDigits: 2,
+
                           maximumFractionDigits: 2,
                         })}
                       </p>
@@ -5455,8 +5747,10 @@ export default function UsersRoles({
                           onChange={(event) =>
                             setStaffForm((current) => ({
                               ...current,
+
                               transportAccountMode: event.target
                                 .value as TransportAccountMode,
+
                               transportAccountId:
                                 event.target.value === "fixed"
                                   ? current.transportAccountId
@@ -5489,13 +5783,17 @@ export default function UsersRoles({
                               onChange={(transportAccountId) =>
                                 setStaffForm((current) => ({
                                   ...current,
+
                                   transportAccountId,
                                 }))
                               }
                               options={staffAccounts.map((account) => ({
                                 value: account.id,
+
                                 label: account.name,
+
                                 description: `${account.account_type.replace(/_/g, " ")} · ${account.account_number}`,
+
                                 searchText: account.account_number,
                               }))}
                               placeholder="Select fixed funding account"

@@ -234,6 +234,18 @@ export async function GET(request: Request) {
           requested_company_id: access.companyId,
           requested_permission: "expense_requests.initiate",
         }),
+        access.supabase.rpc("current_user_has_company_permission", {
+          requested_company_id: access.companyId,
+          requested_permission: "requisitions.items.create",
+        }),
+        access.supabase.rpc("current_user_has_company_permission", {
+          requested_company_id: access.companyId,
+          requested_permission: "requisitions.items.edit",
+        }),
+        access.supabase.rpc("current_user_has_company_permission", {
+          requested_company_id: access.companyId,
+          requested_permission: "requisitions.items.delete",
+        }),
       ]),
       canCreateRequisitions(access),
     ])
@@ -251,6 +263,9 @@ export async function GET(request: Request) {
       canEditExpenseRequests,
       canDeleteExpenseRequests,
       canInitiateExpenseRequestPermission,
+      canCreateLinkedItems,
+      canEditLinkedItems,
+      canDeleteLinkedItems,
     ] = permissionResults.map((result) => Boolean(result.data))
     if (
       !canView &&
@@ -258,7 +273,10 @@ export async function GET(request: Request) {
       !canReview &&
       !canVerify &&
       !canAuthorize &&
-      !canInitiateExpenseRequestPermission
+      !canInitiateExpenseRequestPermission &&
+      !canCreateLinkedItems &&
+      !canEditLinkedItems &&
+      !canDeleteLinkedItems
     ) {
       return NextResponse.json(
         { error: "You do not have permission to view requisitions." },
@@ -287,7 +305,13 @@ export async function GET(request: Request) {
     if (statusFilter) query = query.eq("status", statusFilter)
     if (myOnly && canView) query = query.eq("created_by", access.userId)
     if (!access.isMainBranch) query = query.eq("branch_id", access.branchId!)
-    if (!canView) query = query.eq("created_by", access.userId)
+    if (!canView) {
+      if (canCreateLinkedItems || canEditLinkedItems || canDeleteLinkedItems) {
+        query = query.not("source_expense_request_id", "is", null)
+      } else {
+        query = query.eq("created_by", access.userId)
+      }
+    }
 
     const { data: requisitions, error } = await query
     if (error) {
@@ -442,13 +466,13 @@ export async function GET(request: Request) {
       if (typeof expenseRequest.created_by === "string")
         visibleUserIds.add(expenseRequest.created_by)
     }
-    const { data: creatorProfiles, error: creatorProfilesError } = visibleUserIds
-      .size
-      ? await access.supabase
-          .from("profiles")
-          .select("id, display_name")
-          .in("id", [...visibleUserIds])
-      : { data: [], error: null }
+    const { data: creatorProfiles, error: creatorProfilesError } =
+      visibleUserIds.size
+        ? await access.supabase
+            .from("profiles")
+            .select("id, display_name")
+            .in("id", [...visibleUserIds])
+        : { data: [], error: null }
     if (creatorProfilesError) {
       console.error("Requisition creator lookup failed", creatorProfilesError)
       return NextResponse.json(
@@ -467,7 +491,7 @@ export async function GET(request: Request) {
         ...request,
         created_by_name:
           typeof request.created_by === "string"
-            ? creatorNames.get(request.created_by) ?? ""
+            ? (creatorNames.get(request.created_by) ?? "")
             : "",
       }))
     const requisitionsWithCreatorNames = requisitionsWithRequestMetadata.map(
@@ -481,14 +505,12 @@ export async function GET(request: Request) {
       {
         requisitions: requisitionsWithCreatorNames,
         expenseRequests: expenseRequestsWithCreatorNames,
-        expenseRequestsToInitiate:
-          canInitiateExpenseRequestPermission
-            ? expenseRequestsWithCreatorNames.filter(
-                (request) =>
-                  request.status ===
-                  "pending_administration_officer_initiation",
-              )
-            : [],
+        expenseRequestsToInitiate: canInitiateExpenseRequestPermission
+          ? expenseRequestsWithCreatorNames.filter(
+              (request) =>
+                request.status === "pending_administration_officer_initiation",
+            )
+          : [],
         currentUserId: access.userId,
         permissions: {
           canCreate,
@@ -498,6 +520,9 @@ export async function GET(request: Request) {
           canEditExpenseRequests,
           canDeleteExpenseRequests,
           canInitiateExpenseRequests: canInitiateExpenseRequestPermission,
+          canCreateLinkedItems,
+          canEditLinkedItems,
+          canDeleteLinkedItems,
         },
       },
       { headers: responseHeaders },
@@ -627,10 +652,10 @@ export async function POST(request: Request) {
       )
     }
     if (companySettings.expense_categories_enabled && !expenseCategoryId)
-      return NextResponse.json(
-        { error: "Select an expense category." },
-        { status: 400, headers: responseHeaders },
-      )
+      return NextResponse.json({ error: "Select an expense category." }, {
+        status: 400,
+        headers: responseHeaders,
+      })
     let expenseCategory: { id: string } | null = null
     if (expenseCategoryId) {
       const { data, error: categoryError } = await admin
@@ -641,7 +666,10 @@ export async function POST(request: Request) {
         .eq("is_active", true)
         .maybeSingle()
       if (categoryError) {
-        console.error("Requisition expense category lookup failed", categoryError)
+        console.error(
+          "Requisition expense category lookup failed",
+          categoryError,
+        )
         return NextResponse.json(
           { error: "Unable to verify the selected expense category." },
           { status: 503, headers: responseHeaders },
@@ -750,7 +778,7 @@ export async function PUT(request: Request) {
     const { data: visibleRequisition, error: visibilityError } =
       await access.supabase
         .from("company_requisitions")
-        .select("id")
+        .select("id, source_expense_request_id")
         .eq("id", body.id)
         .eq("company_id", access.companyId)
         .maybeSingle()
@@ -784,6 +812,18 @@ export async function PUT(request: Request) {
           : ""
       const qty = Number((item as Record<string, unknown>).quantity)
       const rate = Number((item as Record<string, unknown>).rate)
+      const itemId = (item as Record<string, unknown>).id
+      const catalogItemId = (item as Record<string, unknown>).catalog_item_id
+      if (
+        (itemId !== undefined && itemId !== null && !isUuid(itemId)) ||
+        (catalogItemId !== undefined &&
+          catalogItemId !== null &&
+          !isUuid(catalogItemId))
+      )
+        return NextResponse.json({ error: "Invalid line item identifier." }, {
+          status: 400,
+          headers: responseHeaders,
+        })
       if (!desc)
         return NextResponse.json(
           { error: "Each item must have a description." },
@@ -799,6 +839,52 @@ export async function PUT(request: Request) {
           { error: "Each item must have a non-negative rate." },
           { status: 400, headers: responseHeaders },
         )
+    }
+
+    if (visibleRequisition.source_expense_request_id) {
+      const { data, error } = await access.supabase.rpc(
+        "manage_linked_requisition_items",
+        {
+          requested_company_id: access.companyId,
+          requested_requisition_id: body.id,
+          requested_items: items.map((item) => {
+            const lineItem = item as Record<string, unknown>
+            return {
+              id: lineItem.id ?? null,
+              description: String(lineItem.description ?? "").trim(),
+              quantity: Number(lineItem.quantity),
+              rate: Number(lineItem.rate),
+              catalog_item_id: lineItem.catalog_item_id ?? null,
+            }
+          }),
+        },
+      )
+
+      if (error) {
+        if (error.code === "42501")
+          return NextResponse.json({ error: error.message }, {
+            status: 403,
+            headers: responseHeaders,
+          })
+        if (["22023", "P0002", "23503", "40001"].includes(error.code ?? ""))
+          return NextResponse.json({ error: error.message }, {
+            status: 400,
+            headers: responseHeaders,
+          })
+        console.error("Linked requisition item update RPC failed", error)
+        return NextResponse.json(
+          { error: "Unable to update linked Expense Request items." },
+          { status: 500, headers: responseHeaders },
+        )
+      }
+
+      return NextResponse.json(
+        {
+          ok: true,
+          totalAmount: (data as { total_amount: number })?.total_amount,
+        },
+        { headers: responseHeaders },
+      )
     }
 
     const { data, error } = await access.supabase.rpc(
@@ -926,10 +1012,18 @@ export async function PATCH(request: Request) {
       const quantity = Number(line.quantity)
       const rate = Number(line.rate)
       const catalogItemId = line.catalog_item_id
-      if (!description || !Number.isFinite(quantity) || quantity <= 0 ||
-        !Number.isFinite(rate) || rate < 0)
+      if (
+        !description ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        !Number.isFinite(rate) ||
+        rate < 0
+      )
         return NextResponse.json(
-          { error: "Each item needs a description, positive quantity, and non-negative rate." },
+          {
+            error:
+              "Each item needs a description, positive quantity, and non-negative rate.",
+          },
           { status: 400, headers: responseHeaders },
         )
       if (
@@ -966,10 +1060,10 @@ export async function PATCH(request: Request) {
       )
     }
     if (companySettings.expense_categories_enabled && !expenseCategoryId)
-      return NextResponse.json(
-        { error: "Select an expense category." },
-        { status: 400, headers: responseHeaders },
-      )
+      return NextResponse.json({ error: "Select an expense category." }, {
+        status: 400,
+        headers: responseHeaders,
+      })
     let expenseCategory: { id: string } | null = null
     if (expenseCategoryId) {
       const { data, error: categoryError } = await admin
@@ -980,7 +1074,10 @@ export async function PATCH(request: Request) {
         .eq("is_active", true)
         .maybeSingle()
       if (categoryError) {
-        console.error("Requisition expense category lookup failed", categoryError)
+        console.error(
+          "Requisition expense category lookup failed",
+          categoryError,
+        )
         return NextResponse.json(
           { error: "Unable to verify the selected expense category." },
           { status: 503, headers: responseHeaders },

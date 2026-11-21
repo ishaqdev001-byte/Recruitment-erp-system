@@ -154,7 +154,10 @@ type ExpenseRequestEditDraft = {
   dueDate: string
   expenseCategoryId: string
   comment: string
-  items: { description: string; quantity: string }[]
+  items: {
+    description: string
+    quantity: string
+  }[]
 }
 
 type RequisitionItem = {
@@ -186,7 +189,10 @@ type RequisitionPayment = {
   created_at: string
 }
 
-type ExpenseCategory = { id: string; name: string }
+type ExpenseCategory = {
+  id: string
+  name: string
+}
 
 type LookupItem = {
   id: string
@@ -206,6 +212,9 @@ type Permissions = {
   canEditExpenseRequests: boolean
   canDeleteExpenseRequests: boolean
   canInitiateExpenseRequests: boolean
+  canCreateLinkedItems: boolean
+  canEditLinkedItems: boolean
+  canDeleteLinkedItems: boolean
 }
 
 type ReqNotification = {
@@ -610,6 +619,9 @@ export default function RequisitionsWorkspace() {
     canEditExpenseRequests: false,
     canDeleteExpenseRequests: false,
     canInitiateExpenseRequests: false,
+    canCreateLinkedItems: false,
+    canEditLinkedItems: false,
+    canDeleteLinkedItems: false,
   })
   const [currentUserId, setCurrentUserId] = useState("")
   const [loading, setLoading] = useState(true)
@@ -643,8 +655,7 @@ export default function RequisitionsWorkspace() {
   )
   const [categoryLoadError, setCategoryLoadError] = useState("")
   const [categoriesLoading, setCategoriesLoading] = useState(true)
-  const [expenseCategoriesEnabled, setExpenseCategoriesEnabled] =
-    useState(true)
+  const [expenseCategoriesEnabled, setExpenseCategoriesEnabled] = useState(true)
   const [catalogItems, setCatalogItems] = useState<CompanyCatalogItem[]>([])
   const [catalogEnabled, setCatalogEnabled] = useState(false)
   const [canManageCatalog, setCanManageCatalog] = useState(false)
@@ -1331,19 +1342,27 @@ export default function RequisitionsWorkspace() {
       const res = await fetch(`/api/requisitions/${req.id}`, {
         cache: "no-store",
       })
-      const payload = (await res.json()) as { items?: RequisitionItem[] }
-      if (res.ok && payload.items) {
-        setVerifierItems(
-          payload.items.map((item) => ({
-            _key: item.id,
-            catalogItemId: item.catalog_item_id ?? null,
-            description: item.description,
-            quantity: String(item.quantity),
-            rate: String(item.rate),
-          })),
-        )
+      const payload = (await res.json()) as {
+        items?: RequisitionItem[]
+        error?: string
       }
-    } catch {}
+      if (!res.ok) throw new Error(payload.error ?? "Unable to load items.")
+      if (!payload.items)
+        throw new Error("Requisition items were not returned.")
+      setVerifierItems(
+        payload.items.map((item) => ({
+          _key: item.id,
+          catalogItemId: item.catalog_item_id ?? null,
+          description: item.description,
+          quantity: String(item.quantity),
+          rate: String(item.rate),
+        })),
+      )
+    } catch (error) {
+      setVerifierError(
+        error instanceof Error ? error.message : "Unable to load items.",
+      )
+    }
   }
 
   const submitVerifierEdit = async (e: FormEvent<HTMLFormElement>) => {
@@ -1362,9 +1381,17 @@ export default function RequisitionsWorkspace() {
         body: JSON.stringify({
           id: verifierEditTarget.id,
           items: verifierItems.map((item) => ({
+            id: verifierEditTarget.source_expense_request_id
+              ? /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+                  item._key,
+                )
+                ? item._key
+                : null
+              : undefined,
             description: item.description.trim(),
             quantity: parseFloat(item.quantity),
             rate: parseFloat(item.rate),
+            catalog_item_id: item.catalogItemId,
           })),
         }),
       })
@@ -1539,7 +1566,7 @@ export default function RequisitionsWorkspace() {
     permissions.canVerify &&
     req.payment_status !== "paid"
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex min-h-full min-w-0 flex-col">
       {}
       <div
         className="shrink-0 border-b px-6 py-4 flex items-center justify-between gap-4"
@@ -1851,7 +1878,10 @@ export default function RequisitionsWorkspace() {
 
             {selectedInitiationRequest && (
               <div className="mt-5 space-y-4">
-                <div className="rounded border p-3" style={{ borderColor: "var(--border)" }}>
+                <div
+                  className="rounded border p-3"
+                  style={{ borderColor: "var(--border)" }}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span
                       className="mono text-xs font-700"
@@ -1957,7 +1987,9 @@ export default function RequisitionsWorkspace() {
                   )}
                   <button
                     type="button"
-                    disabled={initiatingRequestId === selectedInitiationRequest.id}
+                    disabled={
+                      initiatingRequestId === selectedInitiationRequest.id
+                    }
                     onClick={() =>
                       void initiateExpenseRequest(
                         selectedInitiationRequest,
@@ -2037,7 +2069,9 @@ export default function RequisitionsWorkspace() {
                         className="block text-xs font-600"
                         style={{ color: "var(--foreground)" }}
                       >
-                        {request.requested_by_name || request.created_by_name || "Team member"}
+                        {request.requested_by_name ||
+                          request.created_by_name ||
+                          "Team member"}
                       </span>
                       <span
                         className="mt-1 block max-w-64 truncate text-[10px]"
@@ -2288,7 +2322,7 @@ export default function RequisitionsWorkspace() {
       )}
 
       {}
-      <div className="finance-table-scroll flex-1">
+      <div className="finance-table-scroll min-w-0 overflow-x-auto">
         {loading && (
           <div
             className="flex items-center justify-center py-20 gap-2"
@@ -3272,14 +3306,33 @@ export default function RequisitionsWorkspace() {
                     </div>
                   )}
 
-                  {}
                   <div>
-                    <h3
-                      className="mb-3 text-xs font-700 uppercase tracking-wider"
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      Line Items
-                    </h3>
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <h3
+                        className="text-xs font-700 uppercase tracking-wider"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        Line Items
+                      </h3>
+                      {detailReq.source_expense_request_id &&
+                        detailReq.payment_status !== "paid" &&
+                        (permissions.canCreateLinkedItems ||
+                          permissions.canEditLinkedItems ||
+                          permissions.canDeleteLinkedItems) && (
+                          <button
+                            type="button"
+                            onClick={() => void openVerifierEdit(detailReq)}
+                            className="inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-xs font-600"
+                            style={{
+                              borderColor: "var(--border)",
+                              color: "var(--primary)",
+                            }}
+                          >
+                            <Edit2 size={12} aria-hidden="true" />
+                            Manage items
+                          </button>
+                        )}
+                    </div>
                     {detailItems.length === 0 ? (
                       <p
                         className="text-sm"
@@ -3680,52 +3733,52 @@ export default function RequisitionsWorkspace() {
                 />
               </div>
               {expenseCategoriesEnabled && (
-              <div>
-                <label
-                  className="mb-1 block text-xs font-600 uppercase tracking-wider"
-                  style={{ color: "var(--muted-foreground)" }}
-                >
-                  Expense Category <span className="text-red-400">*</span>
-                </label>
-                <select
-                  required
-                  value={formExpenseCategoryId}
-                  onChange={(event) => {
-                    setFormExpenseCategoryId(event.target.value)
-                    setFormError("")
-                  }}
-                  className="w-full rounded border px-3 py-2.5 text-sm outline-none"
-                  style={fieldStyle}
-                >
-                  <option value="">Select a category</option>
-                  {expenseCategories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-                {categoryLoadError && (
-                  <p className="mt-1 text-xs text-red-400">
-                    {categoryLoadError}
-                  </p>
-                )}
-                {!categoryLoadError && categoriesLoading && (
-                  <p
-                    className="mt-1 text-xs"
+                <div>
+                  <label
+                    className="mb-1 block text-xs font-600 uppercase tracking-wider"
                     style={{ color: "var(--muted-foreground)" }}
                   >
-                    Loading categories…
-                  </p>
-                )}
-                {!categoryLoadError &&
-                  !categoriesLoading &&
-                  expenseCategories.length === 0 && (
-                    <p className="mt-1 text-xs" style={{ color: "#b7791f" }}>
-                      No active categories. Ask the Chairman to add one in
-                      Settings.
+                    Expense Category <span className="text-red-400">*</span>
+                  </label>
+                  <select
+                    required
+                    value={formExpenseCategoryId}
+                    onChange={(event) => {
+                      setFormExpenseCategoryId(event.target.value)
+                      setFormError("")
+                    }}
+                    className="w-full rounded border px-3 py-2.5 text-sm outline-none"
+                    style={fieldStyle}
+                  >
+                    <option value="">Select a category</option>
+                    {expenseCategories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                  {categoryLoadError && (
+                    <p className="mt-1 text-xs text-red-400">
+                      {categoryLoadError}
                     </p>
                   )}
-              </div>
+                  {!categoryLoadError && categoriesLoading && (
+                    <p
+                      className="mt-1 text-xs"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Loading categories…
+                    </p>
+                  )}
+                  {!categoryLoadError &&
+                    !categoriesLoading &&
+                    expenseCategories.length === 0 && (
+                      <p className="mt-1 text-xs" style={{ color: "#b7791f" }}>
+                        No active categories. Ask the Chairman to add one in
+                        Settings.
+                      </p>
+                    )}
+                </div>
               )}
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                 <div>
@@ -3911,7 +3964,9 @@ export default function RequisitionsWorkspace() {
                   className="text-lg font-700"
                   style={{ color: "var(--foreground)" }}
                 >
-                  Finance Item Adjustment
+                  {verifierEditTarget.source_expense_request_id
+                    ? "Manage Linked Items"
+                    : "Finance Item Adjustment"}
                 </h2>
                 <p
                   className="mt-0.5 text-xs mono"
@@ -3935,10 +3990,9 @@ export default function RequisitionsWorkspace() {
                 className="rounded border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm"
                 style={{ color: "#3b82f6" }}
               >
-                As Finance / Cashier, you can adjust item descriptions,
-                quantities, and rates before verifying this requisition. The
-                requisition header (title, department, due date) cannot be
-                changed at this stage.
+                {verifierEditTarget.source_expense_request_id
+                  ? "Your assigned item permissions control whether you can add, edit, or delete items. Changes update the linked Expense Request and restart its approval workflow."
+                  : "As Finance / Cashier, you can adjust item descriptions, quantities, and rates before verifying this requisition. The requisition header (title, department, due date) cannot be changed at this stage."}
               </div>
               {verifierError && (
                 <div
@@ -3956,6 +4010,21 @@ export default function RequisitionsWorkspace() {
                 catalogEnabled={catalogEnabled}
                 canManageCatalog={canManageCatalog}
                 canUseCustomItems={canUseCustomItems}
+                canAddItems={
+                  !verifierEditTarget.source_expense_request_id ||
+                  permissions.canCreateLinkedItems
+                }
+                canEditItems={
+                  !verifierEditTarget.source_expense_request_id ||
+                  permissions.canEditLinkedItems
+                }
+                canDeleteItems={
+                  !verifierEditTarget.source_expense_request_id ||
+                  permissions.canDeleteLinkedItems
+                }
+                preserveItemKeys={Boolean(
+                  verifierEditTarget.source_expense_request_id,
+                )}
                 currencyCode={verifierEditTarget.currency_code}
                 error={verifierItemError}
                 onErrorChange={setVerifierItemError}

@@ -4,6 +4,7 @@ import {
   Edit2,
   Eye,
   Search,
+  Trash2,
   UserRound,
   Users,
   UserCheck,
@@ -120,6 +121,7 @@ export default function Agents() {
   const [search, setSearch] = useState("")
   const [editingAgent, setEditingAgent] = useState<AgentRecord | null>(null)
   const [canEditAgentDetails, setCanEditAgentDetails] = useState(false)
+  const [canDelete, setCanDelete] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [agentCandidatesLoading, setAgentCandidatesLoading] = useState(false)
@@ -160,6 +162,7 @@ export default function Agents() {
         )
         setBranches(usersPayload.branches ?? [])
         setCanEditAgentDetails(usersPayload.canEditAgentDetails === true)
+        setCanDelete(usersPayload.canDeleteAgents === true)
         setCandidates(candidatesPayload.candidates ?? [])
       } catch (loadError) {
         if (!cancelled)
@@ -256,6 +259,19 @@ export default function Agents() {
       )
     } finally {
       setSaving(false)
+    }
+  }
+
+  const deleteAgent = async (agent: AgentRecord) => {
+    if (!window.confirm(`Delete agent "${agent.name}"?`)) return
+    setError("")
+    try {
+      const response = await fetch(`/api/workspace/users/${encodeURIComponent(agent.id)}`, { method: "DELETE" })
+      const payload = await response.json() as { error?: string }
+      if (!response.ok) throw new Error(payload.error ?? "Unable to delete agent.")
+      setAgents((current) => current.filter((item) => item.id !== agent.id))
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete agent.")
     }
   }
 
@@ -795,13 +811,13 @@ export default function Agents() {
                   style={{ borderColor: "var(--border)" }}
                 >
                   {[
+                    "Actions",
                     "Agent",
                     "Phone",
                     "Email address",
                     "Registered branch",
                     "Candidates",
                     "Status",
-                    "",
                   ].map((heading) => (
                     <th
                       key={heading}
@@ -848,6 +864,53 @@ export default function Agents() {
                         className="border-b last:border-0"
                         style={{ borderColor: "var(--border)" }}
                       >
+                        <td className="px-4 py-3">
+                          <div className="inline-flex gap-2">
+                            {canEditAgentDetails && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setError("")
+                                  setEditingAgent(agent)
+                                }}
+                                className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "var(--foreground)",
+                                }}
+                              >
+                                <Edit2 size={14} aria-hidden="true" />
+                                Edit
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedAgentId(agent.id)}
+                              className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                              style={{
+                                borderColor: "var(--border)",
+                                color: "var(--foreground)",
+                              }}
+                            >
+                              <Eye size={14} aria-hidden="true" />
+                              View
+                            </button>
+                            {canDelete && (
+                              <button
+                                type="button"
+                                onClick={() => void deleteAgent(agent)}
+                                className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "#ef4444",
+                                }}
+                              >
+                                <Trash2 size={14} aria-hidden="true" />
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </td>
                         <td className="whitespace-nowrap px-4 py-3">
                           <div className="flex items-center gap-2.5">
                             <span
@@ -921,39 +984,6 @@ export default function Agents() {
                                 ? "Inactive"
                                 : "Invited"}
                           </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="inline-flex gap-2">
-                            {canEditAgentDetails && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setError("")
-                                  setEditingAgent(agent)
-                                }}
-                                className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
-                                style={{
-                                  borderColor: "var(--border)",
-                                  color: "var(--foreground)",
-                                }}
-                              >
-                                <Edit2 size={14} aria-hidden="true" />
-                                Edit
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => setSelectedAgentId(agent.id)}
-                              className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
-                              style={{
-                                borderColor: "var(--border)",
-                                color: "var(--foreground)",
-                              }}
-                            >
-                              <Eye size={14} aria-hidden="true" />
-                              View
-                            </button>
-                          </div>
                         </td>
                       </tr>
                     )

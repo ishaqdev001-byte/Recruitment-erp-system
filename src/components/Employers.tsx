@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, Eye, Pencil, Plus, Search, X } from "lucide-react";
+import { ArrowLeft, Eye, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { matchesSearch } from "@/lib/search";
 
 type Employer = {
@@ -34,6 +34,7 @@ export default function Employers() {
   const [canViewFinance, setCanViewFinance] = useState(false);
   const [canCreate, setCanCreate] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
+  const [canDelete, setCanDelete] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -45,13 +46,14 @@ export default function Employers() {
       setError("");
       try {
         const response = await fetch("/api/employers", { cache: "no-store" });
-        const payload = await response.json() as { employers?: Employer[]; permissions?: { canViewFinance?: boolean; canCreate?: boolean; canEdit?: boolean }; error?: string };
+        const payload = await response.json() as { employers?: Employer[]; permissions?: { canViewFinance?: boolean; canCreate?: boolean; canEdit?: boolean; canDelete?: boolean }; error?: string };
         if (!response.ok) throw new Error(payload.error ?? "Unable to load company contractors.");
         if (!cancelled) {
           setEmployers(payload.employers ?? []);
           setCanViewFinance(Boolean(payload.permissions?.canViewFinance));
           setCanCreate(Boolean(payload.permissions?.canCreate));
           setCanEdit(Boolean(payload.permissions?.canEdit));
+          setCanDelete(Boolean(payload.permissions?.canDelete));
         }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load company contractors.");
@@ -130,6 +132,19 @@ export default function Employers() {
     setForm(emptyForm());
     setEditingEmployerId(null);
     setShowNew(false);
+  };
+
+  const deleteEmployer = async (employer: Employer) => {
+    if (!window.confirm(`Delete contractor "${employer.company_name}"?`)) return;
+    setError("");
+    try {
+      const response = await fetch(`/api/employers/${encodeURIComponent(employer.id)}`, { method: "DELETE" });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to delete contractor.");
+      setEmployers((current) => current.filter((item) => item.id !== employer.id));
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete contractor.");
+    }
   };
 
   const openNewEmployer = () => {
@@ -228,10 +243,9 @@ export default function Employers() {
             <div className="app-table-scroll"><table className="w-full min-w-190 text-sm">
               <thead>
                 <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                  {["Company", "Contact person(s)", "Phone number(s)", "Email address(es)", "Country(s)"].map((h) => (
+                  {["Actions", "Company", "Contact person(s)", "Phone number(s)", "Email address(es)", "Country(s)"].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
                   ))}
-                  <th className="px-4 py-3 text-right text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -239,6 +253,7 @@ export default function Employers() {
                 {!loading && !error && filtered.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{employers.length ? "No contractors match this search." : "No contractors registered yet."}</td></tr>}
                 {!loading && filtered.map((e) => (
                   <tr key={e.id} className="border-b" style={{ borderColor: "var(--border)" }}>
+                    <td className="px-4 py-3"><div className="inline-flex items-center gap-2"><button type="button" onClick={() => setSelectedEmployerId(e.id)} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--card)" }}><Eye size={14} aria-hidden="true" />View</button>{canEdit && <button type="button" onClick={() => openEditEmployer(e)} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--card)" }}><Pencil size={14} aria-hidden="true" />Edit</button>}{canDelete && <button type="button" onClick={() => void deleteEmployer(e)} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "#ef4444", background: "var(--card)" }}><Trash2 size={14} aria-hidden="true" />Delete</button>}</div></td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded flex items-center justify-center text-xs font-700 shrink-0"
@@ -252,7 +267,6 @@ export default function Employers() {
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--foreground)" }}>{e.phone_numbers.join(", ")}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{e.email_addresses.join(", ")}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--foreground)" }}>{e.countries.join(", ")}</td>
-                    <td className="px-4 py-3 text-right"><div className="inline-flex items-center gap-2"><button type="button" onClick={() => setSelectedEmployerId(e.id)} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--card)" }}><Eye size={14} aria-hidden="true" />View</button>{canEdit && <button type="button" onClick={() => openEditEmployer(e)} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--card)" }}><Pencil size={14} aria-hidden="true" />Edit</button>}</div></td>
                   </tr>
                 ))}
               </tbody>

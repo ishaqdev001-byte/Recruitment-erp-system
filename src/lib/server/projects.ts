@@ -36,6 +36,16 @@ export type ProjectStaffOption = {
   status: string
 }
 
+export type ProjectContractorOption = {
+  id: string
+  company_name: string
+}
+
+export type ProjectPartnerOption = {
+  id: string
+  supplier_name: string
+}
+
 export type ProjectAssignmentContext = {
   isChairman: boolean
 
@@ -164,6 +174,41 @@ export async function listProjectAccounts(
   if (error) throw error
 
   return data ?? []
+}
+
+export async function listProjectCounterparties(access: ProjectAccess) {
+  if ("error" in access) throw new Error(access.error)
+
+  const admin = createAdminClient()
+
+  if (!admin)
+    throw new Error(
+      "Project source selection requires the server service-role configuration.",
+    )
+
+  const [
+    { data: contractors, error: contractorError },
+    { data: partners, error: partnerError },
+  ] = await Promise.all([
+    admin
+      .from("employers")
+      .select("id, company_name")
+      .eq("company_id", access.companyId)
+      .order("company_name"),
+    admin
+      .from("suppliers")
+      .select("id, supplier_name")
+      .eq("company_id", access.companyId)
+      .eq("status", "active")
+      .order("supplier_name"),
+  ])
+
+  if (contractorError || partnerError) throw contractorError ?? partnerError
+
+  return {
+    contractors: (contractors ?? []) as ProjectContractorOption[],
+    partners: (partners ?? []) as ProjectPartnerOption[],
+  }
 }
 
 export async function getProjectAssignmentContext(
@@ -323,7 +368,11 @@ export type ProjectInput = {
 
   accountId: string
 
+  projectSourceType: "contractor" | "partner"
+
   contractorId: string | null
+
+  partnerId: string | null
 
   contractorName: string
 
@@ -336,6 +385,8 @@ export type ProjectInput = {
   totalDemand: number
 
   contractorServiceCharge: number
+
+  partnerServiceCharge: number
 
   candidateServiceCharge: number
 
@@ -363,6 +414,13 @@ export function parseProjectInput(value: unknown): ProjectInput | null {
   const accountId =
     typeof body.accountId === "string" ? body.accountId.trim() : ""
 
+  const projectSourceType =
+    body.projectSourceType === undefined || body.projectSourceType === "contractor"
+      ? "contractor"
+      : body.projectSourceType === "partner"
+        ? "partner"
+        : null
+
   const contractorName =
     typeof body.contractorName === "string" ? body.contractorName.trim() : ""
 
@@ -379,9 +437,16 @@ export function parseProjectInput(value: unknown): ProjectInput | null {
       ? body.contractorId
       : null
 
+  const partnerId =
+    typeof body.partnerId === "string" && body.partnerId
+      ? body.partnerId
+      : null
+
   const totalDemand = Number(body.totalDemand)
 
   const contractorServiceCharge = Number(body.contractorServiceCharge)
+
+  const partnerServiceCharge = Number(body.partnerServiceCharge ?? 0)
 
   const candidateServiceCharge = Number(body.candidateServiceCharge)
 
@@ -396,11 +461,26 @@ export function parseProjectInput(value: unknown): ProjectInput | null {
   const status = typeof body.status === "string" ? body.status : "active"
 
   if (
+    projectSourceType === null ||
     !projectName ||
     projectName.length > 200 ||
     !accountId ||
-    !contractorName ||
-    contractorName.length > 200 ||
+    (projectSourceType === "contractor" &&
+      (!contractorId || !contractorName || contractorName.length > 200)) ||
+    (projectSourceType === "partner" &&
+      (!partnerId || (contractorName && contractorName.length > 200))) ||
+    (contractorId !== null &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        contractorId,
+      )) ||
+    (partnerId !== null &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        partnerId,
+      )) ||
+    (projectSourceType === "contractor" &&
+      (partnerId !== null || partnerServiceCharge !== 0)) ||
+    (projectSourceType === "partner" &&
+      (contractorId !== null || contractorServiceCharge !== 0)) ||
     !country ||
     country.length > 200 ||
     !salaryRange ||
@@ -411,6 +491,8 @@ export function parseProjectInput(value: unknown): ProjectInput | null {
     totalDemand < 1 ||
     !Number.isFinite(contractorServiceCharge) ||
     contractorServiceCharge < 0 ||
+    !Number.isFinite(partnerServiceCharge) ||
+    partnerServiceCharge < 0 ||
     !Number.isFinite(candidateServiceCharge) ||
     candidateServiceCharge < 0 ||
     !Number.isInteger(visaCount) ||
@@ -427,7 +509,11 @@ export function parseProjectInput(value: unknown): ProjectInput | null {
 
     accountId,
 
+    projectSourceType,
+
     contractorId,
+
+    partnerId,
 
     contractorName,
 
@@ -440,6 +526,8 @@ export function parseProjectInput(value: unknown): ProjectInput | null {
     totalDemand,
 
     contractorServiceCharge,
+
+    partnerServiceCharge,
 
     candidateServiceCharge,
 
@@ -462,7 +550,12 @@ export function projectToDatabase(
 
     branch_id: branchId,
 
-    contractor_id: input.contractorId,
+    project_source_type: input.projectSourceType,
+
+    contractor_id:
+      input.projectSourceType === "contractor" ? input.contractorId : null,
+
+    partner_id: input.projectSourceType === "partner" ? input.partnerId : null,
 
     contractor_name: input.contractorName,
 
@@ -476,7 +569,13 @@ export function projectToDatabase(
 
     total_demand: input.totalDemand,
 
-    contractor_service_charge: input.contractorServiceCharge,
+    contractor_service_charge:
+      input.projectSourceType === "contractor"
+        ? input.contractorServiceCharge
+        : 0,
+
+    partner_service_charge:
+      input.projectSourceType === "partner" ? input.partnerServiceCharge : 0,
 
     candidate_service_charge: input.candidateServiceCharge,
 
@@ -487,5 +586,73 @@ export function projectToDatabase(
     visa_count: input.visaCount,
 
     ticket_count: input.ticketCount,
+  }
+}
+
+export async function resolveProjectSource(
+  access: ProjectAccess,
+  input: ProjectInput,
+  existingPartnerId?: string | null,
+): Promise<{ input: ProjectInput } | { error: string }> {
+  if ("error" in access) throw new Error(access.error)
+
+  const admin = createAdminClient()
+
+  if (!admin)
+    throw new Error(
+      "Project source verification requires the server service-role configuration.",
+    )
+
+  if (input.projectSourceType === "partner") {
+    if (!input.partnerId)
+      return { error: "Select an active partner registered by this company." }
+
+    const { data: partner, error } = await admin
+      .from("suppliers")
+      .select("id, supplier_name, status")
+      .eq("id", input.partnerId)
+      .eq("company_id", access.companyId)
+      .maybeSingle()
+
+    if (error) throw error
+
+    if (
+      !partner ||
+      (partner.status !== "active" && input.partnerId !== existingPartnerId)
+    ) {
+      return { error: "Select an active partner registered by this company." }
+    }
+
+    return {
+      input: {
+        ...input,
+        contractorId: null,
+        contractorName: partner.supplier_name,
+      },
+    }
+  }
+
+  if (!input.contractorId)
+    return { error: "Select a registered contractor for this company." }
+
+  const { data: contractor, error } = await admin
+    .from("employers")
+    .select("id, company_name")
+    .eq("id", input.contractorId)
+    .eq("company_id", access.companyId)
+    .maybeSingle()
+
+  if (error) throw error
+
+  if (!contractor)
+    return { error: "Select a registered contractor for this company." }
+
+  return {
+    input: {
+      ...input,
+      partnerId: null,
+      partnerServiceCharge: 0,
+      contractorName: contractor.company_name,
+    },
   }
 }

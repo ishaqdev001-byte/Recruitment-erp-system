@@ -37,19 +37,26 @@ export async function POST(request: Request) {
     if (hasCronAuthorization(request)) {
       const admin = createPushAdminClient()
 
+      const { error: caseHandlerError } = await admin.rpc(
+        "dispatch_due_case_handler_followups",
+      )
+
+      if (caseHandlerError)
+        throw new Error(
+          `Scheduled case-handler follow-up dispatch failed: ${caseHandlerError.message}`,
+        )
+
       const [
         { error: taskError },
         { error: inquiryError },
         { error: passportFollowupError },
-      ] = await Promise.all(
-        [
-          admin.rpc("dispatch_due_task_notifications"),
+      ] = await Promise.all([
+        admin.rpc("dispatch_due_task_notifications"),
 
-          admin.rpc("dispatch_due_candidate_inquiry_notifications"),
+        admin.rpc("dispatch_due_candidate_inquiry_notifications"),
 
-          admin.rpc("dispatch_due_passport_followups"),
-        ],
-      )
+        admin.rpc("dispatch_due_passport_followups"),
+      ])
 
       if (taskError)
         throw new Error(

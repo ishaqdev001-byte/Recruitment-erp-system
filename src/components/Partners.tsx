@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react"
 
-import { ArrowLeft, Edit2, Eye, Plus, Search, UserRound } from "lucide-react"
+import { ArrowLeft, Edit2, Eye, Plus, Search, Trash2, UserRound } from "lucide-react"
 
 import { matchesSearch } from "@/lib/search"
 
@@ -32,6 +32,8 @@ export default function Partners() {
   const [canCreateSuppliers, setCanCreateSuppliers] = useState(false)
 
   const [canEditSuppliers, setCanEditSuppliers] = useState(false)
+
+  const [canDeleteSuppliers, setCanDeleteSuppliers] = useState(false)
 
   const [search, setSearch] = useState("")
 
@@ -68,6 +70,7 @@ export default function Partners() {
           suppliers?: SupplierRecord[]
           canCreateSuppliers?: boolean
           canEditSuppliers?: boolean
+          canDeleteSuppliers?: boolean
           error?: string
         }
 
@@ -80,6 +83,8 @@ export default function Partners() {
           setCanCreateSuppliers(payload.canCreateSuppliers === true)
 
           setCanEditSuppliers(payload.canEditSuppliers === true)
+
+          setCanDeleteSuppliers(payload.canDeleteSuppliers === true)
         }
       } catch (loadError) {
         if (!cancelled)
@@ -165,6 +170,19 @@ export default function Partners() {
       )
     } finally {
       setSaving(false)
+    }
+  }
+
+  const deleteSupplier = async (supplier: SupplierRecord) => {
+    if (!window.confirm(`Delete partner "${supplier.supplier_name}"?`)) return
+    setError("")
+    try {
+      const response = await fetch(`/api/suppliers/${encodeURIComponent(supplier.id)}`, { method: "DELETE" })
+      const payload = await response.json() as { error?: string }
+      if (!response.ok) throw new Error(payload.error ?? "Unable to delete partner.")
+      setSuppliers((current) => current.filter((item) => item.id !== supplier.id))
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete partner.")
     }
   }
 
@@ -420,13 +438,13 @@ export default function Partners() {
                   style={{ borderColor: "var(--border)" }}
                 >
                   {[
+                    "Actions",
                     "Partner",
                     "Contact person",
                     "Phone",
                     "Email address",
                     "Registered branch",
                     "Status",
-                    "",
                   ].map((heading) => (
                     <th
                       key={heading}
@@ -470,6 +488,54 @@ export default function Partners() {
                       className="border-b last:border-0"
                       style={{ borderColor: "var(--border)" }}
                     >
+                      <td className="px-4 py-3">
+                        <div className="inline-flex gap-2">
+                          {canEditSuppliers && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setError("")
+                                setEditingSupplier(supplier)
+                                setShowNew(true)
+                              }}
+                              className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                              style={{
+                                borderColor: "var(--border)",
+                                color: "var(--foreground)",
+                              }}
+                            >
+                              <Edit2 size={14} aria-hidden="true" />
+                              Edit
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSupplierId(supplier.id)}
+                            className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                            style={{
+                              borderColor: "var(--border)",
+                              color: "var(--foreground)",
+                            }}
+                          >
+                            <Eye size={14} aria-hidden="true" />
+                            View
+                          </button>
+                          {canDeleteSuppliers && (
+                            <button
+                              type="button"
+                              onClick={() => void deleteSupplier(supplier)}
+                              className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                              style={{
+                                borderColor: "var(--border)",
+                                color: "#ef4444",
+                              }}
+                            >
+                              <Trash2 size={14} aria-hidden="true" />
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <div className="flex items-center gap-2.5">
                           <span
@@ -537,40 +603,6 @@ export default function Partners() {
                         >
                           {supplier.status === "active" ? "Active" : "Inactive"}
                         </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="inline-flex gap-2">
-                          {canEditSuppliers && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setError("")
-                                setEditingSupplier(supplier)
-                                setShowNew(true)
-                              }}
-                              className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
-                              style={{
-                                borderColor: "var(--border)",
-                                color: "var(--foreground)",
-                              }}
-                            >
-                              <Edit2 size={14} aria-hidden="true" />
-                              Edit
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setSelectedSupplierId(supplier.id)}
-                            className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
-                            style={{
-                              borderColor: "var(--border)",
-                              color: "var(--foreground)",
-                            }}
-                          >
-                            <Eye size={14} aria-hidden="true" />
-                            View
-                          </button>
-                        </div>
                       </td>
                     </tr>
                   ))}

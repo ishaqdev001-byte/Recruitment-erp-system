@@ -3319,14 +3319,25 @@ export async function POST(request: Request) {
         )
       }
 
-      const { data: savedPermissions, error: savePermissionsError } =
-        await admin.rpc("replace_company_role_permissions", {
-          requested_role_id: role.id,
-
-          requested_company_id: access.companyId,
-
-          requested_permissions: requestedPermissions,
-        })
+      const permissionSave = access.isPrimaryAdmin
+        ? await admin.rpc(
+            "replace_company_role_permissions_for_primary_admin",
+            {
+              requested_role_id: role.id,
+              requested_company_id: access.companyId,
+              requested_permissions: requestedPermissions,
+              requested_actor_id: access.userId,
+            },
+          )
+        : await admin.rpc("replace_company_role_permissions", {
+            requested_role_id: role.id,
+            requested_company_id: access.companyId,
+            requested_permissions: requestedPermissions,
+          })
+      const {
+        data: savedPermissions,
+        error: savePermissionsError,
+      } = permissionSave
 
       if (savePermissionsError || !savedPermissions) {
         console.error(

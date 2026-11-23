@@ -389,6 +389,18 @@ const ApprovalWorkflowsSettings = dynamic(
   { loading: PageLoading },
 )
 
+const CaseHandlerSettings = dynamic(
+  () => import("./components/settings/CaseHandlerSettings"),
+
+  { loading: PageLoading },
+)
+
+const ProjectsManagerSettings = dynamic(
+  () => import("./components/settings/ProjectsManagerSettings"),
+
+  { loading: PageLoading },
+)
+
 const AttendanceSettings = dynamic(
   () => import("./components/AttendanceSettings"),
 
@@ -483,6 +495,10 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
       import("./components/settings/PositionsSettings"),
 
       import("./components/settings/ApprovalWorkflowsSettings"),
+
+      import("./components/settings/CaseHandlerSettings"),
+
+      import("./components/settings/ProjectsManagerSettings"),
     ]),
 }
 
@@ -659,9 +675,7 @@ const formatInitials = (value: string) =>
 
     .slice(0, 2)
 
-    .map(
-      (part) => part[0]?.toUpperCase() ?? "",
-    )
+    .map((part) => part[0]?.toUpperCase() ?? "")
 
     .join("") || "R"
 
@@ -723,13 +737,6 @@ function canAccessSessionView(
     view === "human-resources" &&
     workspaceSession.role !== "Chairman" &&
     workspaceSession.isLinkedStaff !== true
-  ) {
-    return false
-  }
-
-  if (
-    view === "expense-requests" &&
-    workspaceSession.role === "Administration Officer"
   ) {
     return false
   }
@@ -984,9 +991,8 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   ]
 
   const role =
-    knownRoles.find(
-      (candidateRole) => candidateRole === roleRecord.name,
-    ) ?? roleRecord.name as WorkspaceRole
+    knownRoles.find((candidateRole) => candidateRole === roleRecord.name) ??
+    roleRecord.name as WorkspaceRole
 
   const branchValue = membership.branch as unknown as {
     id: string
@@ -1879,9 +1885,7 @@ export default function App() {
           }
 
           const showInvitation = async (invitationId: string) => {
-            setInviteEmail(
-              user.email ?? "",
-            )
+            setInviteEmail(user.email ?? "")
 
             setAuthView("invite")
 
@@ -1912,27 +1916,19 @@ export default function App() {
               return
             }
 
-            setInviteId(
-              invitation.invitationId ?? currentInviteId,
-            )
+            setInviteId(invitation.invitationId ?? currentInviteId)
 
             setInviteCompanyId(invitation.companyId)
 
-            setInviteCompanyName(
-              invitation.companyName ?? "",
-            )
+            setInviteCompanyName(invitation.companyName ?? "")
 
-            setInviteRoleName(
-              invitation.roleName ?? "",
-            )
+            setInviteRoleName(invitation.roleName ?? "")
 
             setInviteError("")
           }
 
           if (inviteLink) {
-            await showInvitation(
-              currentInviteId || "legacy",
-            )
+            await showInvitation(currentInviteId || "legacy")
 
             window.history.replaceState(
               null,
@@ -1948,9 +1944,7 @@ export default function App() {
           if (recoveryLink) {
             setResetPasswordError("")
 
-            setResetPasswordEmail(
-              user.email ?? "",
-            )
+            setResetPasswordEmail(user.email ?? "")
 
             return
           }
@@ -1981,9 +1975,7 @@ export default function App() {
             currentInvitation.requiresAcceptance ||
             currentInvitation.legacyInvitation
           ) {
-            await showInvitation(
-              currentInvitation.invitationId ?? "legacy",
-            )
+            await showInvitation(currentInvitation.invitationId ?? "legacy")
 
             return
           }
@@ -2098,13 +2090,9 @@ export default function App() {
         if (!response.ok) throw new Error("Unable to check your HR profile.")
 
         if (!cancelled) {
-          setHrPersonalDetailsComplete(
-            Boolean(result.personalDetailsComplete),
-          )
+          setHrPersonalDetailsComplete(Boolean(result.personalDetailsComplete))
 
-          setHrProfileReminder(
-            result.reminder?.prompt ?? null,
-          )
+          setHrProfileReminder(result.reminder?.prompt ?? null)
 
           setHrProfileUpdateRequired(Boolean(result.reminder?.updateRequired))
         }
@@ -3077,18 +3065,14 @@ export default function App() {
 
   const activeCompany = useMemo(
     () =>
-      companies.find(
-        (company) => company.id === session?.companyId,
-      ) ?? companies[0],
+      companies.find((company) => company.id === session?.companyId) ??
+      companies[0],
 
     [companies, session],
   )
 
   const activeUser = useMemo(
-    () =>
-      users.find(
-        (user) => user.id === session?.userId,
-      ) ?? users[0],
+    () => users.find((user) => user.id === session?.userId) ?? users[0],
 
     [session, users],
   )
@@ -3602,9 +3586,7 @@ export default function App() {
       })
 
       if (error || !data.user)
-        throw new Error(
-          error?.message ?? "Unable to set your password.",
-        )
+        throw new Error(error?.message ?? "Unable to set your password.")
 
       const acceptanceResponse = await fetch(
         `/api/workspace/invitations/${encodeURIComponent(inviteId)}`,
@@ -3713,9 +3695,7 @@ export default function App() {
       }
 
       if (!response.ok)
-        throw new Error(
-          result.error ?? "Unable to update your password.",
-        )
+        throw new Error(result.error ?? "Unable to update your password.")
 
       setMustChangePassword(false)
 
@@ -6987,7 +6967,7 @@ function SettingsPage({
     isChairman || permissions.includes("workflows.manage")
 
   const [settingsTab, setSettingsTab] =
-    useState<"general" | "candidate-sources" | "departments" | "currencies" | "service-providers" | "expense-categories" | "expense-items" | "positions" | "workflows" | "attendance">(
+    useState<"general" | "candidate-sources" | "departments" | "currencies" | "service-providers" | "expense-categories" | "expense-items" | "positions" | "workflows" | "case-handlers" | "projects-manager" | "attendance">(
       "general",
     )
 
@@ -7026,6 +7006,14 @@ function SettingsPage({
 
     ...(canManageWorkflows
       ? [{ id: "workflows" as const, label: "Approval Workflows" }]
+      : []),
+
+    ...(isChairman
+      ? [{ id: "case-handlers" as const, label: "Case Handlers" }]
+      : []),
+
+    ...(isChairman
+      ? [{ id: "projects-manager" as const, label: "Projects Manager" }]
       : []),
 
     ...(isChairman ? [{ id: "attendance" as const, label: "Attendance" }] : []),
@@ -7330,6 +7318,12 @@ function SettingsPage({
         {settingsTab === "positions" && <PositionsSettings />}
         {settingsTab === "workflows" && canManageWorkflows && (
           <ApprovalWorkflowsSettings />
+        )}
+        {settingsTab === "case-handlers" && isChairman && (
+          <CaseHandlerSettings />
+        )}
+        {settingsTab === "projects-manager" && isChairman && (
+          <ProjectsManagerSettings />
         )}
         {settingsTab === "attendance" && isChairman && company?.id && (
           <AttendanceSettings

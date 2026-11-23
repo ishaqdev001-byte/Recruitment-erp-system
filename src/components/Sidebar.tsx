@@ -203,8 +203,6 @@ export default function Sidebar({
     : permissions
   const canAccessNavigationView = (view: View) => {
     if (view === "agent-invoices" && role === "Chairman") return false
-    if (view === "expense-requests" && role === "Administration Officer")
-      return false
     if (
       view === "human-resources" &&
       role !== "Chairman" &&
@@ -213,7 +211,9 @@ export default function Sidebar({
       return false
     return (
       canAccessView(view, visiblePermissions) ||
-      (view === "expense-requests" && isLinkedStaff === true)
+      (view === "expense-requests" &&
+        role !== "Administration Officer" &&
+        isLinkedStaff === true)
     )
   }
 

@@ -6,6 +6,7 @@ import {
   listProjectAccounts,
   parseProjectInput,
   projectToDatabase,
+  resolveProjectSource,
 } from "@/lib/server/projects";
 
 export const runtime = "nodejs";
@@ -19,7 +20,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body || Array.isArray(body)) return NextResponse.json({ error: "Project changes are required." }, { status: 400, headers: responseHeaders });
 
-    const { data: current, error: currentError } = await access.supabase.from("projects").select("status, account_id, branch_id, project_manager_user_id, assigned_staff_id").eq("id", projectId).eq("company_id", access.companyId).maybeSingle();
+    const { data: current, error: currentError } = await access.supabase.from("projects").select("status, account_id, branch_id, project_manager_user_id, assigned_staff_id, project_source_type, contractor_id, partner_id, contractor_name, contractor_service_charge, partner_service_charge, candidate_service_charge").eq("id", projectId).eq("company_id", access.companyId).maybeSingle();
     if (currentError || !current) return NextResponse.json({ error: "Project not found." }, { status: 404, headers: responseHeaders });
 
     const changedFields = Object.keys(body);
@@ -159,9 +160,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     const input = parseProjectInput({
       ...body,
       accountId: body.accountId ?? current.account_id,
+      projectSourceType: body.projectSourceType ?? current.project_source_type,
+      contractorId: "contractorId" in body ? body.contractorId : current.contractor_id,
+      partnerId: "partnerId" in body ? body.partnerId : current.partner_id,
+      contractorName: body.contractorName ?? current.contractor_name,
+      contractorServiceCharge: body.contractorServiceCharge ?? current.contractor_service_charge,
+      partnerServiceCharge: body.partnerServiceCharge ?? current.partner_service_charge,
+      candidateServiceCharge: body.candidateServiceCharge ?? current.candidate_service_charge,
       status: body.status ?? current.status,
     });
     if (!input) return NextResponse.json({ error: "Enter valid project details." }, { status: 400, headers: responseHeaders });
+    const source = await resolveProjectSource(access, input, current.partner_id);
+    if ("error" in source) return NextResponse.json({ error: source.error }, { status: 400, headers: responseHeaders });
     if (input.status !== current.status && !await hasProjectPermission(access, "projects.status")) {
       return NextResponse.json({ error: "You do not have permission to change project status." }, { status: 403, headers: responseHeaders });
     }
@@ -217,7 +227,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     }
 
     const { data, error } = await access.supabase.from("projects").update({
-      ...projectToDatabase(input, branchId),
+      ...projectToDatabase(source.input, branchId),
       ...(managerUpdate ?? {}),
     }).eq("id", projectId).eq("company_id", access.companyId).select("*").single();
     if (error || !data) {

@@ -219,14 +219,13 @@ export async function GET() {
       access.permissions["expense_requests.cashout"] &&
       access.roleName === "Finance Manager"
 
-    const canView =
-      !isAdministrationOfficer &&
-      requestAccessPermissionCodes.some(
-        (permission) => access.permissions[permission],
-      )
+    const canView = requestAccessPermissionCodes.some(
+      (permission) => access.permissions[permission],
+    )
 
     const canCreate =
-      !isAdministrationOfficer && (canView || canReviewLineManager)
+      access.permissions["expense_requests.create"] ||
+      (!isAdministrationOfficer && (canView || canReviewLineManager))
 
     if (
       !canView &&
@@ -428,16 +427,16 @@ export async function POST(request: Request) {
       )
 
     if (body.action === "create") {
-      const hasExpenseRequestAccess =
-        access.isLinkedStaff ||
-        requestAccessPermissionCodes.some(
-          (permission) => access.permissions[permission],
-        )
+      const isAdministrationOfficer =
+        access.roleName.trim().toLowerCase() === "administration officer"
+      const hasExpenseRequestAccess = isAdministrationOfficer
+        ? access.permissions["expense_requests.create"]
+        : access.isLinkedStaff ||
+          requestAccessPermissionCodes.some(
+            (permission) => access.permissions[permission],
+          )
 
-      if (
-        access.roleName.trim().toLowerCase() === "administration officer" ||
-        !hasExpenseRequestAccess
-      )
+      if (!hasExpenseRequestAccess)
         return NextResponse.json(
           { error: "You do not have permission to create expense requests." },
 

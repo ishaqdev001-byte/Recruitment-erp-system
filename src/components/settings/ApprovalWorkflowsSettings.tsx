@@ -219,6 +219,12 @@ export default function ApprovalWorkflowsSettings() {
       const nextIndex = index + direction
 
       if (nextIndex < 0 || nextIndex >= workflow.stages.length) return workflow
+      if (workflow.stages[index].actionType === "cashout") return workflow
+      if (
+        direction === 1 &&
+        workflow.stages[nextIndex].actionType === "cashout"
+      )
+        return workflow
 
       const stages = [...workflow.stages]
       ;[stages[index], stages[nextIndex]] = [stages[nextIndex], stages[index]]
@@ -347,13 +353,15 @@ export default function ApprovalWorkflowsSettings() {
               </span>
               <input
                 value={selectedWorkflow.name}
-                onChange={(event) =>
+                onChange={(event) => {
+                  const name = event.target.value
+
                   updateWorkflow((workflow) => ({
                     ...workflow,
 
-                    name: event.target.value,
+                    name,
                   }))
-                }
+                }}
                 maxLength={120}
                 className="w-full rounded border px-3 py-2.5"
                 style={fieldStyle}
@@ -395,7 +403,7 @@ export default function ApprovalWorkflowsSettings() {
                       <button
                         type="button"
                         aria-label={`Move step ${index + 1} up`}
-                        disabled={index === 0}
+                        disabled={index === 0 || stage.actionType === "cashout"}
                         onClick={() => moveStage(index, -1)}
                         className="rounded border p-2 disabled:opacity-40"
                         style={{ borderColor: "var(--border)" }}
@@ -405,7 +413,12 @@ export default function ApprovalWorkflowsSettings() {
                       <button
                         type="button"
                         aria-label={`Move step ${index + 1} down`}
-                        disabled={index === selectedWorkflow.stages.length - 1}
+                        disabled={
+                          index === selectedWorkflow.stages.length - 1 ||
+                          stage.actionType === "cashout" ||
+                          selectedWorkflow.stages[index + 1]?.actionType ===
+                            "cashout"
+                        }
                         onClick={() => moveStage(index, 1)}
                         className="rounded border p-2 disabled:opacity-40"
                         style={{ borderColor: "var(--border)" }}
@@ -439,13 +452,15 @@ export default function ApprovalWorkflowsSettings() {
                       <input
                         value={stage.label}
                         maxLength={100}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const label = event.target.value
+
                           updateStage(stage.stageKey, (item) => ({
                             ...item,
 
-                            label: event.target.value,
+                            label,
                           }))
-                        }
+                        }}
                         className="w-full rounded border px-3 py-2"
                         style={fieldStyle}
                       />
@@ -487,7 +502,14 @@ export default function ApprovalWorkflowsSettings() {
                         style={fieldStyle}
                       >
                         {actionOptions[selectedKey].map((action) => (
-                          <option key={action} value={action}>
+                          <option
+                            key={action}
+                            value={action}
+                            disabled={
+                              action === "cashout" &&
+                              index !== selectedWorkflow.stages.length - 1
+                            }
+                          >
                             {actionLabels[action]}
                           </option>
                         ))}
@@ -501,15 +523,17 @@ export default function ApprovalWorkflowsSettings() {
                           </span>
                           <select
                             value={stage.permissionCode}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                              const permissionCode = event.target.value
+
                               updateStage(stage.stageKey, (item) => ({
                                 ...item,
 
-                                permissionCode: event.target.value,
+                                permissionCode,
 
                                 roleIds: [],
                               }))
-                            }
+                            }}
                             className="w-full rounded border px-3 py-2"
                             style={fieldStyle}
                           >
@@ -528,17 +552,18 @@ export default function ApprovalWorkflowsSettings() {
                       <select
                         multiple
                         value={stage.roleIds}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const roleIds = Array.from(
+                            event.currentTarget.selectedOptions,
+                            (option) => option.value,
+                          )
+
                           updateStage(stage.stageKey, (item) => ({
                             ...item,
 
-                            roleIds: Array.from(
-                              event.currentTarget.selectedOptions,
-
-                              (option) => option.value,
-                            ),
+                            roleIds,
                           }))
-                        }
+                        }}
                         className="min-h-24 w-full rounded border px-3 py-2"
                         style={fieldStyle}
                       >
@@ -561,13 +586,15 @@ export default function ApprovalWorkflowsSettings() {
                         value={stage.instructions}
                         maxLength={1000}
                         rows={3}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const instructions = event.target.value
+
                           updateStage(stage.stageKey, (item) => ({
                             ...item,
 
-                            instructions: event.target.value,
+                            instructions,
                           }))
-                        }
+                        }}
                         className="w-full rounded border px-3 py-2"
                         style={fieldStyle}
                       />
@@ -582,11 +609,20 @@ export default function ApprovalWorkflowsSettings() {
             <button
               type="button"
               onClick={() =>
-                updateWorkflow((workflow) => ({
-                  ...workflow,
+                updateWorkflow((workflow) => {
+                  const stages = [...workflow.stages]
+                  const cashoutIndex = stages.findIndex(
+                    (stage) => stage.actionType === "cashout",
+                  )
 
-                  stages: [...workflow.stages, createStage(selectedKey)],
-                }))
+                  stages.splice(
+                    cashoutIndex === -1 ? stages.length : cashoutIndex,
+                    0,
+                    createStage(selectedKey),
+                  )
+
+                  return { ...workflow, stages }
+                })
               }
               disabled={selectedWorkflow.stages.length >= 20}
               className="inline-flex items-center gap-2 rounded border px-4 py-2.5 text-sm font-600 disabled:opacity-40"

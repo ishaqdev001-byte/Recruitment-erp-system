@@ -14,10 +14,8 @@ import {
 } from "lucide-react"
 
 import { matchesSearch } from "@/lib/search"
-import {
-  clearClientApiCache,
-  fetchClientCached,
-} from "@/lib/client-api-cache"
+
+import { clearClientApiCache, fetchClientCached } from "@/lib/client-api-cache"
 
 import AttachmentDrawer from "./AttachmentDrawer"
 
@@ -64,6 +62,10 @@ interface CandidateRecord {
 
   updated_by_name?: string | null
 
+  case_handler_user_id?: string | null
+
+  case_handler_name?: string | null
+
   religion: string
 
   position: string
@@ -81,9 +83,17 @@ interface CandidateRecord {
 
 type InquirySource = "radio" | "television" | "friend_referral" | "walk_in" | "sign_post" | "agent"
 
+type CaseHandlerOption = {
+  userId: string
+
+  displayName: string
+}
+
 type InquiryPerson = {
   user_id: string
+
   display_name: string
+
   role_name: string
 }
 
@@ -167,28 +177,41 @@ interface ProjectOption {
 
 interface CandidateFilterOption {
   value: string
+
   label: string
 }
 
 function CandidateFilterInput({
   label,
+
   value,
+
   query,
+
   options,
+
   onChange,
+
   onChoose,
 }: {
   label: string
+
   value: string
+
   query: string
+
   options: CandidateFilterOption[]
+
   onChange: (value: string) => void
+
   onChoose: (value: string) => void
 }) {
   const [focused, setFocused] = useState(false)
-  const matches = query.length >= 3
-    ? options.filter((option) => matchesSearch(query, option.label))
-    : []
+
+  const matches =
+    query.length >= 3
+      ? options.filter((option) => matchesSearch(query, option.label))
+      : []
 
   return (
     <div className="relative min-w-40 flex-1 sm:flex-none">
@@ -205,7 +228,9 @@ function CandidateFilterInput({
         className="w-full border px-3 py-2 text-sm outline-none"
         style={{
           background: "var(--secondary)",
+
           borderColor: "var(--border)",
+
           color: "var(--foreground)",
         }}
       />
@@ -216,6 +241,7 @@ function CandidateFilterInput({
           className="absolute left-0 right-0 top-full z-40 mt-1 max-h-40 overflow-y-auto border shadow-lg"
           style={{
             background: "var(--card)",
+
             borderColor: "var(--border)",
           }}
         >
@@ -229,6 +255,7 @@ function CandidateFilterInput({
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   onChoose(option.label)
+
                   setFocused(false)
                 }}
                 className="block w-full truncate px-3 py-2 text-left text-sm hover:bg-[var(--secondary)]"
@@ -302,8 +329,11 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
     abroadExperience: text("abroadExperience"),
 
     source: text("source"),
+
     referralPartnerId: text("referralPartnerId"),
+
     referralPartnerName: text("referralPartnerName"),
+
     agent: record.agent_name,
 
     agentUserId: record.agent_user_id ?? undefined,
@@ -443,23 +473,37 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
 function newCandidate(): Candidate {
   return candidateFromRecord({
     id: crypto.randomUUID(),
+
     inquiry_number: "",
+
     source_row_number: null,
+
     file_number: "",
+
     first_name: "",
+
     last_name: "",
+
     phone: "",
 
     date_of_birth: null,
+
     place_of_birth: "",
+
     agent_name: "",
+
     agent_user_id: null,
+
     religion: "",
+
     position: "",
+
     nationality: "",
 
     father_name: "",
+
     mother_name: "",
+
     details: {},
   })
 }
@@ -581,7 +625,9 @@ function candidateFromInquiry(inquiry: InquiryRecord): Candidate {
 
         inquiry.remarks,
       ]
+
         .filter(Boolean)
+
         .join("\n"),
     },
   })
@@ -631,19 +677,36 @@ export default function CandidateRoster({
 
     canSendBulkSms?: boolean
 
+    canAssignCaseHandler?: boolean
+
+    caseHandlersEnabled?: boolean
+
     isAgent?: boolean
 
     canViewActivityByRole?: boolean
   }>({})
 
+  const [caseHandlerOptions, setCaseHandlerOptions] =
+    useState<CaseHandlerOption[]>([])
+
+  const [caseHandlerError, setCaseHandlerError] = useState("")
+
+  const [savingCaseHandlerId, setSavingCaseHandlerId] = useState<string | null>(
+    null,
+  )
+
   const activePage = page
+
   const financeReadOnly = canViewFinance && !permissions.canEditCandidates
+
   const canUpdateCandidateStages = Boolean(
     permissions.canUpdateCandidateStages,
   )
+
   const canSubmitCandidatesToProjects = Boolean(
     permissions.canSubmitCandidatesToProjects,
   )
+
   const canManageCandidateWorkflow =
     canUpdateCandidateStages || canSubmitCandidatesToProjects
 
@@ -683,15 +746,21 @@ export default function CandidateRoster({
 
   const [filterInputs, setFilterInputs] = useState({
     agent: "",
+
     project: "",
+
     stage: "",
+
     createdBy: "",
   })
 
   const [filterQueries, setFilterQueries] = useState({
     agent: "",
+
     project: "",
+
     stage: "",
+
     createdBy: "",
   })
 
@@ -702,10 +771,25 @@ export default function CandidateRoster({
   useEffect(() => {
     const timer = setTimeout(() => {
       setFilterQueries({
-        agent: filterInputs.agent.trim().length >= 3 ? filterInputs.agent.trim() : "",
-        project: filterInputs.project.trim().length >= 3 ? filterInputs.project.trim() : "",
-        stage: filterInputs.stage.trim().length >= 3 ? filterInputs.stage.trim() : "",
-        createdBy: filterInputs.createdBy.trim().length >= 3 ? filterInputs.createdBy.trim() : "",
+        agent:
+          filterInputs.agent.trim().length >= 3
+            ? filterInputs.agent.trim()
+            : "",
+
+        project:
+          filterInputs.project.trim().length >= 3
+            ? filterInputs.project.trim()
+            : "",
+
+        stage:
+          filterInputs.stage.trim().length >= 3
+            ? filterInputs.stage.trim()
+            : "",
+
+        createdBy:
+          filterInputs.createdBy.trim().length >= 3
+            ? filterInputs.createdBy.trim()
+            : "",
       })
     }, 250)
 
@@ -717,13 +801,21 @@ export default function CandidateRoster({
   const [error, setError] = useState("")
 
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+
   const [showBulkSms, setShowBulkSms] = useState(false)
+
   const [bulkSmsMessage, setBulkSmsMessage] = useState("")
+
   const [bulkSmsRequestId, setBulkSmsRequestId] = useState("")
+
   const [bulkSmsSending, setBulkSmsSending] = useState(false)
+
   const [bulkSmsAlreadySent, setBulkSmsAlreadySent] = useState(false)
+
   const [bulkSmsCanRetryNotes, setBulkSmsCanRetryNotes] = useState(false)
+
   const [bulkSmsError, setBulkSmsError] = useState("")
+
   const [bulkSmsNotice, setBulkSmsNotice] = useState("")
 
   const [drawerCandidate, setDrawerCandidate] =
@@ -750,8 +842,11 @@ export default function CandidateRoster({
 
   const [stageAnswers, setStageAnswers] = useState({
     offerLetter: "",
+
     wakalaReceived: "",
+
     molReceived: "",
+
     enjaz: "",
   })
 
@@ -773,11 +868,17 @@ export default function CandidateRoster({
 
   type VisaInvoice = {
     candidateId: string
+
     candidateName: string
+
     invoiceNumber: string
+
     amount: number
+
     depositPaid: number
+
     balanceDue: number
+
     status: string
   }
 
@@ -787,15 +888,21 @@ export default function CandidateRoster({
 
   const [ticketForm, setTicketForm] = useState({
     ticketNumber: "",
+
     bookingReference: "",
+
     travelDate: "",
+
     travelTime: "",
   })
 
   type ConnFlight = {
     from: string
+
     to: string
+
     flightNo: string
+
     depTime: string
   }
 
@@ -806,20 +913,38 @@ export default function CandidateRoster({
 
     fetchClientCached(
       "/api/candidates",
+
       { cache: "no-store" },
+
       { scopeKey: `candidates:${companyName}`, ttlMs: 5_000 },
     )
 
       .then(async (response) => {
-        const payload = await response.json()
+        const payload = (await response.json()) as {
+          candidates: CandidateRecord[]
+
+          permissions?: Record<string, boolean>
+
+          caseHandlerOptions?: CaseHandlerOption[]
+
+          caseHandlersEnabled?: boolean
+
+          error?: string
+        }
 
         if (!response.ok)
           throw new Error(payload.error || "Unable to load candidates.")
 
         if (!cancelled) {
-          setCandidates(payload.candidates as CandidateRecord[])
+          setCandidates(payload.candidates)
 
-          setPermissions(payload.permissions || {})
+          setPermissions({
+            ...payload.permissions,
+
+            caseHandlersEnabled: Boolean(payload.caseHandlersEnabled),
+          })
+
+          setCaseHandlerOptions(payload.caseHandlerOptions ?? [])
 
           setCanViewFinance(Boolean(payload.permissions?.canViewFinance))
 
@@ -858,14 +983,19 @@ export default function CandidateRoster({
       try {
         const response = await fetchClientCached(
           "/api/candidate-inquiries",
+
           { cache: "no-store" },
+
           { scopeKey: `inquiries:${companyName}`, ttlMs: 5_000 },
         )
 
         const payload = (await response.json()) as {
           inquiries?: InquiryRecord[]
+
           agents?: InquiryPerson[]
+
           handlers?: InquiryPerson[]
+
           error?: string
         }
 
@@ -905,13 +1035,16 @@ export default function CandidateRoster({
 
     fetchClientCached(
       "/api/projects",
+
       { cache: "no-store" },
+
       { scopeKey: `projects:${companyName}`, ttlMs: 5_000 },
     )
 
       .then(async (response) => {
         const payload = (await response.json()) as {
           projects?: ProjectOption[]
+
           error?: string
         }
 
@@ -944,6 +1077,7 @@ export default function CandidateRoster({
 
   const candidateProject = (candidate: CandidateRecord) => {
     const details = candidate.details ?? {}
+
     return typeof details.contracts === "string" && details.contracts
       ? details.contracts
       : typeof details.assignedContracts === "string"
@@ -953,7 +1087,9 @@ export default function CandidateRoster({
 
   const candidateStage = (candidate: CandidateRecord) => {
     const stage = candidate.details?.stage
+
     if (typeof stage !== "string" || !stage) return "Registration"
+
     return stage === "Project Submission" ? "Submitted to Project" : stage
   }
 
@@ -966,7 +1102,9 @@ export default function CandidateRoster({
 
   const filterOptions = (values: string[]): CandidateFilterOption[] =>
     Array.from(new Set(values))
+
       .sort((a, b) => a.localeCompare(b))
+
       .map((label) => ({ value: label, label }))
 
   const agentOptions = filterOptions(
@@ -985,18 +1123,24 @@ export default function CandidateRoster({
 
   const candidateMatchesFilters = (
     candidate: CandidateRecord,
+
     query = search,
   ) =>
     matchesSearch(
       query,
+
       candidate.first_name,
+
       candidate.last_name,
+
       candidate.file_number,
+
       candidate.phone,
     ) &&
     matchesSearch(filterQueries.agent, candidate.agent_name || "Unassigned") &&
     matchesSearch(
       filterQueries.project,
+
       candidateProject(candidate) || "No project",
     ) &&
     matchesSearch(filterQueries.stage, candidateStage(candidate)) &&
@@ -1009,11 +1153,17 @@ export default function CandidateRoster({
   const filteredInquiries = inquiries.filter((inquiry) =>
     matchesSearch(
       search,
+
       inquiry.first_name,
+
       inquiry.last_name,
+
       inquiry.phone,
+
       inquiry.agent_name,
+
       inquiry.job_of_interest.join(" "),
+
       inquiry.desired_countries.join(" "),
     ),
   )
@@ -1029,11 +1179,17 @@ export default function CandidateRoster({
         : inquiries.filter((inquiry) =>
             matchesSearch(
               value,
+
               inquiry.first_name,
+
               inquiry.last_name,
+
               inquiry.phone,
+
               inquiry.agent_name,
+
               inquiry.job_of_interest.join(" "),
+
               inquiry.desired_countries.join(" "),
             ),
           ).length
@@ -1044,6 +1200,7 @@ export default function CandidateRoster({
 
     filterNoticeTimer.current = setTimeout(
       () => setFilterResultsNotice(""),
+
       2600,
     )
   }
@@ -1052,6 +1209,7 @@ export default function CandidateRoster({
     () => () => {
       if (filterNoticeTimer.current) clearTimeout(filterNoticeTimer.current)
     },
+
     [],
   )
 
@@ -1080,6 +1238,7 @@ export default function CandidateRoster({
         : [
             ...new Set([
               ...current,
+
               ...filtered.map((candidate) => candidate.id),
             ]),
           ],
@@ -1091,49 +1250,81 @@ export default function CandidateRoster({
 
   const sendBulkSms = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!permissions.canSendBulkSms || !selectedIds.length || bulkSmsSending) return
+
+    if (!permissions.canSendBulkSms || !selectedIds.length || bulkSmsSending)
+      return
 
     setBulkSmsSending(true)
+
     setBulkSmsError("")
+
     try {
       const response = await fetch("/api/candidates/bulk-sms", {
         method: "POST",
+
         headers: { "Content-Type": "application/json" },
+
         body: JSON.stringify({
           requestId: bulkSmsRequestId,
+
           candidateIds: selectedIds,
+
           message: bulkSmsMessage,
         }),
       })
+
       const payload = (await response.json()) as {
         error?: string
+
         recipients?: number
+
         agentsNotified?: number
+
         smsSent?: boolean
+
         retryable?: boolean
+
         status?: string
       }
+
       if (!response.ok) {
         if (payload.smsSent) {
           setBulkSmsAlreadySent(true)
+
           setBulkSmsCanRetryNotes(payload.retryable === true)
-          setBulkSmsError(payload.error ?? "SMS sent, but agent notes could not be delivered.")
+
+          setBulkSmsError(
+            payload.error ??
+              "SMS sent, but agent notes could not be delivered.",
+          )
         } else {
           if (payload.status !== "unknown" && payload.status !== "sending")
             setBulkSmsRequestId(crypto.randomUUID())
+
           throw new Error(payload.error ?? "Unable to send candidate SMS.")
         }
+
         return
       }
 
       setShowBulkSms(false)
+
       setSelectedIds([])
+
       setBulkSmsMessage("")
+
       setBulkSmsAlreadySent(false)
+
       setBulkSmsCanRetryNotes(false)
+
       setBulkSmsNotice(
-        `SMS sent to ${payload.recipients ?? 0} number${payload.recipients === 1 ? "" : "s"}. ${payload.agentsNotified ?? 0} agent${payload.agentsNotified === 1 ? " received" : "s received"} a note.`,
+        `SMS sent to ${payload.recipients ?? 0} number${
+          payload.recipients === 1 ? "" : "s"
+        }. ${payload.agentsNotified ?? 0} agent${
+          payload.agentsNotified === 1 ? " received" : "s received"
+        } a note.`,
       )
+
       window.setTimeout(() => setBulkSmsNotice(""), 6000)
     } catch (sendError) {
       setBulkSmsError(
@@ -1148,6 +1339,7 @@ export default function CandidateRoster({
 
   const canStartWorkflowUpdate = (candidate: CandidateRecord) => {
     const stage = (candidate.details as Record<string, unknown> | null)?.stage
+
     return candidate.visa_locked || stage === "Submitted to Project"
       ? canUpdateCandidateStages
       : canSubmitCandidatesToProjects
@@ -1157,6 +1349,7 @@ export default function CandidateRoster({
     const clickedCandidate = candidates.find(
       (candidate) => candidate.id === candidateId,
     )
+
     if (!clickedCandidate || !canStartWorkflowUpdate(clickedCandidate)) return
 
     const ids = selectedIds.includes(candidateId) ? selectedIds : [candidateId]
@@ -1192,8 +1385,11 @@ export default function CandidateRoster({
 
     setStageAnswers({
       offerLetter: "",
+
       wakalaReceived: "",
+
       molReceived: "",
+
       enjaz: "",
     })
 
@@ -1201,8 +1397,11 @@ export default function CandidateRoster({
 
     setTicketForm({
       ticketNumber: "",
+
       bookingReference: "",
+
       travelDate: "",
+
       travelTime: "",
     })
 
@@ -1214,9 +1413,11 @@ export default function CandidateRoster({
   }
 
   const projectMatches = projects
+
     .filter((project) =>
       matchesSearch(projectSearch, project.project_name, project.country),
     )
+
     .slice(0, 3)
 
   const advanceCandidates = async () => {
@@ -1232,18 +1433,27 @@ export default function CandidateRoster({
 
         rejected?: {
           candidateId: string
+
           name: string
+
           reasons: string[]
+
           kind: "qualification" | "transition"
         }[]
 
         invoices?: {
           candidateId: string
+
           candidateName: string
+
           invoiceNumber: string
+
           amount: number
+
           depositPaid: number
+
           balanceDue: number
+
           status: string
         }[]
 
@@ -1255,19 +1465,25 @@ export default function CandidateRoster({
       if (transitionStep === "project") {
         body = {
           action: "submit-to-project",
+
           candidateIds: transitionIds,
+
           projectId: transitionProjectId,
         }
       } else if (transitionStep === "details") {
         body = {
           action: "save-additional-stages",
+
           candidateIds: transitionIds,
+
           ...stageAnswers,
         }
       } else if (transitionStep === "visa") {
         body = {
           action: "record-visa-received",
+
           candidateIds: transitionIds,
+
           projectId: transitionProjectId,
         }
       } else {
@@ -1275,8 +1491,11 @@ export default function CandidateRoster({
 
         body = {
           action: "record-ticketing",
+
           candidateIds: transitionIds,
+
           ...ticketForm,
+
           connectingFlights,
         }
       }
@@ -1296,6 +1515,7 @@ export default function CandidateRoster({
 
       if (payload.updated?.length) {
         clearClientApiCache()
+
         const updatedById = new Map(payload.updated.map((r) => [r.id, r]))
 
         setCandidates((current) =>
@@ -1305,11 +1525,13 @@ export default function CandidateRoster({
 
       if (payload.rejected?.length) {
         const warnings = payload.rejected
+
           .map(({ name, reasons, kind }) =>
             kind === "qualification"
               ? `${name} was not submitted due to qualifications: ${reasons.join("; ")}.`
               : `${name} could not be advanced: ${reasons.join("; ")}.`,
           )
+
           .join(" ")
 
         setTransitionError(warnings)
@@ -1414,6 +1636,7 @@ export default function CandidateRoster({
 
     setInquiryDraft((current) => ({
       ...current,
+
       desiredCountries: [...current.desiredCountries, country],
     }))
 
@@ -1433,6 +1656,7 @@ export default function CandidateRoster({
 
     setInquiryDraft((current) => ({
       ...current,
+
       jobOfInterest: [...current.jobOfInterest, job],
     }))
 
@@ -1491,7 +1715,9 @@ export default function CandidateRoster({
 
       const payload = (await response.json()) as {
         inquiry?: InquiryRecord
+
         error?: string
+
         warning?: string
       }
 
@@ -1501,10 +1727,16 @@ export default function CandidateRoster({
         )
 
       clearClientApiCache()
-      setInquiryNotice([
-        `Inquiry saved for ${payload.inquiry.first_name} ${payload.inquiry.last_name}.`,
-        payload.warning,
-      ].filter(Boolean).join(" "))
+
+      setInquiryNotice(
+        [
+          `Inquiry saved for ${payload.inquiry.first_name} ${payload.inquiry.last_name}.`,
+
+          payload.warning,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      )
 
       closeInquiryForm()
 
@@ -1534,10 +1766,13 @@ export default function CandidateRoster({
 
   const deleteRecord = async (
     recordType: "candidate" | "inquiry",
+
     recordId: string,
+
     recordName: string,
   ) => {
     const recordLabel = recordType === "candidate" ? "candidate" : "inquiry"
+
     if (
       !window.confirm(
         `Permanently delete ${recordLabel} ${recordName}? This cannot be undone.`,
@@ -1547,6 +1782,7 @@ export default function CandidateRoster({
     }
 
     setDeletingRecordId(recordId)
+
     setRecordActionError("")
 
     try {
@@ -1554,8 +1790,10 @@ export default function CandidateRoster({
         recordType === "candidate"
           ? `/api/candidates/${encodeURIComponent(recordId)}`
           : `/api/candidate-inquiries/${encodeURIComponent(recordId)}`,
+
         { method: "DELETE" },
       )
+
       const payload = (await response.json().catch(() => ({}))) as {
         error?: string
       }
@@ -1567,18 +1805,22 @@ export default function CandidateRoster({
       }
 
       clearClientApiCache()
+
       if (recordType === "candidate") {
         setCandidates((current) =>
           current.filter((candidate) => candidate.id !== recordId),
         )
+
         setSelectedIds((current) =>
           current.filter((candidateId) => candidateId !== recordId),
         )
+
         setRegistrationNotice(`${recordName} was deleted.`)
       } else {
         setInquiries((current) =>
           current.filter((inquiry) => inquiry.id !== recordId),
         )
+
         setInquiryNotice(`${recordName} was deleted.`)
       }
     } catch (deleteError) {
@@ -1592,29 +1834,105 @@ export default function CandidateRoster({
     }
   }
 
+  const assignCaseHandler = async (
+    candidateId: string,
+
+    userId: string | null,
+  ) => {
+    setSavingCaseHandlerId(candidateId)
+
+    setCaseHandlerError("")
+
+    try {
+      const response = await fetch(
+        `/api/candidates/${encodeURIComponent(candidateId)}/case-handler`,
+
+        {
+          method: "PATCH",
+
+          headers: { "Content-Type": "application/json" },
+
+          body: JSON.stringify({ userId }),
+        },
+      )
+
+      const payload = (await response.json()) as {
+        caseHandlerUserId?: string | null
+
+        caseHandlerName?: string | null
+
+        error?: string
+      }
+
+      if (!response.ok)
+        throw new Error(payload.error ?? "Unable to assign this case handler.")
+
+      setCandidates((current) =>
+        current.map((candidate) =>
+          candidate.id === candidateId
+            ? {
+                ...candidate,
+
+                case_handler_user_id: payload.caseHandlerUserId ?? null,
+
+                case_handler_name: payload.caseHandlerName ?? null,
+              }
+            : candidate,
+        ),
+      )
+
+      clearClientApiCache()
+    } catch (assignmentError: unknown) {
+      setCaseHandlerError(
+        assignmentError instanceof Error
+          ? assignmentError.message
+          : "Unable to assign this case handler.",
+      )
+    } finally {
+      setSavingCaseHandlerId(null)
+    }
+  }
+
   const saveCandidate = async (form: Candidate) => {
     const {
       id,
+
       inquiryNumber,
+
       fileNumber,
+
       firstName,
+
       lastName,
+
       phone,
+
       dob,
+
       placeOfBirth,
+
       agent,
+
       religion,
+
       branchId,
 
       agentUserId,
+
       nationality,
+
       fatherName,
+
       motherName,
+
       jobOfInterest,
+
       ...details
     } = form
-    void inquiryNumber;
-    void fileNumber;
+
+    void inquiryNumber
+
+    void fileNumber
 
     const selectedAgentUserId =
       agentUserId ||
@@ -1682,6 +2000,7 @@ export default function CandidateRoster({
       isNewCandidate
         ? "/api/candidates"
         : `/api/candidates/${encodeURIComponent(id)}`,
+
       {
         method: isNewCandidate ? "POST" : "PATCH",
 
@@ -1693,7 +2012,9 @@ export default function CandidateRoster({
 
     const payload = (await response.json()) as {
       candidate?: CandidateRecord
+
       error?: string
+
       warning?: string
     }
 
@@ -1701,7 +2022,9 @@ export default function CandidateRoster({
       throw new Error(payload.error ?? "Unable to save candidate.")
 
     clearClientApiCache()
+
     setRegistrationNotice(payload.warning ?? "")
+
     if (isNewCandidate)
       setCandidates((current) => [payload.candidate!, ...current])
     else
@@ -1731,20 +2054,27 @@ export default function CandidateRoster({
         isAgent={permissions?.isAgent}
         onSave={saveCandidate}
         agentOptions={inquiryPeople
+
           .filter((person) =>
             person.role_name.toLocaleLowerCase().includes("agent"),
           )
-          .map((person): CandidateAgentOption => ({
-            userId: person.user_id,
-            displayName: person.display_name,
-          }))}
+
+          .map(
+            (person): CandidateAgentOption => ({
+              userId: person.user_id,
+
+              displayName: person.display_name,
+            }),
+          )}
         canViewFinance={canViewFinance}
         canManagePassportStatus={permissions?.canManagePassportStatus}
         canViewActivityLogs={canViewActivityLogs}
         canViewActivityByRole={permissions?.canViewActivityByRole || false}
         onBack={() => {
           setEditingCandidate(null)
+
           setIsNewCandidate(false)
+
           setRegistrationInquiryId(null)
         }}
       />
@@ -1808,7 +2138,9 @@ export default function CandidateRoster({
             className="w-full max-w-sm border px-3 py-2 text-sm outline-none"
             style={{
               background: "var(--secondary)",
+
               borderColor: "var(--border)",
+
               color: "var(--foreground)",
             }}
           />
@@ -1820,15 +2152,20 @@ export default function CandidateRoster({
                 onClick={() => {
                   if (!bulkSmsAlreadySent) {
                     setBulkSmsMessage("")
+
                     setBulkSmsError("")
+
                     setBulkSmsCanRetryNotes(false)
+
                     setBulkSmsRequestId(crypto.randomUUID())
                   }
+
                   setShowBulkSms(true)
                 }}
                 className="inline-flex shrink-0 items-center gap-2 rounded px-3 py-2 text-sm font-600"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
                 }}
               >
@@ -1836,46 +2173,52 @@ export default function CandidateRoster({
                 Send SMS
               </button>
             )}
-          {activePage === "pipeline" ? (
-            permissions.canRegisterCandidates && (
-              <button
-                type="button"
-                onClick={() => {
-                  setRegistrationNotice("")
-                  setRegistrationInquiryId(null)
-                  setEditingCandidate(newCandidate())
-                  setIsNewCandidate(true)
-                }}
-                className="inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm font-600"
-                style={{
-                  background: "var(--primary)",
-                  color: "var(--primary-foreground)",
-                }}
-              >
-                <UserPlus size={16} aria-hidden="true" /> Register Candidate
-              </button>
-            )
-          ) : (
-            permissions.canCreateInquiries && (
-              <button
-                type="button"
-                onClick={() => {
-                  setInquiryError("")
-                  setInquiryNotice("")
-                  setInquiryDraft(emptyInquiryDraft())
-                  setShowInquiryForm(true)
-                }}
-                className="inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm font-600"
-                style={{
-                  background: "var(--primary)",
-                  color: "var(--primary-foreground)",
-                }}
-              >
-                <UserPlus size={16} aria-hidden="true" /> Register Candidate
-                Inquiry
-              </button>
-            )
-          )}
+          {activePage === "pipeline"
+            ? permissions.canRegisterCandidates && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRegistrationNotice("")
+
+                    setRegistrationInquiryId(null)
+
+                    setEditingCandidate(newCandidate())
+
+                    setIsNewCandidate(true)
+                  }}
+                  className="inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm font-600"
+                  style={{
+                    background: "var(--primary)",
+
+                    color: "var(--primary-foreground)",
+                  }}
+                >
+                  <UserPlus size={16} aria-hidden="true" /> Register Candidate
+                </button>
+              )
+            : permissions.canCreateInquiries && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInquiryError("")
+
+                    setInquiryNotice("")
+
+                    setInquiryDraft(emptyInquiryDraft())
+
+                    setShowInquiryForm(true)
+                  }}
+                  className="inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm font-600"
+                  style={{
+                    background: "var(--primary)",
+
+                    color: "var(--primary-foreground)",
+                  }}
+                >
+                  <UserPlus size={16} aria-hidden="true" /> Register Candidate
+                  Inquiry
+                </button>
+              )}
         </div>
       </header>
       {activePage === "pipeline" && registrationNotice && (
@@ -1900,7 +2243,9 @@ export default function CandidateRoster({
           className="fixed bottom-4 right-4 z-[80] max-w-sm rounded-lg border px-4 py-3 text-sm shadow-xl"
           style={{
             background: "var(--card)",
+
             borderColor: "var(--border)",
+
             color: "var(--foreground)",
           }}
         >
@@ -1966,8 +2311,11 @@ export default function CandidateRoster({
               onClick={() =>
                 setFilterInputs({
                   agent: "",
+
                   project: "",
+
                   stage: "",
+
                   createdBy: "",
                 })
               }
@@ -2003,292 +2351,364 @@ export default function CandidateRoster({
         </div>
       )}
 
+      {caseHandlerError && activePage === "pipeline" && (
+        <p
+          role="alert"
+          className="border-b border-red-500/30 bg-red-500/10 px-6 py-3 text-sm text-red-600"
+        >
+          {caseHandlerError}
+        </p>
+      )}
+
       {activePage === "pipeline" ? (
         <div className="min-h-0 flex-1 overflow-auto">
-          <div className="app-table-scroll"><table className="candidate-pipeline-table w-full min-w-260 text-sm">
-            <thead
-              className="sticky top-0"
-              style={{ background: "var(--card)" }}
-            >
-              <tr
-                className="border-b text-left"
-                style={{ borderColor: "var(--border)" }}
+          <div className="app-table-scroll">
+            <table className="candidate-pipeline-table w-full min-w-260 text-sm">
+              <thead
+                className="sticky top-0"
+                style={{ background: "var(--card)" }}
               >
-                <th
-                  className="whitespace-nowrap px-3 py-3 text-left text-xs font-700 uppercase"
-                  style={{ color: "var(--muted-foreground)" }}
-                >
-                  <div className="flex items-center gap-2">
-                    {canSelectCandidates && (
-                      <input
-                        type="checkbox"
-                        aria-label="Select all visible candidates"
-                        checked={allFilteredSelected}
-                        onChange={toggleFiltered}
-                        disabled={bulkSmsAlreadySent}
-                        className="h-4 w-4 accent-amber-700"
-                      />
-                    )}
-                    Actions
-                  </div>
-                </th>
-                {[
-                  "File No.",
-                  "Candidate Name",
-                  "Agent",
-                  "Mobile",
-                  "Passport",
-                  "Project",
-                  "Stage",
-                  "Created by",
-                  "Last edited by",
-                ].map((heading) => (
-                  <th
-                    key={heading}
-                    className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    {heading}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr>
-                  <td
-                    colSpan={10}
-                    className="px-4 py-10 text-center"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    Loading company records…
-                  </td>
-                </tr>
-              )}
-              {error && (
-                <tr>
-                  <td
-                    colSpan={10}
-                    role="alert"
-                    className="px-4 py-10 text-center"
-                    style={{ color: "#ef4444" }}
-                  >
-                    {error}
-                  </td>
-                </tr>
-              )}
-              {!loading && !error && filtered.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={10}
-                    className="px-4 py-10 text-center"
-                    style={{ color: "var(--muted-foreground)" }}
-                  >
-                    {candidates.length ? (
-                      "No matching candidates."
-                    ) : permissions.isAgent ? (
-                      <div className="mx-auto max-w-xl">
-                        <p>
-                          Sorry, you currently have no candidates at{" "}
-                          {companyName || "your company"}. Kindly register your
-                          candidates at our office under Inquiries.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => onNavigate("candidate-inquiries")}
-                          className="mt-3 rounded px-4 py-2 text-sm font-600"
-                          style={{
-                            background: "var(--primary)",
-
-                            color: "var(--primary-foreground)",
-                          }}
-                        >
-                          Open Inquiries
-                        </button>
-                      </div>
-                    ) : (
-                      "No candidate records found for this company."
-                    )}
-                  </td>
-                </tr>
-              )}
-              {filtered.map((candidate) => (
                 <tr
-                  key={candidate.id}
-                  className="border-b"
-                  style={{
-                    borderColor: "var(--border)",
-                    background: selectedIds.includes(candidate.id)
-                      ? "color-mix(in srgb, var(--primary) 8%, var(--card))"
-                      : "transparent",
-                    color: "var(--foreground)",
-                  }}
+                  className="border-b text-left"
+                  style={{ borderColor: "var(--border)" }}
                 >
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-1">
+                  <th
+                    className="whitespace-nowrap px-3 py-3 text-left text-xs font-700 uppercase"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    <div className="flex items-center gap-2">
                       {canSelectCandidates && (
                         <input
                           type="checkbox"
-                          aria-label={`Select ${candidate.first_name} ${candidate.last_name}`}
-                          checked={selectedIds.includes(candidate.id)}
-                          onChange={() => toggleCandidate(candidate.id)}
+                          aria-label="Select all visible candidates"
+                          checked={allFilteredSelected}
+                          onChange={toggleFiltered}
                           disabled={bulkSmsAlreadySent}
                           className="h-4 w-4 accent-amber-700"
                         />
                       )}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setViewingCandidate(candidateFromRecord(candidate))
-                        }
-                        aria-label={`View details for ${candidate.first_name} ${candidate.last_name}`}
-                        title={
-                          canViewFinance
-                            ? "View candidate and finance details"
-                            : "View candidate details"
-                        }
-                        className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
-                        style={{ color: "var(--foreground)" }}
-                      >
-                        <Eye size={15} aria-hidden="true" />
-                      </button>
-                      {!financeReadOnly && (
-                        <button
-                          type="button"
-                          onClick={() => setDrawerCandidate(candidate)}
-                          aria-label={`View attachments for ${candidate.first_name} ${candidate.last_name}`}
-                          title="View attachments"
-                          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
-                          style={{ color: "var(--primary)" }}
-                        >
-                          <Paperclip size={15} aria-hidden="true" />
-                        </button>
-                      )}
-                      {canStartWorkflowUpdate(candidate) && (
-                        <button
-                          type="button"
-                          onClick={() => openStageUpdate(candidate.id)}
-                          aria-label={`Advance stage for ${candidate.first_name} ${candidate.last_name}`}
-                          title="Update candidate stage"
-                          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
-                          style={{ color: "var(--foreground)" }}
-                        >
-                          <RefreshCw size={14} aria-hidden="true" />
-                        </button>
-                      )}
-                      {permissions.canEditCandidates && (
-                        <>
+                      Actions
+                    </div>
+                  </th>
+                  {[
+                    "File No.",
+
+                    "Candidate Name",
+
+                    "Agent",
+
+                    "Mobile",
+
+                    ...(permissions.caseHandlersEnabled
+                      ? ["Case Handler"]
+                      : []),
+
+                    "Passport",
+
+                    "Project",
+
+                    "Stage",
+
+                    "Created by",
+
+                    "Last edited by",
+                  ].map((heading) => (
+                    <th
+                      key={heading}
+                      className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {heading}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {loading && (
+                  <tr>
+                    <td
+                      colSpan={permissions.caseHandlersEnabled ? 11 : 10}
+                      className="px-4 py-10 text-center"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      Loading company records...
+                    </td>
+                  </tr>
+                )}
+                {error && (
+                  <tr>
+                    <td
+                      colSpan={permissions.caseHandlersEnabled ? 11 : 10}
+                      role="alert"
+                      className="px-4 py-10 text-center"
+                      style={{ color: "#ef4444" }}
+                    >
+                      {error}
+                    </td>
+                  </tr>
+                )}
+                {!loading && !error && filtered.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={permissions.caseHandlersEnabled ? 11 : 10}
+                      className="px-4 py-10 text-center"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {candidates.length ? (
+                        "No matching candidates."
+                      ) : permissions.isAgent ? (
+                        <div className="mx-auto max-w-xl">
+                          <p>
+                            Sorry, you currently have no candidates at{" "}
+                            {companyName || "your company"}. Kindly register
+                            your candidates at our office under Inquiries.
+                          </p>
                           <button
                             type="button"
-                            onClick={() => {
-                              setEditingCandidate(
-                                candidateFromRecord(candidate),
-                              )
-                              setIsNewCandidate(false)
+                            onClick={() => onNavigate("candidate-inquiries")}
+                            className="mt-3 rounded px-4 py-2 text-sm font-600"
+                            style={{
+                              background: "var(--primary)",
+
+                              color: "var(--primary-foreground)",
                             }}
-                            aria-label={`Edit ${candidate.first_name} ${candidate.last_name}`}
-                            title="Edit candidate"
-                            className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
-                            style={{ color: "var(--foreground)" }}
                           >
-                            <Pencil size={14} aria-hidden="true" />
+                            Open Inquiries
                           </button>
-                        </>
+                        </div>
+                      ) : (
+                        "No candidate records found for this company."
                       )}
-                      {permissions.canDeleteCandidates && (
+                    </td>
+                  </tr>
+                )}
+                {filtered.map((candidate) => (
+                  <tr
+                    key={candidate.id}
+                    className="border-b"
+                    style={{
+                      borderColor: "var(--border)",
+
+                      background: selectedIds.includes(candidate.id)
+                        ? "color-mix(in srgb, var(--primary) 8%, var(--card))"
+                        : "transparent",
+
+                      color: "var(--foreground)",
+                    }}
+                  >
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1">
+                        {canSelectCandidates && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${candidate.first_name} ${candidate.last_name}`}
+                            checked={selectedIds.includes(candidate.id)}
+                            onChange={() => toggleCandidate(candidate.id)}
+                            disabled={bulkSmsAlreadySent}
+                            className="h-4 w-4 accent-amber-700"
+                          />
+                        )}
                         <button
                           type="button"
                           onClick={() =>
-                            void deleteRecord(
-                              "candidate",
-                              candidate.id,
-                              `${candidate.first_name} ${candidate.last_name}`,
-                            )
+                            setViewingCandidate(candidateFromRecord(candidate))
                           }
-                          disabled={deletingRecordId === candidate.id}
-                          aria-label={`Delete ${candidate.first_name} ${candidate.last_name}`}
-                          title="Delete candidate"
-                          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-red-500/10 disabled:opacity-50"
-                          style={{ color: "#b43c45" }}
+                          aria-label={`View details for ${candidate.first_name} ${candidate.last_name}`}
+                          title={
+                            canViewFinance
+                              ? "View candidate and finance details"
+                              : "View candidate details"
+                          }
+                          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                          style={{ color: "var(--foreground)" }}
                         >
-                          <Trash2 size={14} aria-hidden="true" />
+                          <Eye size={15} aria-hidden="true" />
                         </button>
+                        {!financeReadOnly && (
+                          <button
+                            type="button"
+                            onClick={() => setDrawerCandidate(candidate)}
+                            aria-label={`View attachments for ${candidate.first_name} ${candidate.last_name}`}
+                            title="View attachments"
+                            className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                            style={{ color: "var(--primary)" }}
+                          >
+                            <Paperclip size={15} aria-hidden="true" />
+                          </button>
+                        )}
+                        {canStartWorkflowUpdate(candidate) && (
+                          <button
+                            type="button"
+                            onClick={() => openStageUpdate(candidate.id)}
+                            aria-label={`Advance stage for ${candidate.first_name} ${candidate.last_name}`}
+                            title="Update candidate stage"
+                            className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            <RefreshCw size={14} aria-hidden="true" />
+                          </button>
+                        )}
+                        {permissions.canEditCandidates && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCandidate(
+                                  candidateFromRecord(candidate),
+                                )
+
+                                setIsNewCandidate(false)
+                              }}
+                              aria-label={`Edit ${candidate.first_name} ${candidate.last_name}`}
+                              title="Edit candidate"
+                              className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                              style={{ color: "var(--foreground)" }}
+                            >
+                              <Pencil size={14} aria-hidden="true" />
+                            </button>
+                          </>
+                        )}
+                        {permissions.canDeleteCandidates && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void deleteRecord(
+                                "candidate",
+
+                                candidate.id,
+
+                                `${candidate.first_name} ${candidate.last_name}`,
+                              )
+                            }
+                            disabled={deletingRecordId === candidate.id}
+                            aria-label={`Delete ${candidate.first_name} ${candidate.last_name}`}
+                            title="Delete candidate"
+                            className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                            style={{ color: "#b43c45" }}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                    <td
+                      className="px-3 py-2 mono text-xs"
+                      title={candidate.file_number}
+                    >
+                      {candidate.file_number
+                        ? `${candidate.file_number[0]}...${candidate.file_number.slice(-3)}`
+                        : "—"}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 font-600">
+                      {candidate.first_name} {candidate.last_name}
+                    </td>
+                    <td className="px-3 py-2">{candidate.agent_name || "—"}</td>
+                    <td className="px-3 py-2 mono">{candidate.phone || "—"}</td>
+                    {permissions.caseHandlersEnabled && (
+                      <td className="px-3 py-2">
+                        {permissions.canAssignCaseHandler ? (
+                          <select
+                            aria-label={`Case handler for ${candidate.first_name} ${candidate.last_name}`}
+                            value={candidate.case_handler_user_id ?? ""}
+                            disabled={savingCaseHandlerId !== null}
+                            onChange={(event) => {
+                              const userId = event.currentTarget.value || null
+
+                              void assignCaseHandler(candidate.id, userId)
+                            }}
+                            className="min-w-36 rounded border px-2 py-1.5 text-xs outline-none disabled:opacity-60"
+                            style={{
+                              background: "var(--secondary)",
+
+                              borderColor: "var(--border)",
+
+                              color: "var(--foreground)",
+                            }}
+                          >
+                            <option value="">Unassigned</option>
+                            {candidate.case_handler_user_id &&
+                              !caseHandlerOptions.some(
+                                (option) =>
+                                  option.userId ===
+                                  candidate.case_handler_user_id,
+                              ) && (
+                                <option value={candidate.case_handler_user_id}>
+                                  {candidate.case_handler_name ||
+                                    "Former team member"}
+                                </option>
+                              )}
+                            {caseHandlerOptions.map((option) => (
+                              <option key={option.userId} value={option.userId}>
+                                {option.displayName}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="whitespace-nowrap">
+                            {candidate.case_handler_name || "—"}
+                          </span>
+                        )}
+                      </td>
+                    )}
+                    <td className="px-3 py-2">
+                      {typeof candidate.details?.passportStatus === "string" &&
+                      candidate.details.passportStatus
+                        ? candidate.details.passportStatus
+                        : candidate.details?.passportNumber
+                          ? "On file"
+                          : "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {typeof candidate.details?.contracts === "string" &&
+                      candidate.details.contracts
+                        ? candidate.details.contracts
+                        : typeof candidate.details?.assignedContracts ===
+                              "string" && candidate.details.assignedContracts
+                          ? candidate.details.assignedContracts
+                          : "—"}
+                    </td>
+                    <td className="px-3 py-2">{candidateStage(candidate)}</td>
+                    <td className="px-3 py-2 text-xs">
+                      <span className="block whitespace-nowrap">
+                        {candidate.created_by_name ||
+                          (candidate.created_by
+                            ? candidatePeople.get(candidate.created_by) ||
+                              "Former team member"
+                            : "—")}
+                      </span>
+                      {candidate.created_at && (
+                        <time
+                          className="mt-1 block whitespace-nowrap"
+                          dateTime={candidate.created_at}
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {new Date(candidate.created_at).toLocaleString()}
+                        </time>
                       )}
-                    </div>
-                  </td>
-                  <td
-                    className="px-3 py-2 mono text-xs"
-                    title={candidate.file_number}
-                  >
-                    {candidate.file_number
-                      ? `${candidate.file_number[0]}...${candidate.file_number.slice(-3)}`
-                      : "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 font-600">
-                    {candidate.first_name} {candidate.last_name}
-                  </td>
-                  <td className="px-3 py-2">{candidate.agent_name || "—"}</td>
-                  <td className="px-3 py-2 mono">{candidate.phone || "—"}</td>
-                  <td className="px-3 py-2">
-                    {typeof candidate.details?.passportStatus === "string" &&
-                    candidate.details.passportStatus
-                      ? candidate.details.passportStatus
-                      : candidate.details?.passportNumber
-                        ? "On file"
-                        : "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    {typeof candidate.details?.contracts === "string" &&
-                    candidate.details.contracts
-                      ? candidate.details.contracts
-                      : typeof candidate.details?.assignedContracts ===
-                            "string" && candidate.details.assignedContracts
-                        ? candidate.details.assignedContracts
-                        : "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    {candidateStage(candidate)}
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    <span className="block whitespace-nowrap">
-                      {candidate.created_by_name ||
-                        (candidate.created_by
-                          ? candidatePeople.get(candidate.created_by) ||
-                            "Former team member"
-                          : "—")}
-                    </span>
-                    {candidate.created_at && (
-                      <time
-                        className="mt-1 block whitespace-nowrap"
-                        dateTime={candidate.created_at}
-                        style={{ color: "var(--muted-foreground)" }}
-                      >
-                        {new Date(candidate.created_at).toLocaleString()}
-                      </time>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    <span className="block whitespace-nowrap">
-                      {candidate.updated_by_name ||
-                        (candidate.updated_by
-                          ? candidatePeople.get(candidate.updated_by) ||
-                            "Former team member"
-                          : "—")}
-                    </span>
-                    {candidate.updated_at && (
-                      <time
-                        className="mt-1 block whitespace-nowrap"
-                        dateTime={candidate.updated_at}
-                        style={{ color: "var(--muted-foreground)" }}
-                      >
-                        {new Date(candidate.updated_at).toLocaleString()}
-                      </time>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table></div>
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      <span className="block whitespace-nowrap">
+                        {candidate.updated_by_name ||
+                          (candidate.updated_by
+                            ? candidatePeople.get(candidate.updated_by) ||
+                              "Former team member"
+                            : "—")}
+                      </span>
+                      {candidate.updated_at && (
+                        <time
+                          className="mt-1 block whitespace-nowrap"
+                          dateTime={candidate.updated_at}
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {new Date(candidate.updated_at).toLocaleString()}
+                        </time>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto p-6">
@@ -2312,184 +2732,199 @@ export default function CandidateRoster({
             className="overflow-x-auto border"
             style={{ borderColor: "var(--border)", background: "var(--card)" }}
           >
-            <div className="app-table-scroll"><table className="w-full min-w-300 text-sm">
-              <thead
-                className="sticky top-0"
-                style={{ background: "var(--card)" }}
-              >
-                <tr
-                  className="border-b text-left"
-                  style={{ borderColor: "var(--border)" }}
+            <div className="app-table-scroll">
+              <table className="w-full min-w-300 text-sm">
+                <thead
+                  className="sticky top-0"
+                  style={{ background: "var(--card)" }}
                 >
-                  {[
-                    "Inq No.",
-                    "Candidate",
-                    "Phone",
-                    "Source",
-                    "Agent",
-                    "Countries",
-                    "Job of interest",
-                    "Experience",
-                    "Contact",
-                    "Handled by",
-                    "Inquiry date",
-                  ].map((heading) => (
-                    <th
-                      key={heading}
-                      className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase"
-                      style={{ color: "var(--muted-foreground)" }}
-                    >
-                      {heading}
-                    </th>
-                  ))}
-                  <th
-                    className="px-3 py-3 text-right text-xs font-700 uppercase"
-                    style={{ color: "var(--muted-foreground)" }}
+                  <tr
+                    className="border-b text-left"
+                    style={{ borderColor: "var(--border)" }}
                   >
-                    Action
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {inquiriesLoading && (
-                  <tr>
-                    <td
-                      colSpan={12}
-                      className="px-4 py-10 text-center"
+                    {[
+                      "Inq No.",
+
+                      "Candidate",
+
+                      "Phone",
+
+                      "Source",
+
+                      "Agent",
+
+                      "Countries",
+
+                      "Job of interest",
+
+                      "Experience",
+
+                      "Contact",
+
+                      "Handled by",
+
+                      "Inquiry date",
+                    ].map((heading) => (
+                      <th
+                        key={heading}
+                        className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase"
+                        style={{ color: "var(--muted-foreground)" }}
+                      >
+                        {heading}
+                      </th>
+                    ))}
+                    <th
+                      className="px-3 py-3 text-right text-xs font-700 uppercase"
                       style={{ color: "var(--muted-foreground)" }}
                     >
-                      Loading inquiries…
-                    </td>
+                      Action
+                    </th>
                   </tr>
-                )}
-                {!inquiriesLoading &&
-                  !inquiryError &&
-                  filteredInquiries.length === 0 && (
+                </thead>
+                <tbody>
+                  {inquiriesLoading && (
                     <tr>
                       <td
                         colSpan={12}
                         className="px-4 py-10 text-center"
                         style={{ color: "var(--muted-foreground)" }}
                       >
-                        {inquiries.length
-                          ? "No inquiries match this search."
-                          : "No open inquiries yet."}
+                        Loading inquiries…
                       </td>
                     </tr>
                   )}
-                {!inquiriesLoading &&
-                  filteredInquiries.map((inquiry) => (
-                    <tr
-                      key={inquiry.id}
-                      className="border-b"
-                      style={{ borderColor: "var(--border)" }}
-                    >
-                      <td
-                        className="whitespace-nowrap px-3 py-3 font-mono text-xs"
-                        style={{ color: "var(--muted-foreground)" }}
+                  {!inquiriesLoading &&
+                    !inquiryError &&
+                    filteredInquiries.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={12}
+                          className="px-4 py-10 text-center"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {inquiries.length
+                            ? "No inquiries match this search."
+                            : "No open inquiries yet."}
+                        </td>
+                      </tr>
+                    )}
+                  {!inquiriesLoading &&
+                    filteredInquiries.map((inquiry) => (
+                      <tr
+                        key={inquiry.id}
+                        className="border-b"
+                        style={{ borderColor: "var(--border)" }}
                       >
-                        {inquiry.inquiry_number}
-                      </td>
-                      <td
-                        className="whitespace-nowrap px-3 py-3 font-600"
-                        style={{ color: "var(--foreground)" }}
-                      >
-                        {inquiry.first_name} {inquiry.last_name}
-                      </td>
-                      <td
-                        className="whitespace-nowrap px-3 py-3"
-                        style={{ color: "var(--foreground)" }}
-                      >
-                        {inquiry.phone}
-                      </td>
-                      <td
-                        className="whitespace-nowrap px-3 py-3"
-                        style={{ color: "var(--foreground)" }}
-                      >
-                        {inquirySourceLabel(inquiry.discovery_source)}
-                      </td>
-                      <td
-                        className="whitespace-nowrap px-3 py-3"
-                        style={{ color: "var(--foreground)" }}
-                      >
-                        {inquiry.agent_name || "—"}
-                      </td>
-                      <td
-                        className="px-3 py-3"
-                        style={{ color: "var(--foreground)" }}
-                      >
-                        {inquiry.desired_countries.join(", ")}
-                      </td>
-                      <td
-                        className="whitespace-nowrap px-3 py-3"
-                        style={{ color: "var(--foreground)" }}
-                      >
-                        {inquiry.job_of_interest.join(", ")}
-                      </td>
-                      <td
-                        className="px-3 py-3"
-                        style={{ color: "var(--foreground)" }}
-                      >
-                        {inquiry.has_experience ? "Yes" : "No"}
-                      </td>
-                      <td
-                        className="px-3 py-3 capitalize"
-                        style={{ color: "var(--foreground)" }}
-                      >
-                        {inquiry.communication_method}
-                      </td>
-                      <td
-                        className="whitespace-nowrap px-3 py-3"
-                        style={{ color: "var(--foreground)" }}
-                      >
-                        {inquiry.handled_by_name}
-                      </td>
-                      <td
-                        className="whitespace-nowrap px-3 py-3 text-xs"
-                        style={{ color: "var(--muted-foreground)" }}
-                      >
-                        {new Date(inquiry.created_at).toLocaleDateString()}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right">
-                        <div className="inline-flex items-center gap-2">
-                          {permissions.canRegisterCandidates && (
-                            <button
-                              type="button"
-                              onClick={() => registerFromInquiry(inquiry)}
-                              className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
-                              style={{
-                                borderColor: "var(--border)",
-                                color: "var(--foreground)",
-                              }}
-                            >
-                              <ArrowRight size={14} aria-hidden="true" />
-                              Complete Registration
-                            </button>
-                          )}
-                          {permissions.canDeleteCandidates && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void deleteRecord(
-                                  "inquiry",
-                                  inquiry.id,
-                                  `${inquiry.inquiry_number} (${inquiry.first_name} ${inquiry.last_name})`,
-                                )
-                              }
-                              disabled={deletingRecordId === inquiry.id}
-                              aria-label={`Delete inquiry ${inquiry.inquiry_number} for ${inquiry.first_name} ${inquiry.last_name}`}
-                              title="Delete inquiry"
-                              className="inline-flex h-8 w-8 items-center justify-center border border-red-500/30 text-red-700 transition-colors hover:bg-red-500/10 disabled:opacity-50"
-                            >
-                              <Trash2 size={14} aria-hidden="true" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table></div>
+                        <td
+                          className="whitespace-nowrap px-3 py-3 font-mono text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {inquiry.inquiry_number}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-3 py-3 font-600"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {inquiry.first_name} {inquiry.last_name}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-3 py-3"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {inquiry.phone}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-3 py-3"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {inquirySourceLabel(inquiry.discovery_source)}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-3 py-3"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {inquiry.agent_name || "—"}
+                        </td>
+                        <td
+                          className="px-3 py-3"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {inquiry.desired_countries.join(", ")}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-3 py-3"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {inquiry.job_of_interest.join(", ")}
+                        </td>
+                        <td
+                          className="px-3 py-3"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {inquiry.has_experience ? "Yes" : "No"}
+                        </td>
+                        <td
+                          className="px-3 py-3 capitalize"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {inquiry.communication_method}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-3 py-3"
+                          style={{ color: "var(--foreground)" }}
+                        >
+                          {inquiry.handled_by_name}
+                        </td>
+                        <td
+                          className="whitespace-nowrap px-3 py-3 text-xs"
+                          style={{ color: "var(--muted-foreground)" }}
+                        >
+                          {new Date(inquiry.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-3 text-right">
+                          <div className="inline-flex items-center gap-2">
+                            {permissions.canRegisterCandidates && (
+                              <button
+                                type="button"
+                                onClick={() => registerFromInquiry(inquiry)}
+                                className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                                style={{
+                                  borderColor: "var(--border)",
+
+                                  color: "var(--foreground)",
+                                }}
+                              >
+                                <ArrowRight size={14} aria-hidden="true" />
+                                Complete Registration
+                              </button>
+                            )}
+                            {permissions.canDeleteCandidates && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void deleteRecord(
+                                    "inquiry",
+
+                                    inquiry.id,
+
+                                    `${inquiry.inquiry_number} (${inquiry.first_name} ${inquiry.last_name})`,
+                                  )
+                                }
+                                disabled={deletingRecordId === inquiry.id}
+                                aria-label={`Delete inquiry ${inquiry.inquiry_number} for ${inquiry.first_name} ${inquiry.last_name}`}
+                                title="Delete inquiry"
+                                className="inline-flex h-8 w-8 items-center justify-center border border-red-500/30 text-red-700 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                              >
+                                <Trash2 size={14} aria-hidden="true" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -2547,13 +2982,16 @@ export default function CandidateRoster({
                   onChange={(event) =>
                     setInquiryDraft((current) => ({
                       ...current,
+
                       firstName: event.target.value,
                     }))
                   }
                   className="mt-1 w-full border px-3 py-2 text-sm font-normal"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -2570,13 +3008,16 @@ export default function CandidateRoster({
                   onChange={(event) =>
                     setInquiryDraft((current) => ({
                       ...current,
+
                       lastName: event.target.value,
                     }))
                   }
                   className="mt-1 w-full border px-3 py-2 text-sm font-normal"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -2594,13 +3035,16 @@ export default function CandidateRoster({
                   onChange={(event) =>
                     setInquiryDraft((current) => ({
                       ...current,
+
                       phone: event.target.value,
                     }))
                   }
                   className="mt-1 w-full border px-3 py-2 text-sm font-normal"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -2617,13 +3061,16 @@ export default function CandidateRoster({
                   onChange={(event) =>
                     setInquiryDraft((current) => ({
                       ...current,
+
                       passportNumber: event.target.value,
                     }))
                   }
                   className="mt-1 w-full border px-3 py-2 text-sm font-normal"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -2642,6 +3089,7 @@ export default function CandidateRoster({
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
                         event.preventDefault()
+
                         addInquiryJob()
                       }
                     }}
@@ -2649,7 +3097,9 @@ export default function CandidateRoster({
                     className="min-w-0 flex-1 border px-3 py-2 text-sm"
                     style={{
                       background: "var(--secondary)",
+
                       borderColor: "var(--border)",
+
                       color: "var(--foreground)",
                     }}
                   />
@@ -2659,6 +3109,7 @@ export default function CandidateRoster({
                     className="border px-3 py-2 text-sm font-600"
                     style={{
                       borderColor: "var(--border)",
+
                       color: "var(--foreground)",
                     }}
                   >
@@ -2673,6 +3124,7 @@ export default function CandidateRoster({
                         className="inline-flex items-center gap-1 border px-2 py-1 text-xs"
                         style={{
                           borderColor: "var(--border)",
+
                           color: "var(--foreground)",
                         }}
                       >
@@ -2683,6 +3135,7 @@ export default function CandidateRoster({
                           onClick={() =>
                             setInquiryDraft((current) => ({
                               ...current,
+
                               jobOfInterest: current.jobOfInterest.filter(
                                 (item) => item !== job,
                               ),
@@ -2721,7 +3174,9 @@ export default function CandidateRoster({
                         onChange={() =>
                           setInquiryDraft((current) => ({
                             ...current,
+
                             discoverySource: source.value,
+
                             agentUserId:
                               source.value === "agent"
                                 ? current.agentUserId
@@ -2747,23 +3202,30 @@ export default function CandidateRoster({
                       onChange={(event) =>
                         setInquiryDraft((current) => ({
                           ...current,
+
                           agentUserId: event.target.value,
                         }))
                       }
                       className="mt-1 w-full border px-3 py-2 text-sm font-normal"
                       style={{
                         background: "var(--secondary)",
+
                         borderColor: "var(--border)",
+
                         color: "var(--foreground)",
                       }}
                     >
                       <option value="">Select a registered agent</option>
                       {inquiryPeople
+
                         .filter((person) =>
                           person.role_name
+
                             .toLocaleLowerCase()
+
                             .includes("agent"),
                         )
+
                         .map((person) => (
                           <option key={person.user_id} value={person.user_id}>
                             {person.display_name}
@@ -2786,6 +3248,7 @@ export default function CandidateRoster({
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
                         event.preventDefault()
+
                         addInquiryCountry()
                       }
                     }}
@@ -2793,7 +3256,9 @@ export default function CandidateRoster({
                     className="min-w-0 flex-1 border px-3 py-2 text-sm"
                     style={{
                       background: "var(--secondary)",
+
                       borderColor: "var(--border)",
+
                       color: "var(--foreground)",
                     }}
                   />
@@ -2803,6 +3268,7 @@ export default function CandidateRoster({
                     className="border px-3 py-2 text-sm font-600"
                     style={{
                       borderColor: "var(--border)",
+
                       color: "var(--foreground)",
                     }}
                   >
@@ -2817,6 +3283,7 @@ export default function CandidateRoster({
                         className="inline-flex items-center gap-1 border px-2 py-1 text-xs"
                         style={{
                           borderColor: "var(--border)",
+
                           color: "var(--foreground)",
                         }}
                       >
@@ -2827,6 +3294,7 @@ export default function CandidateRoster({
                           onClick={() =>
                             setInquiryDraft((current) => ({
                               ...current,
+
                               desiredCountries: current.desiredCountries.filter(
                                 (item) => item !== country,
                               ),
@@ -2863,6 +3331,7 @@ export default function CandidateRoster({
                         onChange={() =>
                           setInquiryDraft((current) => ({
                             ...current,
+
                             hasExperience: answer,
                           }))
                         }
@@ -2886,13 +3355,16 @@ export default function CandidateRoster({
                     onChange={(event) =>
                       setInquiryDraft((current) => ({
                         ...current,
+
                         experienceDescription: event.target.value,
                       }))
                     }
                     className="mt-1 w-full resize-y border px-3 py-2 text-sm font-normal"
                     style={{
                       background: "var(--secondary)",
+
                       borderColor: "var(--border)",
+
                       color: "var(--foreground)",
                     }}
                   />
@@ -2908,7 +3380,9 @@ export default function CandidateRoster({
                 <div className="flex gap-4">
                   {([
                     ["call", "Call"],
+
                     ["text", "Text"],
+
                     ["both", "Both"],
                   ] as const).map(([value, label]) => (
                     <label
@@ -2923,6 +3397,7 @@ export default function CandidateRoster({
                         onChange={() =>
                           setInquiryDraft((current) => ({
                             ...current,
+
                             communicationMethod: value,
                           }))
                         }
@@ -2944,13 +3419,16 @@ export default function CandidateRoster({
                     onChange={(event) =>
                       setInquiryDraft((current) => ({
                         ...current,
+
                         handledByUserId: event.target.value,
                       }))
                     }
                     className="mt-1 w-full border px-3 py-2 text-sm font-normal"
                     style={{
                       background: "var(--secondary)",
+
                       borderColor: "var(--border)",
+
                       color: "var(--foreground)",
                     }}
                   >
@@ -2975,13 +3453,16 @@ export default function CandidateRoster({
                   onChange={(event) =>
                     setInquiryDraft((current) => ({
                       ...current,
+
                       remarks: event.target.value,
                     }))
                   }
                   className="mt-1 w-full resize-y border px-3 py-2 text-sm font-normal"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 />
@@ -3002,6 +3483,7 @@ export default function CandidateRoster({
                 className="border px-4 py-2 text-sm"
                 style={{
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               >
@@ -3013,6 +3495,7 @@ export default function CandidateRoster({
                 className="px-4 py-2 text-sm font-600 disabled:opacity-50"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
                 }}
               >
@@ -3026,8 +3509,11 @@ export default function CandidateRoster({
         <AttachmentDrawer
           candidate={{
             id: drawerCandidate.id,
+
             firstName: drawerCandidate.first_name,
+
             lastName: drawerCandidate.last_name,
+
             fileNumber: drawerCandidate.file_number,
           }}
           onClose={() => setDrawerCandidate(null)}
@@ -3051,23 +3537,38 @@ export default function CandidateRoster({
             className="w-full max-w-lg rounded-xl border p-5 shadow-2xl sm:p-6"
             style={{ background: "var(--card)", borderColor: "var(--border)" }}
           >
-            <h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>
+            <h2
+              className="text-lg font-700"
+              style={{ color: "var(--foreground)" }}
+            >
               Send SMS to selected candidates
             </h2>
-            <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
-              This sends immediately to the selected candidates’ registered phone numbers. Their assigned Recruitment Agents will also receive an in-app notification and a note in Communications.
+            <p
+              className="mt-1 text-sm"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              This sends immediately to the selected candidates’ registered
+              phone numbers. Their assigned Recruitment Agents will also receive
+              an in-app notification and a note in Communications.
             </p>
             <div
               className="mt-4 rounded border px-3 py-2 text-xs"
               style={{
                 background: "var(--secondary)",
+
                 borderColor: "var(--border)",
+
                 color: "var(--foreground)",
               }}
             >
-              {selectedIds.length} candidate{selectedIds.length === 1 ? "" : "s"} selected. SMSUG charges the account balance. Maximum 3,000 candidates per send.
+              {selectedIds.length} candidate
+              {selectedIds.length === 1 ? "" : "s"} selected. SMSUG charges the
+              account balance. Maximum 3,000 candidates per send.
             </div>
-            <label className="mt-4 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>
+            <label
+              className="mt-4 block text-xs font-700"
+              style={{ color: "var(--muted-foreground)" }}
+            >
               Message
               <textarea
                 autoFocus
@@ -3081,7 +3582,9 @@ export default function CandidateRoster({
                 className="mt-1 w-full resize-y rounded border px-3 py-2.5 text-sm outline-none"
                 style={{
                   background: "var(--secondary)",
+
                   borderColor: "var(--border)",
+
                   color: "var(--foreground)",
                 }}
               />
@@ -3098,12 +3601,14 @@ export default function CandidateRoster({
               <button
                 type="button"
                 disabled={
-                  bulkSmsSending ||
-                  (bulkSmsAlreadySent && bulkSmsCanRetryNotes)
+                  bulkSmsSending || (bulkSmsAlreadySent && bulkSmsCanRetryNotes)
                 }
                 onClick={() => setShowBulkSms(false)}
                 className="rounded border px-4 py-2 text-sm disabled:opacity-50"
-                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
               >
                 Cancel
               </button>
@@ -3119,6 +3624,7 @@ export default function CandidateRoster({
                 className="inline-flex items-center gap-2 rounded px-4 py-2 text-sm font-600 disabled:opacity-50"
                 style={{
                   background: "var(--primary)",
+
                   color: "var(--primary-foreground)",
                 }}
               >
@@ -3163,7 +3669,9 @@ export default function CandidateRoster({
                   className="pointer-events-auto mr-[calc(min(100vw,480px)+1px)] mt-4 ml-4 max-w-sm rounded border px-4 py-3 shadow-lg text-sm"
                   style={{
                     background: "var(--card)",
+
                     borderColor: "var(--primary)",
+
                     color: "var(--foreground)",
                   }}
                 >
@@ -3192,6 +3700,7 @@ export default function CandidateRoster({
                       className="rounded px-3 py-1.5 text-xs font-600 disabled:opacity-40"
                       style={{
                         background: "var(--primary)",
+
                         color: "var(--primary-foreground)",
                       }}
                     >
@@ -3203,6 +3712,7 @@ export default function CandidateRoster({
                       className="rounded border px-3 py-1.5 text-xs"
                       style={{
                         borderColor: "var(--border)",
+
                         color: "var(--muted-foreground)",
                       }}
                     >
@@ -3223,8 +3733,11 @@ export default function CandidateRoster({
               <AttachmentDrawer
                 candidate={{
                   id: current.id,
+
                   firstName: current.first_name,
+
                   lastName: current.last_name,
+
                   fileNumber: current.file_number,
                 }}
                 onClose={advanceQueue}
@@ -3291,6 +3804,7 @@ export default function CandidateRoster({
                     className="border-b pb-2 text-xs"
                     style={{
                       borderColor: "var(--border)",
+
                       color: "var(--foreground)",
                     }}
                   >
@@ -3321,10 +3835,12 @@ export default function CandidateRoster({
                   className="mt-1 w-full border px-3 py-2 text-sm"
                   style={{
                     background: "var(--secondary)",
+
                     borderColor:
                       projectSearch && !transitionProjectId
                         ? "var(--primary)"
                         : "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                   autoComplete="off"
@@ -3359,7 +3875,9 @@ export default function CandidateRoster({
                           className="block min-h-10 w-full px-3 py-2 text-left text-xs transition-colors hover:opacity-80"
                           style={{
                             color: "var(--foreground)",
+
                             background: "var(--card)",
+
                             borderColor: "var(--border)",
                           }}
                         >
@@ -3396,8 +3914,11 @@ export default function CandidateRoster({
               <div className="mt-4 space-y-3">
                 {([
                   ["offerLetter", "Offer Letter"],
+
                   ["wakalaReceived", "Wakala Received"],
+
                   ["molReceived", "MOL Received"],
+
                   ["enjaz", "Enjaz"],
                 ] as const).map(([key, label]) => (
                   <fieldset
@@ -3420,6 +3941,7 @@ export default function CandidateRoster({
                           onClick={() =>
                             setStageAnswers((current) => ({
                               ...current,
+
                               [key]: answer,
                             }))
                           }
@@ -3429,10 +3951,12 @@ export default function CandidateRoster({
                               stageAnswers[key] === answer
                                 ? "var(--primary)"
                                 : "var(--border)",
+
                             background:
                               stageAnswers[key] === answer
                                 ? "var(--primary)"
                                 : "var(--card)",
+
                             color:
                               stageAnswers[key] === answer
                                 ? "var(--primary-foreground)"
@@ -3487,10 +4011,12 @@ export default function CandidateRoster({
                     className="mt-1 w-full border px-3 py-2 text-sm"
                     style={{
                       background: "var(--secondary)",
+
                       borderColor:
                         projectSearch && !transitionProjectId
                           ? "var(--primary)"
                           : "var(--border)",
+
                       color: "var(--foreground)",
                     }}
                     autoComplete="off"
@@ -3524,7 +4050,9 @@ export default function CandidateRoster({
                             className="block min-h-10 w-full px-3 py-2 text-left text-xs transition-colors hover:opacity-80"
                             style={{
                               color: "var(--foreground)",
+
                               background: "var(--card)",
+
                               borderColor: "var(--border)",
                             }}
                           >
@@ -3570,6 +4098,7 @@ export default function CandidateRoster({
                         className="rounded border px-3 py-2 text-xs"
                         style={{
                           borderColor: "var(--border)",
+
                           background: "var(--secondary)",
                         }}
                       >
@@ -3641,13 +4170,16 @@ export default function CandidateRoster({
                       onChange={(e) =>
                         setTicketForm((f) => ({
                           ...f,
+
                           ticketNumber: e.target.value,
                         }))
                       }
                       className="mt-1 w-full border px-3 py-2 text-sm font-normal"
                       style={{
                         background: "var(--secondary)",
+
                         borderColor: "var(--border)",
+
                         color: "var(--foreground)",
                       }}
                       placeholder="e.g. EK7834521"
@@ -3665,13 +4197,16 @@ export default function CandidateRoster({
                       onChange={(e) =>
                         setTicketForm((f) => ({
                           ...f,
+
                           bookingReference: e.target.value,
                         }))
                       }
                       className="mt-1 w-full border px-3 py-2 text-sm font-normal"
                       style={{
                         background: "var(--secondary)",
+
                         borderColor: "var(--border)",
+
                         color: "var(--foreground)",
                       }}
                       placeholder="e.g. XYZ123"
@@ -3689,13 +4224,16 @@ export default function CandidateRoster({
                       onChange={(e) =>
                         setTicketForm((f) => ({
                           ...f,
+
                           travelDate: e.target.value,
                         }))
                       }
                       className="mt-1 w-full border px-3 py-2 text-sm font-normal"
                       style={{
                         background: "var(--secondary)",
+
                         borderColor: "var(--border)",
+
                         color: "var(--foreground)",
                       }}
                     />
@@ -3712,13 +4250,16 @@ export default function CandidateRoster({
                       onChange={(e) =>
                         setTicketForm((f) => ({
                           ...f,
+
                           travelTime: e.target.value,
                         }))
                       }
                       className="mt-1 w-full border px-3 py-2 text-sm font-normal"
                       style={{
                         background: "var(--secondary)",
+
                         borderColor: "var(--border)",
+
                         color: "var(--foreground)",
                       }}
                     />
@@ -3739,6 +4280,7 @@ export default function CandidateRoster({
                       onClick={() =>
                         setConnectingFlights((f) => [
                           ...f,
+
                           { from: "", to: "", flightNo: "", depTime: "" },
                         ])
                       }
@@ -3778,7 +4320,9 @@ export default function CandidateRoster({
                           className="mt-1 w-full border px-2 py-1.5 text-xs"
                           style={{
                             background: "var(--secondary)",
+
                             borderColor: "var(--border)",
+
                             color: "var(--foreground)",
                           }}
                           placeholder="KLA"
@@ -3801,7 +4345,9 @@ export default function CandidateRoster({
                           className="mt-1 w-full border px-2 py-1.5 text-xs"
                           style={{
                             background: "var(--secondary)",
+
                             borderColor: "var(--border)",
+
                             color: "var(--foreground)",
                           }}
                           placeholder="DXB"
@@ -3826,7 +4372,9 @@ export default function CandidateRoster({
                           className="mt-1 w-full border px-2 py-1.5 text-xs"
                           style={{
                             background: "var(--secondary)",
+
                             borderColor: "var(--border)",
+
                             color: "var(--foreground)",
                           }}
                           placeholder="EK701"
@@ -3850,7 +4398,9 @@ export default function CandidateRoster({
                           className="mt-1 w-full border px-2 py-1.5 text-xs"
                           style={{
                             background: "var(--secondary)",
+
                             borderColor: "var(--border)",
+
                             color: "var(--foreground)",
                           }}
                         />
@@ -3922,6 +4472,7 @@ export default function CandidateRoster({
                       className="border px-3 py-2 text-sm font-600"
                       style={{
                         borderColor: "var(--border)",
+
                         color: "var(--foreground)",
                       }}
                     >
@@ -3934,11 +4485,13 @@ export default function CandidateRoster({
                   type="button"
                   onClick={() => {
                     setTransitionIds([])
+
                     setSelectedIds([])
                   }}
                   className="border px-3 py-2 text-sm"
                   style={{
                     borderColor: "var(--border)",
+
                     color: "var(--foreground)",
                   }}
                 >
@@ -3963,22 +4516,25 @@ export default function CandidateRoster({
                     className="border px-3 py-2 text-sm font-600"
                     style={{
                       borderColor: "var(--primary)",
+
                       color: "var(--primary)",
+
                       background: "transparent",
                     }}
                   >
                     Skip & Next Stage →
                   </button>
                 )}
-                {transitionStep === "complete" &&
-                  canUpdateCandidateStages && (
+                {transitionStep === "complete" && canUpdateCandidateStages && (
                   <button
                     type="button"
                     onClick={() => {
                       const ids = transitionIds.length
                         ? transitionIds
                         : candidates
+
                             .filter((c) => c.visa_locked)
+
                             .map((c) => c.id)
 
                       if (!ids.length) return
@@ -3993,8 +4549,11 @@ export default function CandidateRoster({
 
                       setTicketForm({
                         ticketNumber: "",
+
                         bookingReference: "",
+
                         travelDate: "",
+
                         travelTime: "",
                       })
 
@@ -4003,6 +4562,7 @@ export default function CandidateRoster({
                     className="border px-3 py-2 text-sm font-600"
                     style={{
                       borderColor: "var(--border)",
+
                       color: "var(--foreground)",
                     }}
                   >
@@ -4014,8 +4574,7 @@ export default function CandidateRoster({
                   (transitionStep === "details" &&
                     canUpdateCandidateStages &&
                     Object.values(stageAnswers).some((v) => v !== "")) ||
-                  ((transitionStep === "visa" ||
-                    transitionStep === "ticket") &&
+                  ((transitionStep === "visa" || transitionStep === "ticket") &&
                     canUpdateCandidateStages)) && (
                   <button
                     type="button"
@@ -4036,6 +4595,7 @@ export default function CandidateRoster({
                     className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:opacity-50"
                     style={{
                       background: "var(--primary)",
+
                       color: "var(--primary-foreground)",
                     }}
                   >
@@ -4063,6 +4623,7 @@ export default function CandidateRoster({
                     className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:opacity-50"
                     style={{
                       background: "var(--primary)",
+
                       color: "var(--primary-foreground)",
                     }}
                   >

@@ -5,8 +5,10 @@ import {
   getProjectAssignmentContext,
   hasProjectPermission,
   listProjectAccounts,
+  listProjectCounterparties,
   projectToDatabase,
   parseProjectInput,
+  resolveProjectSource,
 } from "@/lib/server/projects"
 
 export const runtime = "nodejs"
@@ -33,7 +35,7 @@ export async function GET() {
       )
     }
 
-    const [{ data, error }, assignmentContext] = await Promise.all([
+    const [{ data, error }, assignmentContext, { data: companyData }] = await Promise.all([
       access.supabase
 
         .from("projects")
@@ -45,6 +47,16 @@ export async function GET() {
         .order("created_at", { ascending: false }),
 
       getProjectAssignmentContext(access),
+
+      access.supabase
+
+        .from("companies")
+
+        .select("projects_manager_enabled")
+
+        .eq("id", access.companyId)
+
+        .maybeSingle(),
     ])
 
     if (error) {
@@ -99,6 +111,11 @@ export async function GET() {
         }))
       : []
 
+    const counterparties =
+      canCreate || canEdit
+        ? await listProjectCounterparties(access)
+        : { contractors: [], partners: [] }
+
     return NextResponse.json(
       {
         projects: (data ?? []).map((project) => {
@@ -145,6 +162,12 @@ export async function GET() {
 
             can_assign_staff,
 
+            project_source_type: project.project_source_type,
+
+            partner_id: project.partner_id,
+
+            partner_service_charge: 0,
+
             contractor_name: project.contractor_name,
 
             country: project.country,
@@ -174,6 +197,10 @@ export async function GET() {
         }),
 
         accountOptions,
+
+        contractorOptions: counterparties.contractors,
+
+        partnerOptions: counterparties.partners,
 
         managerOptions: assignmentContext.isChairman
           ? assignmentContext.managers
@@ -206,6 +233,8 @@ export async function GET() {
             assignmentContext.isChairman ||
             (canAssign && assignmentContext.isProjectManager),
         },
+
+        projectsManagerEnabled: companyData?.projects_manager_enabled ?? true,
       },
       { headers: responseHeaders },
     )
@@ -248,6 +277,14 @@ export async function POST(request: Request) {
       )
 
     const assignmentContext = await getProjectAssignmentContext(access)
+
+    const source = await resolveProjectSource(access, input)
+
+    if ("error" in source)
+      return NextResponse.json(
+        { error: source.error },
+        { status: 400, headers: responseHeaders },
+      )
 
     if (body && "projectManagerId" in body && !assignmentContext.isChairman) {
       return NextResponse.json(
@@ -299,7 +336,7 @@ export async function POST(request: Request) {
     const { data, error } = await access.supabase
       .from("projects")
       .insert({
-        ...projectToDatabase(input, account.branch_id),
+        ...projectToDatabase(source.input, account.branch_id),
 
         company_id: access.companyId,
 

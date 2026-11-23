@@ -794,6 +794,7 @@ as $$
 declare
   actor_id uuid := (select auth.uid());
   workflow_row public.company_approval_workflows%rowtype;
+  run_row public.company_approval_workflow_runs%rowtype;
   step jsonb;
   step_key text;
   step_label text;

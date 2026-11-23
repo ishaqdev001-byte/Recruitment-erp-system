@@ -72,6 +72,10 @@ import CompanyItemsEditor, {
   type CompanyCatalogItem,
   type DraftLineItem,
 } from "./CompanyItemsEditor"
+import type {
+  ApprovalWorkflowStage,
+  ApprovalWorkflowState,
+} from "@/lib/approval-workflows"
 
 type RequisitionStatus = "pending" | "gm_review" | "finance_review" | "approved" | "rejected"
 type PaymentStatus = "unpaid" | "partial" | "paid"
@@ -117,6 +121,7 @@ type Requisition = {
   created_by: string
   created_at: string
   updated_at: string
+  approval_workflow: ApprovalWorkflowState | null
 }
 
 type ExpenseRequestToInitiate = {
@@ -146,6 +151,7 @@ type ExpenseRequestToInitiate = {
   line_manager_comment: string | null
   rejected_stage: string | null
   requisition_number: string | null
+  approval_workflow: ApprovalWorkflowState | null
 }
 
 type ExpenseRequestEditDraft = {
@@ -157,6 +163,7 @@ type ExpenseRequestEditDraft = {
   items: {
     description: string
     quantity: string
+    rate: string
   }[]
 }
 
@@ -601,8 +608,9 @@ export default function RequisitionsWorkspace() {
   const [savingExpenseRequest, setSavingExpenseRequest] = useState(false)
   const [expenseRequestActionError, setExpenseRequestActionError] = useState("")
   const [initiatingRequestId, setInitiatingRequestId] = useState("")
-  const [initiationRates, setInitiationRates] =
-    useState<Record<string, string[]>>({})
+  const [legacyUnitRates, setLegacyUnitRates] = useState<
+    Record<string, string[]>
+  >({})
   const [initiationMessage, setInitiationMessage] = useState("")
   const [showInitiationLookup, setShowInitiationLookup] = useState(false)
   const [lookupRequestNumber, setLookupRequestNumber] = useState("")
@@ -669,7 +677,7 @@ export default function RequisitionsWorkspace() {
   const [verifierError, setVerifierError] = useState("")
   const [reviewTarget, setReviewTarget] = useState<{
     req: Requisition
-    stage: "general_manager" | "finance" | "director"
+    stage: ApprovalWorkflowStage
   } | null>(null)
   const [reviewDecision, setReviewDecision] = useState<"approved" | "rejected">(
     "approved",
@@ -732,37 +740,20 @@ export default function RequisitionsWorkspace() {
     }
   }
 
-  const updateInitiationRate = (
-    request: ExpenseRequestToInitiate,
-    itemIndex: number,
-    value: string,
-  ) => {
-    setInitiationRates((current) => {
-      const values =
-        current[request.id] ??
-        request.line_items.map((item) =>
-          Number(item.rate) > 0 ? String(item.rate) : "",
-        )
-      const nextValues = [...values]
-      nextValues[itemIndex] = value
-      return { ...current, [request.id]: nextValues }
-    })
-  }
-
   const initiateExpenseRequest = async (
     request: ExpenseRequestToInitiate,
     comment = "Initiated from the requisitions workflow.",
   ) => {
-    const unitRates = request.line_items.map((item, index) => {
-      const savedRate = initiationRates[request.id]?.[index]
-      return Number(savedRate ?? (Number(item.rate) > 0 ? item.rate : ""))
-    })
+    const unitRates = getInitiationUnitRates(request)
     if (
-      unitRates.length === 0 ||
+      !request.approval_workflow?.canAct ||
+      request.approval_workflow.currentStage?.actionType !==
+        "initiate_requisition" ||
+      unitRates.length !== request.line_items.length ||
       unitRates.some((rate) => !Number.isFinite(rate) || rate <= 0)
     ) {
       setListError(
-        "Enter a positive unit rate for every item before initiating the requisition.",
+        "Enter a positive unit rate for every item before initiating this requisition.",
       )
       return
     }
@@ -771,32 +762,33 @@ export default function RequisitionsWorkspace() {
     setInitiationMessage("")
     setListError("")
     try {
-      const response = await fetch("/api/finance/expense-requests", {
+      const needsLegacyRates = request.line_items.some(
+        (item) => !Number.isFinite(Number(item.rate)) || Number(item.rate) <= 0,
+      )
+      const response = await fetch("/api/approval-workflows/transition", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "initiate_requisition",
-          requestId: request.id,
-          comment,
-          unitRates,
+          workflowKey: "expense_request",
+          subjectId: request.id,
+          decision: "completed",
+          note: comment,
+          unitRates: needsLegacyRates ? unitRates : undefined,
         }),
       })
       const payload = (await response.json()) as {
         error?: string
-        request?: { requisitionNumber?: string }
+        result?: {
+          operation?: { requisitionNumber?: string }
+        }
       }
       if (!response.ok)
         throw new Error(payload.error ?? "Unable to initiate this requisition.")
       setInitiationMessage(
-        `${payload.request?.requisitionNumber ?? "Requisition"} was created from ${request.request_number}.`,
+        `${payload.result?.operation?.requisitionNumber ?? "Requisition"} was created from ${request.request_number}.`,
       )
       setShowInitiationLookup(false)
       setSelectedInitiationRequest(null)
-      setInitiationRates((current) => {
-        const remaining = { ...current }
-        delete remaining[request.id]
-        return remaining
-      })
       await loadList()
     } catch (error) {
       console.error("Expense-request requisition initiation failed", error)
@@ -808,6 +800,34 @@ export default function RequisitionsWorkspace() {
     } finally {
       setInitiatingRequestId("")
     }
+  }
+
+  const getInitiationUnitRates = (request: ExpenseRequestToInitiate) =>
+    legacyUnitRates[request.id]?.length === request.line_items.length
+      ? legacyUnitRates[request.id].map(Number)
+      : request.line_items.map((item) =>
+          Number.isFinite(Number(item.rate)) && Number(item.rate) > 0
+            ? Number(item.rate)
+            : Number.NaN,
+        )
+
+  const setInitiationUnitRate = (
+    request: ExpenseRequestToInitiate,
+    itemIndex: number,
+    value: string,
+  ) => {
+    setLegacyUnitRates((current) => {
+      const rates =
+        current[request.id]?.length === request.line_items.length
+          ? [...current[request.id]]
+          : request.line_items.map((item) =>
+              Number.isFinite(Number(item.rate)) && Number(item.rate) > 0
+                ? String(item.rate)
+                : "",
+            )
+      rates[itemIndex] = value
+      return { ...current, [request.id]: rates }
+    })
   }
 
   const openExpenseRequestEdit = (request: ExpenseRequestToInitiate) => {
@@ -822,6 +842,7 @@ export default function RequisitionsWorkspace() {
       items: request.line_items.map((item) => ({
         description: item.description,
         quantity: String(item.quantity),
+        rate: String(item.rate),
       })),
     })
   }
@@ -961,12 +982,6 @@ export default function RequisitionsWorkspace() {
         return
       }
       setSelectedInitiationRequest(match)
-      setInitiationRates((current) => ({
-        ...current,
-        [match.id]: match.line_items.map((item) =>
-          Number(item.rate) > 0 ? String(item.rate) : "",
-        ),
-      }))
     } catch (error) {
       setLookupError(
         error instanceof Error
@@ -1414,15 +1429,8 @@ export default function RequisitionsWorkspace() {
     }
   }
   const openReview = (req: Requisition) => {
-    const stage =
-      req.status === "pending"
-        ? "general_manager"
-        : req.status === "gm_review"
-          ? "finance"
-          : req.status === "finance_review"
-            ? "director"
-            : null
-    if (!stage) return
+    const stage = req.approval_workflow?.currentStage
+    if (!req.approval_workflow?.canAct || !stage) return
     setReviewTarget({ req, stage })
     setReviewDecision("approved")
     setReviewNote("")
@@ -1435,12 +1443,12 @@ export default function RequisitionsWorkspace() {
     setReviewSaving(true)
     setReviewError("")
     try {
-      const res = await fetch("/api/requisitions/review", {
+      const res = await fetch("/api/approval-workflows/transition", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          requisitionId: reviewTarget.req.id,
-          stage: reviewTarget.stage,
+          workflowKey: "standalone_requisition",
+          subjectId: reviewTarget.req.id,
           decision: reviewDecision,
           note: reviewNote.trim(),
         }),
@@ -1548,12 +1556,8 @@ export default function RequisitionsWorkspace() {
   }
   const getReviewAction = (req: Requisition): string | null => {
     if (req.source_expense_request_id) return null
-    if (req.status === "pending" && permissions.canReview) return "GM Review"
-    if (req.status === "gm_review" && permissions.canVerify)
-      return "Finance Verify"
-    if (req.status === "finance_review" && permissions.canAuthorize)
-      return "Authorise"
-    return null
+    if (!req.approval_workflow?.canAct) return null
+    return req.approval_workflow.currentStage?.label ?? null
   }
 
   const canVerifierEdit = (req: Requisition) =>
@@ -1917,9 +1921,14 @@ export default function RequisitionsWorkspace() {
 
                 <div className="space-y-2">
                   {selectedInitiationRequest.line_items.map((item, index) => {
-                    const enteredRate =
-                      initiationRates[selectedInitiationRequest.id]?.[index] ??
-                      (Number(item.rate) > 0 ? String(item.rate) : "")
+                    const hasSavedRate =
+                      Number.isFinite(Number(item.rate)) &&
+                      Number(item.rate) > 0
+                    const rateValue =
+                      legacyUnitRates[selectedInitiationRequest.id]?.[
+                        index
+                      ] ??
+                      (hasSavedRate ? String(item.rate) : "")
                     return (
                       <label
                         key={`${selectedInitiationRequest.id}-lookup-${index}`}
@@ -1931,24 +1940,33 @@ export default function RequisitionsWorkspace() {
                             : ""}
                           {item.description} · Quantity {item.quantity}
                         </span>
-                        <input
-                          required
-                          type="number"
-                          min="0.01"
-                          step="0.01"
-                          aria-label={`Unit rate for ${item.description}`}
-                          placeholder="Unit rate"
-                          value={enteredRate}
-                          onChange={(event) =>
-                            updateInitiationRate(
-                              selectedInitiationRequest,
-                              index,
-                              event.target.value,
-                            )
-                          }
-                          className="w-full rounded border px-2.5 py-2 text-xs outline-none"
-                          style={fieldStyle}
-                        />
+                        {hasSavedRate ? (
+                          <span
+                            className="font-600"
+                            style={{ color: "var(--foreground)" }}
+                          >
+                            {fmtAmount(Number(item.rate), "UGX")} each
+                          </span>
+                        ) : (
+                          <input
+                            required
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={rateValue}
+                            onChange={(event) =>
+                              setInitiationUnitRate(
+                                selectedInitiationRequest,
+                                index,
+                                event.target.value,
+                              )
+                            }
+                            className="w-full rounded border px-3 py-2 text-sm"
+                            style={fieldStyle}
+                            aria-label={`Unit rate for ${item.description}`}
+                            placeholder="Enter unit rate"
+                          />
+                        )}
                       </label>
                     )
                   })}
@@ -2193,32 +2211,38 @@ export default function RequisitionsWorkspace() {
               className="mt-1 text-xs"
               style={{ color: "var(--muted-foreground)" }}
             >
-              Enter a unit rate for each item; the total is calculated
-              automatically. Initiation creates a linked requisition, while
-              further approvals and payment remain on the Expense Request
-              workflow.
+              Requester-entered rates and totals are retained. Add rates for
+              legacy requests that were submitted without them. Initiation
+              creates a linked requisition, while further approvals and payment
+              remain on the Expense Request workflow.
             </p>
           </div>
           <div className="space-y-3">
             {expenseRequestsToInitiate.map((request) => {
-              const unitRates = request.line_items.map((item, index) => {
-                const enteredRate = initiationRates[request.id]?.[index]
-                return (
-                  enteredRate ??
-                  (Number(item.rate) > 0 ? String(item.rate) : "")
-                )
-              })
+              const rateValues =
+                legacyUnitRates[request.id]?.length ===
+                request.line_items.length
+                  ? legacyUnitRates[request.id]
+                  : request.line_items.map((item) =>
+                      Number.isFinite(Number(item.rate)) && Number(item.rate) > 0
+                        ? String(item.rate)
+                        : "",
+                    )
+              const unitRates = rateValues.map(Number)
               const requestTotal = request.line_items.reduce(
                 (sum, item, index) => {
                   const rate = Number(unitRates[index])
-                  return (
-                    sum +
-                    Number(item.quantity) * (Number.isFinite(rate) ? rate : 0)
-                  )
+                  const lineTotal = Number(item.quantity) * rate
+                  return sum + (Number.isFinite(lineTotal)
+                    ? Math.round((lineTotal + Number.EPSILON) * 100) / 100
+                    : 0)
                 },
                 0,
               )
               const ratesReady =
+                request.approval_workflow?.canAct === true &&
+                request.approval_workflow.currentStage?.actionType ===
+                  "initiate_requisition" &&
                 unitRates.length > 0 &&
                 unitRates.every(
                   (rate) => Number.isFinite(Number(rate)) && Number(rate) > 0,
@@ -2260,32 +2284,54 @@ export default function RequisitionsWorkspace() {
                     </p>
                     <div className="mt-3 space-y-2">
                       {(request.line_items ?? []).map((item, index) => (
-                        <label
+                        <div
                           key={`${request.id}-item-${index}`}
-                          className="grid gap-2 text-xs sm:grid-cols-[minmax(0,1fr)_160px] sm:items-center"
+                          className="flex flex-wrap justify-between gap-2 text-xs"
                         >
                           <span style={{ color: "var(--foreground)" }}>
                             {item.description} · Quantity {item.quantity}
                           </span>
-                          <input
-                            required
-                            type="number"
-                            min="0.01"
-                            step="0.01"
-                            aria-label={`Unit rate for ${item.description}`}
-                            placeholder="Unit rate (UGX)"
-                            value={unitRates[index]}
-                            onChange={(event) =>
-                              updateInitiationRate(
-                                request,
-                                index,
-                                event.target.value,
-                              )
-                            }
-                            className="w-full rounded border px-2.5 py-2 text-xs outline-none"
-                            style={fieldStyle}
-                          />
-                        </label>
+                          {Number.isFinite(Number(item.rate)) &&
+                          Number(item.rate) > 0 ? (
+                            <span
+                              style={{ color: "var(--muted-foreground)" }}
+                            >
+                              {fmtAmount(Number(item.rate), "UGX")} each ·{" "}
+                              {fmtAmount(
+                                Math.round(
+                                  (Number(item.quantity) *
+                                    Number(item.rate) +
+                                    Number.EPSILON) *
+                                    100,
+                                ) / 100,
+                                "UGX",
+                              )}
+                            </span>
+                          ) : (
+                            <label className="flex items-center gap-2">
+                              <span className="text-muted-foreground">
+                                Unit rate
+                              </span>
+                              <input
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                value={rateValues[index]}
+                                onChange={(event) =>
+                                  setInitiationUnitRate(
+                                    request,
+                                    index,
+                                    event.target.value,
+                                  )
+                                }
+                                className="w-32 rounded border px-2 py-1 text-xs"
+                                style={fieldStyle}
+                                aria-label={`Unit rate for ${item.description}`}
+                                placeholder="Enter rate"
+                              />
+                            </label>
+                          )}
+                        </div>
                       ))}
                     </div>
                     <p
@@ -2900,13 +2946,13 @@ export default function RequisitionsWorkspace() {
                 className="mb-2 text-xs font-700"
                 style={{ color: "var(--foreground)" }}
               >
-                Items (unit rates are entered during initiation)
+                Items (unit rates are entered by the requester)
               </h3>
               <div className="space-y-2">
                 {expenseRequestEditDraft.items.map((item, index) => (
                   <div
                     key={`${editingExpenseRequest.id}-edit-item-${index}`}
-                    className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_auto]"
+                    className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_100px_120px_auto]"
                   >
                     <input
                       required
@@ -2925,6 +2971,31 @@ export default function RequisitionsWorkspace() {
                                           ...current,
                                           description: event.target.value,
                                         }
+                                      : current,
+                                ),
+                              }
+                            : draft,
+                        )
+                      }
+                      className="w-full rounded border px-3 py-2 text-sm outline-none"
+                      style={fieldStyle}
+                    />
+                    <input
+                      required
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      aria-label={`Unit rate for item ${index + 1}`}
+                      value={item.rate}
+                      onChange={(event) =>
+                        setExpenseRequestEditDraft((draft) =>
+                          draft
+                            ? {
+                                ...draft,
+                                items: draft.items.map(
+                                  (current, currentIndex) =>
+                                    currentIndex === index
+                                      ? { ...current, rate: event.target.value }
                                       : current,
                                 ),
                               }
@@ -2995,7 +3066,7 @@ export default function RequisitionsWorkspace() {
                           ...draft,
                           items: [
                             ...draft.items,
-                            { description: "", quantity: "1" },
+                            { description: "", quantity: "1", rate: "" },
                           ],
                         }
                       : draft,
@@ -4081,13 +4152,7 @@ export default function RequisitionsWorkspace() {
                   className="text-base font-700"
                   style={{ color: "var(--foreground)" }}
                 >
-                  {
-                    {
-                      general_manager: "General Manager Review",
-                      finance: "Finance / Cashier Verification",
-                      director: "Director / CEO Authorisation",
-                    }[reviewTarget.stage]
-                  }
+                  {reviewTarget.stage.label}
                 </h3>
                 <p
                   className="mt-1 text-xs mono"
@@ -4193,23 +4258,20 @@ export default function RequisitionsWorkspace() {
                   className="mb-1 block text-xs font-600 uppercase tracking-wider"
                   style={{ color: "var(--muted-foreground)" }}
                 >
-                  Note / Message{" "}
-                  {reviewDecision === "rejected" && (
-                    <span className="text-red-400">*</span>
-                  )}
+                  Stage comment <span className="text-red-400">*</span>
                 </label>
                 <textarea
                   rows={3}
                   maxLength={1000}
                   value={reviewNote}
                   onChange={(e) => setReviewNote(e.target.value)}
-                  required={reviewDecision === "rejected"}
+                  required
                   className="w-full rounded border px-3 py-2.5 text-sm outline-none resize-none"
                   style={fieldStyle}
                   placeholder={
                     reviewDecision === "rejected"
                       ? "Explain why this is being rejected…"
-                      : "Optional comments or conditions…"
+                      : "Add a comment for this approval stage…"
                   }
                 />
               </div>

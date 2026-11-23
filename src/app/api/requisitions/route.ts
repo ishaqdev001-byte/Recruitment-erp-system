@@ -98,97 +98,6 @@ async function canCreateRequisitions(
   )
 }
 
-async function insertNotification(
-  admin: ReturnType<typeof createAdminClient>,
-  companyId: string,
-  requisitionId: string,
-  recipientId: string,
-  stage: string,
-  title: string,
-  body: string,
-) {
-  if (!admin) return
-  await admin
-    .from("requisition_notifications")
-    .insert({
-      company_id: companyId,
-      requisition_id: requisitionId,
-      recipient_id: recipientId,
-      stage,
-      title,
-      body,
-    })
-    .then(({ error }) => {
-      if (error) console.error("Requisition notification insert failed", error)
-    })
-}
-
-async function notifyUsersWithPermission(
-  admin: ReturnType<typeof createAdminClient>,
-  companyId: string,
-  requisitionId: string,
-  permissionCode: string,
-  stage: string,
-  title: string,
-  body: string,
-) {
-  if (!admin) return
-  // Find all active members with the required permission via role_permissions
-  const { data: permUsers, error } = await admin
-    .from("role_permissions")
-    .select(
-      "company_id, company_roles(company_id, company_memberships(user_id, status))",
-    )
-    .eq("company_id", companyId)
-    .eq("permission_code", permissionCode)
-
-  if (error || !permUsers || permUsers.length === 0) return
-
-  const userIds = new Set<string>()
-
-  for (const row of permUsers) {
-    // Handle different possible response structures
-    const roles = (row as any).company_roles
-    if (!roles) continue
-
-    // If roles is an array of roles
-    if (Array.isArray(roles)) {
-      for (const role of roles) {
-        const memberships = role?.company_memberships
-        if (Array.isArray(memberships)) {
-          for (const m of memberships) {
-            if (m?.status === "active" && m?.user_id) {
-              userIds.add(m.user_id)
-            }
-          }
-        }
-      }
-    } else if (typeof roles === "object") {
-      // If roles is a single object
-      const memberships = roles.company_memberships
-      if (Array.isArray(memberships)) {
-        for (const m of memberships) {
-          if (m?.status === "active" && m?.user_id) {
-            userIds.add(m.user_id)
-          }
-        }
-      }
-    }
-  }
-
-  for (const uid of userIds) {
-    await insertNotification(
-      admin,
-      companyId,
-      requisitionId,
-      uid,
-      stage,
-      title,
-      body,
-    )
-  }
-}
-
 // GET /api/requisitions — list requisitions for the company
 export async function GET(request: Request) {
   try {
@@ -500,15 +409,103 @@ export async function GET(request: Request) {
         created_by_name: creatorNames.get(requisition.created_by) ?? "",
       }),
     )
+    const linkedWorkflowIds = requisitionsWithCreatorNames
+      .filter((requisition) => Boolean(requisition.source_expense_request_id))
+      .map((requisition) => requisition.id)
+    const standaloneWorkflowIds = requisitionsWithCreatorNames
+      .filter((requisition) => !requisition.source_expense_request_id)
+      .map((requisition) => requisition.id)
+    const expenseWorkflowIds = expenseRequestsWithCreatorNames
+      .filter((request) => !request.requisition_id)
+      .map((request) => String(request.id))
+    const [
+      linkedWorkflowResult,
+      standaloneWorkflowResult,
+      expenseWorkflowResult,
+    ] = await Promise.all([
+      linkedWorkflowIds.length
+        ? access.supabase.rpc("get_company_approval_workflow_states", {
+            requested_company_id: access.companyId,
+            requested_workflow_key: "linked_requisition",
+            requested_subject_ids: linkedWorkflowIds,
+          })
+        : Promise.resolve({ data: [], error: null }),
+      standaloneWorkflowIds.length
+        ? access.supabase.rpc("get_company_approval_workflow_states", {
+            requested_company_id: access.companyId,
+            requested_workflow_key: "standalone_requisition",
+            requested_subject_ids: standaloneWorkflowIds,
+          })
+        : Promise.resolve({ data: [], error: null }),
+      expenseWorkflowIds.length
+        ? access.supabase.rpc("get_company_approval_workflow_states", {
+            requested_company_id: access.companyId,
+            requested_workflow_key: "expense_request",
+            requested_subject_ids: expenseWorkflowIds,
+          })
+        : Promise.resolve({ data: [], error: null }),
+    ])
+    if (
+      linkedWorkflowResult.error ||
+      standaloneWorkflowResult.error ||
+      expenseWorkflowResult.error
+    ) {
+      console.error("Requisition workflow lookup failed", {
+        linked: linkedWorkflowResult.error,
+        standalone: standaloneWorkflowResult.error,
+        expense: expenseWorkflowResult.error,
+      })
+      return NextResponse.json(
+        { error: "Unable to load requisition approval workflows." },
+        { status: 503, headers: responseHeaders },
+      )
+    }
+    const workflowStates = [
+      ...(Array.isArray(linkedWorkflowResult.data)
+        ? linkedWorkflowResult.data
+        : []),
+      ...(Array.isArray(standaloneWorkflowResult.data)
+        ? standaloneWorkflowResult.data
+        : []),
+      ...(Array.isArray(expenseWorkflowResult.data)
+        ? expenseWorkflowResult.data
+        : []),
+    ] as Array<{ subjectId: string; workflowKey: string }>
+    const workflowBySubject = new Map(
+      workflowStates.map((state) => [
+        `${state.workflowKey}:${state.subjectId}`,
+        state,
+      ]),
+    )
+    const requisitionsWithWorkflows = requisitionsWithCreatorNames.map(
+      (requisition) => ({
+        ...requisition,
+        approval_workflow:
+          workflowBySubject.get(
+            `${
+              requisition.source_expense_request_id
+                ? "linked_requisition"
+                : "standalone_requisition"
+            }:${requisition.id}`,
+          ) ?? null,
+      }),
+    )
+    const expenseRequestsWithWorkflows: Record<string, unknown>[] =
+      expenseRequestsWithCreatorNames.map((request) => ({
+        ...request,
+        approval_workflow:
+          workflowBySubject.get(`expense_request:${request.id}`) ?? null,
+      }))
 
     return NextResponse.json(
       {
-        requisitions: requisitionsWithCreatorNames,
-        expenseRequests: expenseRequestsWithCreatorNames,
+        requisitions: requisitionsWithWorkflows,
+        expenseRequests: expenseRequestsWithWorkflows,
         expenseRequestsToInitiate: canInitiateExpenseRequestPermission
-          ? expenseRequestsWithCreatorNames.filter(
+          ? expenseRequestsWithWorkflows.filter(
               (request) =>
-                request.status === "pending_administration_officer_initiation",
+                request["status"] ===
+                "pending_administration_officer_initiation",
             )
           : [],
         currentUserId: access.userId,
@@ -732,17 +729,6 @@ export async function POST(request: Request) {
     const requisitionNumber = result?.requisition_number
     if (!requisitionId || !requisitionNumber)
       throw new Error("Requisition was created without an identifier.")
-
-    // Notify GM-level users that a new requisition awaits review
-    await notifyUsersWithPermission(
-      admin,
-      access.companyId,
-      requisitionId,
-      "requisitions.review",
-      "created",
-      "New requisition awaiting your review",
-      `Requisition ${requisitionNumber} — "${title}" has been submitted and is awaiting General Manager review.`,
-    )
 
     return NextResponse.json({ requisitionId, requisitionNumber }, {
       status: 201,

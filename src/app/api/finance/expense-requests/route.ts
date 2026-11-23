@@ -286,15 +286,18 @@ export async function GET() {
     const creatorIds = [
       ...new Set((requests ?? []).map((request) => request.created_by)),
     ]
-    const { data: creatorProfiles, error: creatorProfilesError } = creatorIds
-      .length
-      ? await access.supabase
-          .from("profiles")
-          .select("id, display_name")
-          .in("id", creatorIds)
-      : { data: [], error: null }
+    const { data: creatorProfiles, error: creatorProfilesError } =
+      creatorIds.length
+        ? await access.supabase
+            .from("profiles")
+            .select("id, display_name")
+            .in("id", creatorIds)
+        : { data: [], error: null }
     if (creatorProfilesError) {
-      console.error("Expense request creator lookup failed", creatorProfilesError)
+      console.error(
+        "Expense request creator lookup failed",
+        creatorProfilesError,
+      )
       return NextResponse.json(
         { error: "Unable to load expense request creator names." },
         { status: 503, headers },
@@ -310,10 +313,65 @@ export async function GET() {
       ...request,
       created_by_name: creatorNames.get(request.created_by) ?? "",
     }))
+    const uninitiatedRequestIds = requestsWithCreatorNames
+      .filter((request) => !request.requisition_id)
+      .map((request) => request.id)
+    const linkedRequisitionIds = requestsWithCreatorNames
+      .map((request) => request.requisition_id)
+      .filter((id): id is string => typeof id === "string")
+    const [expenseWorkflowResult, linkedWorkflowResult] = await Promise.all([
+      uninitiatedRequestIds.length
+        ? access.supabase.rpc("get_company_approval_workflow_states", {
+            requested_company_id: access.companyId,
+            requested_workflow_key: "expense_request",
+            requested_subject_ids: uninitiatedRequestIds,
+          })
+        : Promise.resolve({ data: [], error: null }),
+      linkedRequisitionIds.length
+        ? access.supabase.rpc("get_company_approval_workflow_states", {
+            requested_company_id: access.companyId,
+            requested_workflow_key: "linked_requisition",
+            requested_subject_ids: linkedRequisitionIds,
+          })
+        : Promise.resolve({ data: [], error: null }),
+    ])
+    if (expenseWorkflowResult.error || linkedWorkflowResult.error) {
+      console.error("Expense request workflow lookup failed", {
+        expenseWorkflow: expenseWorkflowResult.error,
+        linkedWorkflow: linkedWorkflowResult.error,
+      })
+      return NextResponse.json(
+        { error: "Unable to load request approval workflows." },
+        { status: 503, headers },
+      )
+    }
+    const workflowStates = [
+      ...(Array.isArray(expenseWorkflowResult.data)
+        ? expenseWorkflowResult.data
+        : []),
+      ...(Array.isArray(linkedWorkflowResult.data)
+        ? linkedWorkflowResult.data
+        : []),
+    ] as Array<{ subjectId: string; workflowKey: string }>
+    const workflowBySubject = new Map(
+      workflowStates.map((state) => [
+        `${state.workflowKey}:${state.subjectId}`,
+        state,
+      ]),
+    )
+    const requestsWithWorkflow = requestsWithCreatorNames.map((request) => ({
+      ...request,
+      approval_workflow:
+        workflowBySubject.get(
+          request.requisition_id
+            ? `linked_requisition:${request.requisition_id}`
+            : `expense_request:${request.id}`,
+        ) ?? null,
+    }))
 
     return NextResponse.json(
       {
-        requests: requestsWithCreatorNames,
+        requests: requestsWithWorkflow,
 
         currentUserId: access.userId,
 
@@ -426,6 +484,7 @@ export async function POST(request: Request) {
       const normalizedItems: {
         description: string
         quantity: number
+        rate: number
         catalog_item_id: string | null
       }[] = []
 
@@ -443,6 +502,7 @@ export async function POST(request: Request) {
           typeof line.description === "string" ? line.description.trim() : ""
 
         const quantity = Number(line.quantity)
+        const rate = Number(line.rate)
         const catalogItemId =
           line.catalog_item_id === null ||
           line.catalog_item_id === undefined ||
@@ -457,15 +517,16 @@ export async function POST(request: Request) {
           description.length > 200 ||
           !Number.isFinite(quantity) ||
           quantity <= 0 ||
+          !Number.isFinite(rate) ||
+          rate <= 0 ||
           catalogItemId === undefined ||
-          "rate" in line ||
           "unitRate" in line ||
           "amount" in line
         )
           return NextResponse.json(
             {
               error:
-                "Each item needs a description and positive quantity. Amounts are set during requisition initiation.",
+                "Each item needs a description, positive quantity, and positive unit rate.",
             },
             { status: 400, headers },
           )
@@ -473,12 +534,13 @@ export async function POST(request: Request) {
         normalizedItems.push({
           description,
           quantity,
+          rate,
           catalog_item_id: catalogItemId,
         })
       }
 
       const { data, error } = await access.supabase.rpc(
-        "submit_expense_request_with_items",
+        "submit_priced_expense_request_with_items",
         {
           requested_company_id: access.companyId,
 
@@ -540,6 +602,15 @@ export async function POST(request: Request) {
         { error: "Choose a valid expense-request action." },
 
         { status: 400, headers },
+      )
+
+    if (body.action !== "edit" && body.action !== "delete")
+      return NextResponse.json(
+        {
+          error:
+            "Approval actions must use the company-configured approval workflow.",
+        },
+        { status: 409, headers },
       )
 
     const requestId = typeof body.requestId === "string" ? body.requestId : ""
@@ -626,6 +697,7 @@ export async function POST(request: Request) {
       const normalizedItems: {
         description: string
         quantity: number
+        rate: number
         catalog_item_id: string | null
       }[] = []
 
@@ -643,6 +715,7 @@ export async function POST(request: Request) {
           typeof line.description === "string" ? line.description.trim() : ""
 
         const quantity = Number(line.quantity)
+        const rate = Number(line.rate)
         const catalogItemId =
           line.catalog_item_id === null ||
           line.catalog_item_id === undefined ||
@@ -657,15 +730,16 @@ export async function POST(request: Request) {
           description.length > 200 ||
           !Number.isFinite(quantity) ||
           quantity <= 0 ||
+          !Number.isFinite(rate) ||
+          rate <= 0 ||
           catalogItemId === undefined ||
-          "rate" in line ||
           "unitRate" in line ||
           "amount" in line
         )
           return NextResponse.json(
             {
               error:
-                "Each item needs a description and positive quantity. Unit rates are entered during initiation.",
+                "Each item needs a description, positive quantity, and positive unit rate.",
             },
 
             { status: 400, headers },
@@ -674,12 +748,13 @@ export async function POST(request: Request) {
         normalizedItems.push({
           description,
           quantity,
+          rate,
           catalog_item_id: catalogItemId,
         })
       }
 
       const { data, error } = await access.supabase.rpc(
-        "update_expense_request_before_initiation",
+        "update_priced_expense_request_before_initiation",
 
         {
           requested_request_id: requestId,

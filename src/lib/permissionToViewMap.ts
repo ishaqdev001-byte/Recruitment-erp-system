@@ -149,6 +149,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   // Approvals
   "approvals.view": new Set(["approvals"]),
   "approvals.manage": new Set(["approvals"]),
+  "workflows.manage": new Set(["settings"]),
 
   // Requisitions
   "requisitions.view": new Set(["requisitions"]),

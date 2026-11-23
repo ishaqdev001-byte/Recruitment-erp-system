@@ -376,6 +376,8 @@ const permissionActionLabels: Record<string, string> = {
 }
 
 const permissionCodeLabels: Record<string, string> = {
+  "workflows.manage": "Manage approval workflows",
+
   "candidates.delete": "Delete candidates and inquiries",
 
   "finance.delete": "Delete finance transactions",

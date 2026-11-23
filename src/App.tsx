@@ -157,13 +157,7 @@ const PageLoading = () => (
 )
 
 async function removeBrowserPushSubscription() {
-  if (
-    !(
-      "serviceWorker" in
-      navigator
-    )
-  )
-    return
+  if (!("serviceWorker" in navigator)) return
 
   const registration = await navigator.serviceWorker.getRegistration("/")
 
@@ -201,6 +195,7 @@ const TopBar = dynamic(() => import("./components/TopBar"), {
 
 const PwaInstallPrompt = dynamic(
   () => import("./components/PwaInstallPrompt"),
+
   { loading: () => null },
 )
 
@@ -388,6 +383,12 @@ const PositionsSettings = dynamic(
   { loading: PageLoading },
 )
 
+const ApprovalWorkflowsSettings = dynamic(
+  () => import("./components/settings/ApprovalWorkflowsSettings"),
+
+  { loading: PageLoading },
+)
+
 const AttendanceSettings = dynamic(
   () => import("./components/AttendanceSettings"),
 
@@ -480,6 +481,8 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
       import("./components/settings/CandidateSourcesSettings"),
 
       import("./components/settings/PositionsSettings"),
+
+      import("./components/settings/ApprovalWorkflowsSettings"),
     ]),
 }
 
@@ -657,13 +660,10 @@ const formatInitials = (value: string) =>
     .slice(0, 2)
 
     .map(
-      (part) =>
-        part[0]?.toUpperCase() ??
-        "",
+      (part) => part[0]?.toUpperCase() ?? "",
     )
 
-    .join("") ||
-  "R"
+    .join("") || "R"
 
 const IDLE_LOCK_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -674,8 +674,7 @@ const toCompanySlug = (name: string) =>
 
     .replace(/[^a-z0-9]+/g, "-")
 
-    .replace(/^-+|-+$/g, "") ||
-  "company"
+    .replace(/^-+|-+$/g, "") || "company"
 
 function getDefaultViewByPermissions(
   permissions: string[],
@@ -711,15 +710,15 @@ function getDefaultViewByPermissions(
 
 function canAccessSessionView(
   view: View,
+
   workspaceSession: Session | null | undefined,
 ) {
   if (!workspaceSession) return false
-  if (
-    view === "agent-invoices" &&
-    workspaceSession.role === "Chairman"
-  ) {
+
+  if (view === "agent-invoices" && workspaceSession.role === "Chairman") {
     return false
   }
+
   if (
     view === "human-resources" &&
     workspaceSession.role !== "Chairman" &&
@@ -727,12 +726,14 @@ function canAccessSessionView(
   ) {
     return false
   }
+
   if (
     view === "expense-requests" &&
     workspaceSession.role === "Administration Officer"
   ) {
     return false
   }
+
   if (
     view === "expense-requests" &&
     workspaceSession.role !== "Administration Officer" &&
@@ -740,18 +741,23 @@ function canAccessSessionView(
   ) {
     return true
   }
+
   return canAccessView(view, workspaceSession.permissions)
 }
 
 async function loadCompanyPermissionCodes(companyId: string) {
   const response = await fetch(
     `/api/workspace/permission-codes?companyId=${encodeURIComponent(companyId)}`,
+
     { cache: "no-store" },
   )
-  const payload = await response.json() as {
+
+  const payload = (await response.json()) as {
     permissionCodes?: unknown
+
     error?: string
   }
+
   if (
     !response.ok ||
     !Array.isArray(payload.permissionCodes) ||
@@ -761,6 +767,7 @@ async function loadCompanyPermissionCodes(companyId: string) {
   ) {
     throw new Error(payload.error ?? "Unable to load company permissions.")
   }
+
   return payload.permissionCodes
 }
 
@@ -870,31 +877,43 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
     throw new Error("Your company membership is incomplete.")
 
   const isPrimaryAdmin = companyRecord.primary_admin_user_id === user.id
+
   const permissionRequest = isPrimaryAdmin
     ? loadCompanyPermissionCodes(companyRecord.id)
     : supabase
+
         .from("role_permissions")
+
         .select("permission_code")
+
         .eq("role_id", roleRecord.id)
+
         .eq("company_id", companyRecord.id)
+
         .then(({ data, error }) => {
           if (error) throw new Error("Unable to load your permissions.")
+
           return (data ?? [])
+
             .map((rp) => rp.permission_code)
+
             .filter(
               (permission) =>
                 !isRecruitmentAgentRole(roleRecord.name) ||
                 !isRecruitmentAgentRestrictedPermission(permission),
             )
+
             .filter(
               (permission) =>
                 permission !== "agent_finance.view" ||
                 (isRecruitmentAgentRole(roleRecord.name) &&
                   roleAccessSettings(
                     roleRecord.access_settings,
+
                     roleRecord.name,
                   ).agent_visa_finance),
             )
+
             .concat(
               isRecruitmentAgentRole(roleRecord.name)
                 ? ["communications.agent_notes.view"]
@@ -902,24 +921,33 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
             )
         })
 
-  const [staffStatusResult, permissions, userProfileResult] =
-    await Promise.all([
+  const [staffStatusResult, permissions, userProfileResult] = await Promise.all(
+    [
       supabase.rpc("current_user_is_linked_company_staff", {
         requested_company_id: companyRecord.id,
       }),
+
       permissionRequest,
+
       supabase
+
         .from("profiles")
+
         .select("display_name, phone, avatar_url, must_change_password")
+
         .eq("id", user.id)
+
         .maybeSingle(),
-    ])
+    ],
+  )
 
   if (staffStatusResult.error)
     throw new Error("Unable to verify your linked staff status.")
 
   const isLinkedStaff = staffStatusResult.data
+
   const userProfile = userProfileResult.data
+
   if (userProfileResult.error)
     console.error("Current user profile lookup failed", userProfileResult.error)
 
@@ -957,11 +985,8 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
   const role =
     knownRoles.find(
-      (candidateRole) =>
-        candidateRole ===
-        roleRecord.name,
-    ) ??
-    roleRecord.name as WorkspaceRole
+      (candidateRole) => candidateRole === roleRecord.name,
+    ) ?? roleRecord.name as WorkspaceRole
 
   const branchValue = membership.branch as unknown as {
     id: string
@@ -973,9 +998,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
   const branchRecord = Array.isArray(branchValue) ? branchValue[0] : branchValue
 
-  const branchName =
-    branchRecord?.name ??
-    "Main Branch"
+  const branchName = branchRecord?.name ?? "Main Branch"
 
   const isMainBranchUser =
     companyRecord.primary_admin_user_id === user.id ||
@@ -989,44 +1012,26 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
     slug: companyRecord.slug,
 
-    registrationNumber:
-      companyRecord.registration_number ??
-      "",
+    registrationNumber: companyRecord.registration_number ?? "",
 
-    country:
-      companyRecord.country ??
-      "",
+    country: companyRecord.country ?? "",
 
-    city:
-      companyRecord.city ??
-      "",
+    city: companyRecord.city ?? "",
 
-    officeAddress:
-      companyRecord.office_address ??
-      "",
+    officeAddress: companyRecord.office_address ?? "",
 
-    phone:
-      companyRecord.phone ??
-      "",
+    phone: companyRecord.phone ?? "",
 
-    email:
-      companyRecord.email ??
-      "",
+    email: companyRecord.email ?? "",
 
-    website:
-      companyRecord.website ??
-      "",
+    website: companyRecord.website ?? "",
 
-    logo:
-      companyRecord.logo_url ??
-      "",
+    logo: companyRecord.logo_url ?? "",
 
     status:
-      companyRecord.status ===
-      "trial"
+      companyRecord.status === "trial"
         ? "Trial"
-        : companyRecord.status ===
-            "active"
+        : companyRecord.status === "active"
           ? "Active"
           : "Pending Verification",
 
@@ -1049,9 +1054,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
     title: role,
 
-    email:
-      user.email ??
-      "",
+    email: user.email ?? "",
 
     phone: String(userProfile?.phone ?? user.user_metadata?.phone ?? ""),
 
@@ -1105,6 +1108,7 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
       permissions,
     } satisfies Session,
+
     mustChangePassword: Boolean(
       (userProfile as { must_change_password?: boolean } | null)
         ?.must_change_password,
@@ -1158,9 +1162,7 @@ async function provisionPendingCompanyRegistration(
     },
 
     body: JSON.stringify({
-      resendWelcomeEmail:
-        options.resendWelcomeEmail ??
-        false,
+      resendWelcomeEmail: options.resendWelcomeEmail ?? false,
 
       logoDataUrl: readPendingCompanyLogo(),
     }),
@@ -1175,8 +1177,7 @@ async function provisionPendingCompanyRegistration(
 
   if (!response.ok || !result.companyId) {
     throw new Error(
-      result.error ??
-        "Unable to finish setting up your company workspace.",
+      result.error ?? "Unable to finish setting up your company workspace.",
     )
   }
 
@@ -1197,9 +1198,7 @@ async function provisionPendingCompanyRegistration(
 
     welcomeEmailSent: Boolean(result.welcomeEmailSent),
 
-    welcomeEmailRecipientCount:
-      result.welcomeEmailRecipientCount ??
-      0,
+    welcomeEmailRecipientCount: result.welcomeEmailRecipientCount ?? 0,
 
     welcomeEmailError: result.welcomeEmailError,
   }
@@ -1215,21 +1214,10 @@ function readPendingCompanyLogo() {
 
     const parsed: unknown = JSON.parse(pendingLogo)
 
-    if (
-      !parsed ||
-      typeof parsed !==
-        "object" ||
-      !(
-        "dataUrl" in
-        parsed
-      )
-    )
+    if (!parsed || typeof parsed !== "object" || !("dataUrl" in parsed))
       return null
 
-    return typeof parsed.dataUrl ===
-      "string"
-      ? parsed.dataUrl
-      : null
+    return typeof parsed.dataUrl === "string" ? parsed.dataUrl : null
   } catch (error) {
     console.error("Unable to read the pending company logo.", error)
 
@@ -1282,8 +1270,10 @@ export default function App() {
 
       return {
         ...current,
+
         permissions: [
           ...current.permissions,
+
           "communications.project_notes.view",
         ],
       }
@@ -1393,14 +1383,10 @@ export default function App() {
     (nextView: View) => {
       if (
         session &&
-        session.role !==
-          "Chairman" &&
+        session.role !== "Chairman" &&
         session.isLinkedStaff === true &&
-        (hrPersonalDetailsComplete !==
-          true ||
-          hrProfileUpdateRequired) &&
-        nextView !==
-          "human-resources"
+        (hrPersonalDetailsComplete !== true || hrProfileUpdateRequired) &&
+        nextView !== "human-resources"
       ) {
         setView("human-resources")
 
@@ -1445,8 +1431,7 @@ export default function App() {
 
       if (!response.ok || !result.reminder) {
         throw new Error(
-          result.error ??
-            "Unable to update your HR profile reminder.",
+          result.error ?? "Unable to update your HR profile reminder.",
         )
       }
 
@@ -1454,21 +1439,12 @@ export default function App() {
 
       setHrProfileUpdateRequired(result.reminder.updateRequired)
 
-      if (
-        action ===
-        "changed"
-      )
-        setView("human-resources")
+      if (action === "changed") setView("human-resources")
 
-      if (
-        action ===
-        "review_later"
-      )
-        setView("human-resources")
+      if (action === "review_later") setView("human-resources")
     } catch (error) {
       setHrReminderError(
-        error instanceof
-          Error
+        error instanceof Error
           ? error.message
           : "Unable to update your HR profile reminder.",
       )
@@ -1492,10 +1468,7 @@ export default function App() {
 
     const lockStorageKey = `kilax.idle-locked:${session.userId}`
 
-    if (
-      window.sessionStorage.getItem(lockStorageKey) ===
-      "true"
-    ) {
+    if (window.sessionStorage.getItem(lockStorageKey) === "true") {
       idleLockedRef.current = true
 
       setIdleLocked(true)
@@ -1513,10 +1486,7 @@ export default function App() {
       const remaining =
         IDLE_LOCK_TIMEOUT_MS - (Date.now() - lastActivityAt.current)
 
-      if (
-        remaining <=
-        0
-      ) {
+      if (remaining <= 0) {
         idleLockedRef.current = true
 
         window.sessionStorage.setItem(lockStorageKey, "true")
@@ -1536,11 +1506,7 @@ export default function App() {
     const recordActivity = () => {
       if (idleLockedRef.current) return
 
-      if (
-        timeoutId !==
-        undefined
-      )
-        window.clearTimeout(timeoutId)
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId)
 
       lastActivityAt.current = Date.now()
 
@@ -1550,11 +1516,7 @@ export default function App() {
     const checkAfterVisibilityChange = () => {
       if (document.hidden) return
 
-      if (
-        timeoutId !==
-        undefined
-      )
-        window.clearTimeout(timeoutId)
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId)
 
       checkIdleTime()
     }
@@ -1582,11 +1544,7 @@ export default function App() {
     checkIdleTime()
 
     return () => {
-      if (
-        timeoutId !==
-        undefined
-      )
-        window.clearTimeout(timeoutId)
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId)
 
       for (const eventName of activityEvents) {
         window.removeEventListener(eventName, recordActivity)
@@ -1623,20 +1581,10 @@ export default function App() {
           density: Density
         }>
 
-        if (
-          saved.theme ===
-            "light" ||
-          saved.theme ===
-            "dark"
-        )
+        if (saved.theme === "light" || saved.theme === "dark")
           setTheme(saved.theme)
 
-        if (
-          saved.density ===
-            "compact" ||
-          saved.density ===
-            "comfortable"
-        )
+        if (saved.density === "compact" || saved.density === "comfortable")
           setDensity(saved.density)
       } catch {
         window.localStorage.removeItem("kilax.workspace-preferences")
@@ -1650,10 +1598,7 @@ export default function App() {
     const restoreSession = async () => {
       const currentUrl = new URL(window.location.href)
 
-      if (
-        currentUrl.searchParams.get("view") ===
-        "communications"
-      )
+      if (currentUrl.searchParams.get("view") === "communications")
         setView("communications")
 
       const validViews = new Set<string>([
@@ -1741,11 +1686,7 @@ export default function App() {
         .filter(Boolean)
 
       const pathView =
-        pathParts.length >=
-        2
-          ? pathParts[1]
-          : (pathParts[0] ??
-            "")
+        pathParts.length >= 2 ? pathParts[1] : (pathParts[0] ?? "")
 
       const authPaths: Record<string, "login" | "register" | "invite" | "reset-password"> =
         {
@@ -1760,68 +1701,50 @@ export default function App() {
           onboarding: "register",
         }
 
-      if (
-        pathParts.length ===
-          1 &&
-        authPaths[pathParts[0]]
-      ) {
+      if (pathParts.length === 1 && authPaths[pathParts[0]]) {
         setAuthView(authPaths[pathParts[0]])
       }
 
       const paramView =
-        currentUrl.searchParams.get("v") ??
-        currentUrl.searchParams.get("view")
+        currentUrl.searchParams.get("v") ?? currentUrl.searchParams.get("view")
 
       const notificationTarget = currentUrl.searchParams.get("notification")
 
       const notificationView =
-        notificationTarget ===
-          "tasks" ||
-        notificationTarget ===
-          "staff-chat" ||
-        notificationTarget ===
-          "expense-requests"
+        notificationTarget === "tasks" ||
+        notificationTarget === "staff-chat" ||
+        notificationTarget === "expense-requests"
           ? notificationTarget
           : null
 
       const detectedView =
         (validViews.has(pathView) ? pathView : null) ??
-        (paramView &&
-        validViews.has(paramView)
-          ? paramView
-          : notificationView)
+        (paramView && validViews.has(paramView) ? paramView : notificationView)
 
       if (detectedView) setView(detectedView as View)
 
       const hashParams = new URLSearchParams(currentUrl.hash.slice(1))
 
       const inviteLink =
-        hashParams.get("type") ===
-          "invite" ||
-        currentUrl.searchParams.get("invite") ===
-          "1"
+        hashParams.get("type") === "invite" ||
+        currentUrl.searchParams.get("invite") === "1"
 
       const recoveryLink =
-        currentUrl.searchParams.get("view") ===
-          "reset-password" ||
-        hashParams.get("type") ===
-          "recovery"
+        currentUrl.searchParams.get("view") === "reset-password" ||
+        hashParams.get("type") === "recovery"
 
       const signupLink =
-        currentUrl.searchParams.get("view") ===
-          "company-provisioning" ||
-        currentUrl.searchParams.get("type") ===
-          "signup" ||
-        hashParams.get("type") ===
-          "signup"
+        currentUrl.searchParams.get("view") === "company-provisioning" ||
+        currentUrl.searchParams.get("type") === "signup" ||
+        hashParams.get("type") === "signup"
 
-      const currentInviteId =
-        currentUrl.searchParams.get("invitation_id") ??
-        ""
+      const currentInviteId = currentUrl.searchParams.get("invitation_id") ?? ""
 
       const hasAuthCallback =
         Boolean(currentUrl.searchParams.get("code")) ||
-        Boolean(hashParams.get("access_token") && hashParams.get("refresh_token"))
+        Boolean(
+          hashParams.get("access_token") && hashParams.get("refresh_token"),
+        )
 
       if (inviteLink) setAuthView("invite")
 
@@ -1837,6 +1760,7 @@ export default function App() {
         const supabase = createSupabaseBrowserClient()
 
         let recoveryUserId: string | null = null
+
         const {
           data: { subscription },
         } = supabase.auth.onAuthStateChange((event, session) => {
@@ -1844,14 +1768,20 @@ export default function App() {
             recoveryUserId = session?.user.id ?? null
           }
         })
+
         let user: User | null = null
+
         let authError: Error | null = null
+
         try {
           const {
             data: { user: authenticatedUser },
+
             error,
           } = await supabase.auth.getUser()
+
           user = authenticatedUser
+
           authError = error
         } finally {
           subscription.unsubscribe()
@@ -1878,23 +1808,36 @@ export default function App() {
         if (user) {
           if (hasAuthCallback) {
             const cleanUrl = new URL(window.location.href)
+
             for (const parameter of [
               "code",
+
               "token",
+
               "access_token",
+
               "refresh_token",
+
               "expires_in",
+
               "token_type",
+
               "error",
+
               "error_code",
+
               "error_description",
             ]) {
               cleanUrl.searchParams.delete(parameter)
             }
+
             cleanUrl.hash = ""
+
             window.history.replaceState(
               null,
+
               "",
+
               `${cleanUrl.pathname}${cleanUrl.search}`,
             )
           }
@@ -1928,8 +1871,7 @@ export default function App() {
               console.warn(
                 "Google Gmail link not started",
 
-                connectPayload.error ??
-                  "unknown error",
+                connectPayload.error ?? "unknown error",
               )
             } catch (error) {
               console.warn("Google Gmail link failed", error)
@@ -1938,8 +1880,7 @@ export default function App() {
 
           const showInvitation = async (invitationId: string) => {
             setInviteEmail(
-              user.email ??
-                "",
+              user.email ?? "",
             )
 
             setAuthView("invite")
@@ -1972,20 +1913,17 @@ export default function App() {
             }
 
             setInviteId(
-              invitation.invitationId ??
-                currentInviteId,
+              invitation.invitationId ?? currentInviteId,
             )
 
             setInviteCompanyId(invitation.companyId)
 
             setInviteCompanyName(
-              invitation.companyName ??
-                "",
+              invitation.companyName ?? "",
             )
 
             setInviteRoleName(
-              invitation.roleName ??
-                "",
+              invitation.roleName ?? "",
             )
 
             setInviteError("")
@@ -1993,8 +1931,7 @@ export default function App() {
 
           if (inviteLink) {
             await showInvitation(
-              currentInviteId ||
-                "legacy",
+              currentInviteId || "legacy",
             )
 
             window.history.replaceState(
@@ -2012,8 +1949,7 @@ export default function App() {
             setResetPasswordError("")
 
             setResetPasswordEmail(
-              user.email ??
-                "",
+              user.email ?? "",
             )
 
             return
@@ -2038,8 +1974,7 @@ export default function App() {
 
           if (!currentInvitationResponse.ok)
             throw new Error(
-              currentInvitation.error ??
-                "Unable to verify your invitation.",
+              currentInvitation.error ?? "Unable to verify your invitation.",
             )
 
           if (
@@ -2047,8 +1982,7 @@ export default function App() {
             currentInvitation.legacyInvitation
           ) {
             await showInvitation(
-              currentInvitation.invitationId ??
-                "legacy",
+              currentInvitation.invitationId ?? "legacy",
             )
 
             return
@@ -2083,8 +2017,7 @@ export default function App() {
 
             setRole(workspace.user.role)
 
-            if (!cancelled)
-              setMustChangePassword(workspace.mustChangePassword)
+            if (!cancelled) setMustChangePassword(workspace.mustChangePassword)
 
             try {
               const lastView = localStorage.getItem(
@@ -2101,23 +2034,15 @@ export default function App() {
           }
         }
       } catch (error) {
-        if (
-          !cancelled &&
-          error instanceof
-            Error
-        ) {
+        if (!cancelled && error instanceof Error) {
           if (inviteLink) setInviteError(error.message)
           else if (recoveryLink)
             setResetPasswordError(
-              error.message ===
-                "Auth session missing!"
+              error.message === "Auth session missing!"
                 ? "This password reset link is invalid or expired. Request a new one from the login screen."
                 : error.message,
             )
-          else if (
-            error.message !==
-            "Auth session missing!"
-          )
+          else if (error.message !== "Auth session missing!")
             setLoginError(error.message)
         }
       } finally {
@@ -2178,8 +2103,7 @@ export default function App() {
           )
 
           setHrProfileReminder(
-            result.reminder?.prompt ??
-              null,
+            result.reminder?.prompt ?? null,
           )
 
           setHrProfileUpdateRequired(Boolean(result.reminder?.updateRequired))
@@ -2203,8 +2127,11 @@ export default function App() {
     }
   }, [
     session?.companyId,
+
     session?.isLinkedStaff,
+
     session?.role,
+
     session?.userId,
   ])
 
@@ -2246,10 +2173,7 @@ export default function App() {
       cancelIdleCallback?: (handle: number) => void
     }
 
-    if (
-      typeof idleWindow.requestIdleCallback ===
-      "function"
-    ) {
+    if (typeof idleWindow.requestIdleCallback === "function") {
       const idleId = idleWindow.requestIdleCallback(preloadCommonViews, {
         timeout: 2500,
       })
@@ -2267,13 +2191,7 @@ export default function App() {
 
     if (!main) return
 
-    if (
-      !(
-        "IntersectionObserver" in
-        window
-      )
-    )
-      return
+    if (!("IntersectionObserver" in window)) return
 
     const observed = new WeakSet<Element>()
 
@@ -2332,8 +2250,7 @@ export default function App() {
     main.querySelectorAll<HTMLElement>("*").forEach((element) => {
       if (
         element.scrollHeight > element.clientHeight + 1 &&
-        getComputedStyle(element).overflowY !==
-          "visible"
+        getComputedStyle(element).overflowY !== "visible"
       ) {
         element.scrollTo({ top: 0, behavior: "smooth" })
       }
@@ -2351,12 +2268,7 @@ export default function App() {
   }, [density, preferencesReady, role, theme])
 
   useEffect(() => {
-    if (
-      !session ||
-      view !==
-        "dashboard"
-    )
-      return
+    if (!session || view !== "dashboard") return
 
     const defaultView = getDefaultViewByPermissions(
       session.permissions,
@@ -2364,10 +2276,7 @@ export default function App() {
       session.role,
     )
 
-    if (
-      defaultView !==
-      "dashboard"
-    ) {
+    if (defaultView !== "dashboard") {
       setView(defaultView)
     }
   }, [session?.companyId])
@@ -2418,11 +2327,7 @@ export default function App() {
 
       const { error } = await supabase.auth.signOut()
 
-      if (
-        error &&
-        error.name !==
-          "AuthSessionMissingError"
-      )
+      if (error && error.name !== "AuthSessionMissingError")
         console.error(
           "[Access Refresh] Unable to sign out after company access was removed.",
 
@@ -2467,10 +2372,7 @@ export default function App() {
         } = await supabase.auth.getUser()
 
         if (authError) {
-          if (
-            authError.name ===
-            "AuthSessionMissingError"
-          ) {
+          if (authError.name === "AuthSessionMissingError") {
             await clearWorkspace("Your session has expired. Sign in again.")
 
             return
@@ -2479,11 +2381,7 @@ export default function App() {
           throw authError
         }
 
-        if (
-          !user ||
-          user.id !==
-            session.userId
-        ) {
+        if (!user || user.id !== session.userId) {
           await clearWorkspace()
 
           return
@@ -2531,32 +2429,43 @@ export default function App() {
         const companyValue = membership.company as unknown as {
           primary_admin_user_id: string | null
         } | { primary_admin_user_id: string | null }[]
+
         const companyRecord = Array.isArray(companyValue)
           ? companyValue[0]
           : companyValue
-        const isPrimaryAdmin =
-          companyRecord?.primary_admin_user_id === user.id
+
+        const isPrimaryAdmin = companyRecord?.primary_admin_user_id === user.id
 
         let newPermissions: string[]
+
         if (isPrimaryAdmin) {
           newPermissions = await loadCompanyPermissionCodes(session.companyId)
         } else {
           const { data: rolePerms, error: permsError } = await supabase
+
             .from("role_permissions")
+
             .select("permission_code")
+
             .eq("role_id", roleRecord.id)
+
             .eq("company_id", session.companyId)
 
           if (permsError) throw permsError
+
           if (!rolePerms)
             throw new Error("Unable to load the assigned role permissions.")
 
           const roleAccess = roleAccessSettings(
             roleRecord.access_settings,
+
             roleRecord.name,
           )
+
           newPermissions = rolePerms
+
             .map((rp) => rp.permission_code)
+
             .filter(
               (permission) =>
                 permission !== "agent_finance.view" ||
@@ -2579,13 +2488,9 @@ export default function App() {
 
         const nextRole = roleRecord.name as WorkspaceRole
 
-        const nextBranchId =
-          membership.branch_id ??
-          null
+        const nextBranchId = membership.branch_id ?? null
 
-        const nextBranchName =
-          branchRecord?.name ??
-          "Main Branch"
+        const nextBranchName = branchRecord?.name ?? "Main Branch"
 
         const nextIsMainBranch =
           isPrimaryAdmin ||
@@ -2609,31 +2514,23 @@ export default function App() {
         setSession((current) => {
           if (
             !current ||
-            current.userId !==
-              session.userId ||
-            current.companyId !==
-              session.companyId
+            current.userId !== session.userId ||
+            current.companyId !== session.companyId
           )
             return current
 
           const permissionsMatch =
-            current.permissions.length ===
-              newPermissions.length &&
+            current.permissions.length === newPermissions.length &&
             current.permissions.every((permission) =>
               newPermissions.includes(permission),
             )
 
           if (
-            current.roleId ===
-              roleRecord.id &&
-            current.role ===
-              nextRole &&
-            current.branchId ===
-              nextBranchId &&
-            current.branchName ===
-              nextBranchName &&
-            current.isMainBranchUser ===
-              nextIsMainBranch &&
+            current.roleId === roleRecord.id &&
+            current.role === nextRole &&
+            current.branchId === nextBranchId &&
+            current.branchName === nextBranchName &&
+            current.isMainBranchUser === nextIsMainBranch &&
             permissionsMatch
           )
             return current
@@ -2659,46 +2556,25 @@ export default function App() {
 
         setUsers((current) => {
           const companyUser = current.find(
-            (entry) =>
-              entry.id ===
-              session.userId,
+            (entry) => entry.id === session.userId,
           )
 
-          if (
-            !companyUser ||
-            companyUser.role ===
-              nextRole
-          )
-            return current
+          if (!companyUser || companyUser.role === nextRole) return current
 
           return current.map((entry) =>
-            entry.id ===
-            session.userId
-              ? { ...entry, role: nextRole }
-              : entry,
+            entry.id === session.userId ? { ...entry, role: nextRole } : entry,
           )
         })
       } catch (error) {
-        const message =
-          error instanceof
-          Error
-            ? error.message
-            : String(error)
+        const message = error instanceof Error ? error.message : String(error)
 
         const isRetryableNetworkError =
-          error instanceof
-            Error &&
-          (error.name ===
-            "AuthRetryableFetchError" ||
-            (error instanceof
-              TypeError &&
-              /fetch/i.test(error.message)))
+          error instanceof Error &&
+          (error.name === "AuthRetryableFetchError" ||
+            (error instanceof TypeError && /fetch/i.test(error.message)))
 
         if (isRetryableNetworkError) {
-          if (
-            message !==
-            lastRefreshError
-          ) {
+          if (message !== lastRefreshError) {
             console.warn(
               "[Access Refresh] Supabase is temporarily unreachable; retrying access refresh.",
 
@@ -2717,15 +2593,11 @@ export default function App() {
           }, retryDelay)
 
           retryDelay = Math.min(
-            retryDelay *
-              2,
+            retryDelay * 2,
 
             30_000,
           )
-        } else if (
-          message !==
-          lastRefreshError
-        ) {
+        } else if (message !== lastRefreshError) {
           console.error(
             "[Access Refresh] Unable to refresh role and permissions:",
 
@@ -2789,10 +2661,7 @@ export default function App() {
 
       .subscribe((status, error) => {
         if (
-          (status ===
-            "CHANNEL_ERROR" ||
-            status ===
-              "TIMED_OUT") &&
+          (status === "CHANNEL_ERROR" || status === "TIMED_OUT") &&
           !cancelled
         ) {
           console.error(
@@ -2831,11 +2700,7 @@ export default function App() {
 
     const slug = session.companySlug
 
-    const targetPath =
-      view ===
-      "dashboard"
-        ? `/${slug}`
-        : `/${slug}/${view}`
+    const targetPath = view === "dashboard" ? `/${slug}` : `/${slug}/${view}`
 
     const viewTitles: Partial<Record<View, string>> = {
       dashboard: "Dashboard",
@@ -2885,10 +2750,7 @@ export default function App() {
       leave: "Leave",
 
       "human-resources":
-        session.role ===
-        "Chairman"
-          ? "HR Profiles"
-          : "My HR Profile",
+        session.role === "Chairman" ? "HR Profiles" : "My HR Profile",
 
       "medical-appointments": "Medical Appointments",
 
@@ -2907,16 +2769,11 @@ export default function App() {
       drive: "Drive",
     }
 
-    const viewLabel =
-      viewTitles[view] ??
-      view
+    const viewLabel = viewTitles[view] ?? view
 
     document.title = `${viewLabel} — ${session.companyName} | Kilax Smart Recruit`
 
-    if (
-      window.location.pathname !==
-      targetPath
-    ) {
+    if (window.location.pathname !== targetPath) {
       const url = new URL(window.location.href)
 
       url.searchParams.delete("v")
@@ -2948,54 +2805,100 @@ export default function App() {
 
     const workspacePathSegments = new Set([
       "dashboard",
+
       "candidates",
+
       "candidate-inquiries",
+
       "agents",
+
       "suppliers",
+
       "jobs",
+
       "interviews",
+
       "offers",
+
       "analytics",
+
       "finance",
+
       "accounts",
+
       "payments",
+
       "paychecks",
+
       "passport",
+
       "documents",
+
       "ai",
+
       "reports",
+
       "users",
+
       "settings",
+
       "contractors",
+
       "projects",
+
       "invoices",
+
       "agent-invoices",
+
       "tasks",
+
       "communications",
+
       "staff-chat",
+
       "attendance",
+
       "leave",
+
       "human-resources",
+
       "medical-appointments",
+
       "medical-management",
+
       "hospital-management",
+
       "branches",
+
       "approvals",
+
       "requisitions",
+
       "expense-requests",
+
       "drive",
     ])
+
     const pathSegments = window.location.pathname
+
       .split("/")
+
       .filter(Boolean)
+
     const authPathSegments = new Set([
       "login",
+
       "register",
+
       "invite",
+
       "reset-password",
+
       "forgot-password",
     ])
+
     const secondSegment = pathSegments[1]
+
     const companySlug =
       (pathSegments.length > 1 &&
       (authPathSegments.has(secondSegment) ||
@@ -3006,12 +2909,15 @@ export default function App() {
             !workspacePathSegments.has(pathSegments[0])
           ? pathSegments[0]
           : null) ?? ""
+
     const authPath = authPaths[authView] ?? "/login"
+
     const targetPath = companySlug
       ? `/${encodeURIComponent(companySlug)}${
           authPath === "/" ? "/login" : authPath
         }`
       : authPath
+
     const titles: Record<string, string> = {
       login: "Sign In — Kilax Smart Recruit",
 
@@ -3026,20 +2932,14 @@ export default function App() {
       verify: "Account Created — Kilax Smart Recruit",
     }
 
-    document.title =
-      titles[authView] ??
-      "Kilax Smart Recruit | Recruitment ERP"
+    document.title = titles[authView] ?? "Kilax Smart Recruit | Recruitment ERP"
 
     const hasSpecialParams =
       window.location.search.includes("invite=1") ||
       window.location.search.includes("view=reset-password") ||
       window.location.hash.includes("type=")
 
-    if (
-      !hasSpecialParams &&
-      window.location.pathname !==
-        targetPath
-    ) {
+    if (!hasSpecialParams && window.location.pathname !== targetPath) {
       window.history.pushState({ authView }, "", targetPath)
     }
   }, [authView, session])
@@ -3147,28 +3047,17 @@ export default function App() {
         .filter(Boolean)
 
       const pathView =
-        pathParts.length >=
-        2
-          ? pathParts[1]
-          : (pathParts[0] ??
-            "")
+        pathParts.length >= 2 ? pathParts[1] : (pathParts[0] ?? "")
 
       const stateView = state?.view
 
       const resolved =
-        (stateView &&
-        validViews.has(stateView)
-          ? stateView
-          : null) ??
+        (stateView && validViews.has(stateView) ? stateView : null) ??
         (validViews.has(pathView) ? pathView : null)
 
       if (resolved) {
         setView(resolved as View)
-      } else if (
-        pathParts.length ===
-          1 &&
-        authViewSet.has(pathParts[0])
-      ) {
+      } else if (pathParts.length === 1 && authViewSet.has(pathParts[0])) {
         setAuthView(
           pathParts[0] as "login" | "register" | "invite" | "reset-password",
         )
@@ -3189,11 +3078,8 @@ export default function App() {
   const activeCompany = useMemo(
     () =>
       companies.find(
-        (company) =>
-          company.id ===
-          session?.companyId,
-      ) ??
-      companies[0],
+        (company) => company.id === session?.companyId,
+      ) ?? companies[0],
 
     [companies, session],
   )
@@ -3201,11 +3087,8 @@ export default function App() {
   const activeUser = useMemo(
     () =>
       users.find(
-        (user) =>
-          user.id ===
-          session?.userId,
-      ) ??
-      users[0],
+        (user) => user.id === session?.userId,
+      ) ?? users[0],
 
     [session, users],
   )
@@ -3223,10 +3106,7 @@ export default function App() {
 
     const form = companyForm
 
-    if (
-      form.password !==
-      form.confirmPassword
-    ) {
+    if (form.password !== form.confirmPassword) {
       setRegisterError("The passwords do not match.")
 
       return
@@ -3238,8 +3118,7 @@ export default function App() {
       const supabase = createSupabaseBrowserClient()
 
       const redirectOrigin = (
-        process.env.NEXT_PUBLIC_SITE_URL ||
-        window.location.origin
+        process.env.NEXT_PUBLIC_SITE_URL || window.location.origin
       )
 
         .replace(/\/+$/, "")
@@ -3292,10 +3171,7 @@ export default function App() {
       setCompanyForm({ ...form, password: "", confirmPassword: "" })
 
       if (!data.session) {
-        if (
-          data.user.identities?.length ===
-          0
-        ) {
+        if (data.user.identities?.length === 0) {
           throw new Error(
             "An account with this email already exists. Sign in or use the password reset link.",
           )
@@ -3347,17 +3223,13 @@ export default function App() {
 
         throw new Error(
           `Your account was created, but company setup did not finish. Sign in with this email and password to retry. ${
-            error instanceof
-            Error
-              ? error.message
-              : "Please try again."
+            error instanceof Error ? error.message : "Please try again."
           }`,
         )
       }
     } catch (error) {
       setRegisterError(
-        error instanceof
-          Error
+        error instanceof Error
           ? error.message
           : "Unable to create your company account.",
       )
@@ -3404,8 +3276,7 @@ export default function App() {
         welcomeEmailRecipientCount: 0,
 
         welcomeEmailError:
-          error instanceof
-          Error
+          error instanceof Error
             ? error.message
             : "Unable to resend the welcome email.",
       })
@@ -3461,15 +3332,13 @@ export default function App() {
           "kilax.lastActiveView",
         ) as View | null
 
-        if (
-          lastView &&
-          canAccessSessionView(lastView, workspace.session)
-        ) {
+        if (lastView && canAccessSessionView(lastView, workspace.session)) {
           setView(lastView)
         } else {
           setView(
             getDefaultViewByPermissions(
               workspace.session.permissions,
+
               workspace.user.role,
             ),
           )
@@ -3490,8 +3359,7 @@ export default function App() {
       }
     } catch (error) {
       setLoginError(
-        error instanceof
-          Error
+        error instanceof Error
           ? error.message
           : "Unable to load your company workspace.",
       )
@@ -3523,8 +3391,7 @@ export default function App() {
       window.sessionStorage.removeItem("kilax.googleConnectGmail")
 
       setLoginError(
-        error instanceof
-          Error
+        error instanceof Error
           ? error.message
           : "Unable to continue with Google.",
       )
@@ -3569,8 +3436,7 @@ export default function App() {
       )
     } catch (error) {
       setLoginError(
-        error instanceof
-          Error
+        error instanceof Error
           ? error.message
           : "Unable to send a password reset link.",
       )
@@ -3584,19 +3450,13 @@ export default function App() {
 
     setResetPasswordError("")
 
-    if (
-      resetPassword.length <
-      8
-    ) {
+    if (resetPassword.length < 8) {
       setResetPasswordError("Choose a password with at least 8 characters.")
 
       return
     }
 
-    if (
-      resetPassword !==
-      resetPasswordConfirm
-    ) {
+    if (resetPassword !== resetPasswordConfirm) {
       setResetPasswordError("The passwords do not match.")
 
       return
@@ -3636,15 +3496,13 @@ export default function App() {
           "kilax.lastActiveView",
         ) as View | null
 
-        if (
-          lastView &&
-          canAccessSessionView(lastView, workspace.session)
-        ) {
+        if (lastView && canAccessSessionView(lastView, workspace.session)) {
           setView(lastView)
         } else {
           setView(
             getDefaultViewByPermissions(
               workspace.session.permissions,
+
               workspace.user.role,
             ),
           )
@@ -3670,14 +3528,12 @@ export default function App() {
       )
     } catch (error) {
       const message =
-        error instanceof
-        Error
+        error instanceof Error
           ? error.message
           : "Unable to update your password."
 
       setResetPasswordError(
-        message ===
-          "Auth session missing!"
+        message === "Auth session missing!"
           ? "Your password reset session has expired. Request a new password reset link."
           : message,
       )
@@ -3691,19 +3547,13 @@ export default function App() {
 
     setInviteError("")
 
-    if (
-      invitePassword.length <
-      8
-    ) {
+    if (invitePassword.length < 8) {
       setInviteError("Choose a password with at least 8 characters.")
 
       return
     }
 
-    if (
-      invitePassword !==
-      invitePasswordConfirm
-    ) {
+    if (invitePassword !== invitePasswordConfirm) {
       setInviteError("The passwords do not match.")
 
       return
@@ -3753,8 +3603,7 @@ export default function App() {
 
       if (error || !data.user)
         throw new Error(
-          error?.message ??
-            "Unable to set your password.",
+          error?.message ?? "Unable to set your password.",
         )
 
       const acceptanceResponse = await fetch(
@@ -3790,15 +3639,13 @@ export default function App() {
           "kilax.lastActiveView",
         ) as View | null
 
-        if (
-          lastView &&
-          canAccessSessionView(lastView, workspace.session)
-        ) {
+        if (lastView && canAccessSessionView(lastView, workspace.session)) {
           setView(lastView)
         } else {
           setView(
             getDefaultViewByPermissions(
               workspace.session.permissions,
+
               workspace.user.role,
             ),
           )
@@ -3822,8 +3669,7 @@ export default function App() {
       )
     } catch (error) {
       setInviteError(
-        error instanceof
-          Error
+        error instanceof Error
           ? error.message
           : "Unable to finish your invitation.",
       )
@@ -3837,19 +3683,13 @@ export default function App() {
 
     setForcedPasswordError("")
 
-    if (
-      forcedNewPassword.length <
-      8
-    ) {
+    if (forcedNewPassword.length < 8) {
       setForcedPasswordError("Your new password must be at least 8 characters.")
 
       return
     }
 
-    if (
-      forcedNewPassword !==
-      forcedNewPasswordConfirm
-    ) {
+    if (forcedNewPassword !== forcedNewPasswordConfirm) {
       setForcedPasswordError("The passwords do not match.")
 
       return
@@ -3874,8 +3714,7 @@ export default function App() {
 
       if (!response.ok)
         throw new Error(
-          result.error ??
-            "Unable to update your password.",
+          result.error ?? "Unable to update your password.",
         )
 
       setMustChangePassword(false)
@@ -4576,7 +4415,9 @@ export default function App() {
           <TopBar
             onMenuClick={() => setMobileNavOpen(true)}
             onNavigate={handleNavigate}
-            onProjectAssignmentNotification={handleProjectAssignmentNotification}
+            onProjectAssignmentNotification={
+              handleProjectAssignmentNotification
+            }
             role={activeUser?.role ?? role}
             permissions={session.permissions}
             theme={theme}
@@ -4609,6 +4450,7 @@ export default function App() {
                 className="w-full max-w-lg rounded-2xl border p-6 shadow-2xl"
                 style={{
                   background: "var(--card)",
+
                   borderColor: "var(--border)",
                 }}
               >
@@ -4646,6 +4488,7 @@ export default function App() {
                         className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
                         style={{
                           borderColor: "var(--border)",
+
                           color: "var(--foreground)",
                         }}
                       >
@@ -4660,6 +4503,7 @@ export default function App() {
                         className="rounded px-4 py-2 text-sm font-700 disabled:opacity-50"
                         style={{
                           background: "var(--primary)",
+
                           color: "var(--primary-foreground)",
                         }}
                       >
@@ -4675,6 +4519,7 @@ export default function App() {
                         className="rounded border px-4 py-2 text-sm font-600 disabled:opacity-50"
                         style={{
                           borderColor: "var(--border)",
+
                           color: "var(--foreground)",
                         }}
                       >
@@ -4689,6 +4534,7 @@ export default function App() {
                         className="rounded px-4 py-2 text-sm font-700 disabled:opacity-50"
                         style={{
                           background: "var(--primary)",
+
                           color: "var(--primary-foreground)",
                         }}
                       >
@@ -7123,28 +6969,27 @@ function SettingsPage({
   company,
 
   user,
+
   permissions = [],
 }: {
   company?: CompanyProfile
 
   user?: CompanyUser
+
   permissions?: string[]
 }) {
   const isChairman = user?.role === "Chairman"
+
   const canManageItems =
     isChairman || permissions.includes("expense_items.manage")
 
-  const [settingsTab, setSettingsTab] = useState<
-    | "general"
-    | "candidate-sources"
-    | "departments"
-    | "currencies"
-    | "service-providers"
-    | "expense-categories"
-    | "expense-items"
-    | "positions"
-    | "attendance"
-  >("general")
+  const canManageWorkflows =
+    isChairman || permissions.includes("workflows.manage")
+
+  const [settingsTab, setSettingsTab] =
+    useState<"general" | "candidate-sources" | "departments" | "currencies" | "service-providers" | "expense-categories" | "expense-items" | "positions" | "workflows" | "attendance">(
+      "general",
+    )
 
   const permissionRows = [
     ["Candidates", "View / Create / Edit / Approve", "Recruitment Agent"],
@@ -7177,6 +7022,10 @@ function SettingsPage({
 
     ...(isChairman || permissions.includes("staff.positions.manage")
       ? [{ id: "positions" as const, label: "Positions" }]
+      : []),
+
+    ...(canManageWorkflows
+      ? [{ id: "workflows" as const, label: "Approval Workflows" }]
       : []),
 
     ...(isChairman ? [{ id: "attendance" as const, label: "Attendance" }] : []),
@@ -7479,6 +7328,9 @@ function SettingsPage({
         {settingsTab === "expense-categories" && <ExpenseCategoriesSettings />}
         {settingsTab === "expense-items" && <CompanyItemsSettings />}
         {settingsTab === "positions" && <PositionsSettings />}
+        {settingsTab === "workflows" && canManageWorkflows && (
+          <ApprovalWorkflowsSettings />
+        )}
         {settingsTab === "attendance" && isChairman && company?.id && (
           <AttendanceSettings
             companyId={company.id}

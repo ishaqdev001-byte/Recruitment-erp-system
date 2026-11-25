@@ -2,7 +2,12 @@ import { useEffect, useRef, useState, type FormEvent } from "react"
 
 import {
   ArrowRight,
+  Check,
+  Copy,
   Eye,
+  FileSpreadsheet,
+  FileText,
+  Loader2,
   MessageSquareText,
   Paperclip,
   Pencil,
@@ -90,6 +95,81 @@ type CaseHandlerOption = {
 
   displayName: string
 }
+
+type CandidateImportOutcome = {
+  rowNumber: number
+  candidateName: string
+  error?: string
+}
+
+const candidateImportHeaders = [
+  "First Name",
+  "Last Name",
+  "Other Names",
+  "Phone",
+  "Secondary Phone",
+  "Other Phone",
+  "Date of Birth",
+  "Gender",
+  "Marital Status",
+  "Religion",
+  "Nationality",
+  "Branch",
+  "Branch ID (optional)",
+  "Abroad Status",
+  "Abroad Experience",
+  "Candidate Source",
+  "Agent",
+  "Agent ID (optional)",
+  "Partner",
+  "Partner ID (optional)",
+  "Media Channels",
+  "NIN",
+  "Passport Number",
+  "Passport Issue Date",
+  "Passport Expiry Date",
+  "Passport Status",
+  "Passport Storage Branch",
+  "Passport Storage Location",
+  "Place of Birth",
+  "Physical Address",
+  "Residence Country",
+  "Residence State/Province",
+  "District/City",
+  "County",
+  "Sub-County",
+  "Parish",
+  "Father Name",
+  "Father Phone",
+  "Father Status",
+  "Mother Name",
+  "Mother Phone",
+  "Mother Status",
+  "Next of Kin First Name",
+  "Next of Kin Last Name",
+  "Next of Kin Phone",
+  "Next of Kin Relationship",
+  "Emergency Contact First Name",
+  "Emergency Contact Last Name",
+  "Emergency Contact Phone",
+  "Emergency Contact Relationship",
+  "Job(s) of Interest",
+  "Preferred Countries",
+  "Preferred Cities",
+  "Highest Qualification",
+  "Education Institution",
+  "Year Completed",
+  "Field of Study",
+  "Last Employer",
+  "Previous Job Title",
+  "Employment From",
+  "Employment To",
+  "Employment Duties",
+  "Key Skills",
+  "Languages Spoken",
+  "Certifications",
+  "Recruiter Notes",
+] as const
 
 type InquiryPerson = {
   user_id: string
@@ -223,7 +303,7 @@ function CandidateFilterInput({
     <div className="relative min-w-40 flex-1 sm:flex-none">
       <input
         type="search"
-        aria-label={`Filter candidates by ${label.toLocaleLowerCase()}`}
+        aria-label={`Filter by ${label.toLocaleLowerCase()}`}
         aria-autocomplete="list"
         aria-expanded={focused && query.length >= 3}
         placeholder={label}
@@ -298,6 +378,8 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
   const passportNumber = text("passportNumber")
 
   const storedPassportStatus = text("passportStatus")
+  const isPartnerSource =
+    text("source").trim().toLocaleLowerCase() === "partner"
 
   return {
     id: record.id,
@@ -340,7 +422,9 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
 
     referralPartnerName: text("referralPartnerName"),
 
-    agent: record.agent_name,
+    agent: isPartnerSource
+      ? text("referralPartnerName") || record.agent_name
+      : record.agent_name,
 
     agentUserId: record.agent_id ?? record.agent_user_id ?? undefined,
 
@@ -646,11 +730,27 @@ export default function CandidateRoster({
 
   companyName,
 
+  currentUserName,
+
+  companyDetails,
+
   onNavigate,
 }: {
   page: "inquiries" | "pipeline"
 
   companyName: string
+
+  currentUserName: string
+
+  companyDetails?: {
+    registrationNumber?: string
+    country?: string
+    city?: string
+    officeAddress?: string
+    phone?: string
+    email?: string
+    website?: string
+  }
 
   onNavigate: (view: "candidates" | "candidate-inquiries") => void
 }) {
@@ -697,11 +797,34 @@ export default function CandidateRoster({
   const [caseHandlerOptions, setCaseHandlerOptions] =
     useState<CaseHandlerOption[]>([])
 
+  const [candidateAgentOptions, setCandidateAgentOptions] = useState<
+    CandidateAgentOption[]
+  >([])
+
   const [caseHandlerError, setCaseHandlerError] = useState("")
+
+  const [copiedFileNumberId, setCopiedFileNumberId] = useState<string | null>(
+    null,
+  )
+
+  const [fileNumberCopyError, setFileNumberCopyError] = useState("")
 
   const [savingCaseHandlerId, setSavingCaseHandlerId] = useState<string | null>(
     null,
   )
+
+  const copyFileNumber = async (candidate: CandidateRecord) => {
+    try {
+      await navigator.clipboard.writeText(candidate.file_number)
+      setCopiedFileNumberId(candidate.id)
+      setFileNumberCopyError("")
+    } catch (error) {
+      console.error("Candidate file number copy failed", error)
+      setFileNumberCopyError(
+        "Unable to copy the file number. You can select and copy it manually.",
+      )
+    }
+  }
 
   const activePage = page
 
@@ -772,6 +895,22 @@ export default function CandidateRoster({
     createdBy: "",
   })
 
+  const [inquiryFilterInputs, setInquiryFilterInputs] = useState({
+    agent: "",
+    source: "",
+    country: "",
+    job: "",
+    handledBy: "",
+  })
+
+  const [inquiryFilterQueries, setInquiryFilterQueries] = useState({
+    agent: "",
+    source: "",
+    country: "",
+    job: "",
+    handledBy: "",
+  })
+
   const [filterResultsNotice, setFilterResultsNotice] = useState("")
 
   const filterNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -804,9 +943,38 @@ export default function CandidateRoster({
     return () => clearTimeout(timer)
   }, [filterInputs])
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setInquiryFilterQueries({
+        agent: inquiryFilterInputs.agent.trim(),
+        source: inquiryFilterInputs.source.trim(),
+        country: inquiryFilterInputs.country.trim(),
+        job: inquiryFilterInputs.job.trim(),
+        handledBy: inquiryFilterInputs.handledBy.trim(),
+      })
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [inquiryFilterInputs])
+
   const [loading, setLoading] = useState(true)
 
   const [error, setError] = useState("")
+
+  const [exportingCandidates, setExportingCandidates] =
+    useState<"excel" | "pdf" | null>(null)
+
+  const [exportError, setExportError] = useState("")
+
+  const importFileRef = useRef<HTMLInputElement>(null)
+
+  const [importingCandidates, setImportingCandidates] = useState(false)
+
+  const [candidateImportError, setCandidateImportError] = useState("")
+
+  const [candidateImportOutcomes, setCandidateImportOutcomes] = useState<
+    CandidateImportOutcome[]
+  >([])
 
   const [selectedIds, setSelectedIds] = useState<string[]>([])
 
@@ -933,6 +1101,8 @@ export default function CandidateRoster({
 
           permissions?: Record<string, boolean>
 
+          agentOptions?: CandidateAgentOption[]
+
           caseHandlerOptions?: CaseHandlerOption[]
 
           caseHandlersEnabled?: boolean
@@ -953,6 +1123,8 @@ export default function CandidateRoster({
           })
 
           setCaseHandlerOptions(payload.caseHandlerOptions ?? [])
+
+          setCandidateAgentOptions(payload.agentOptions ?? [])
 
           setCanViewFinance(Boolean(payload.permissions?.canViewFinance))
 
@@ -1103,6 +1275,25 @@ export default function CandidateRoster({
     return stage === "Project Submission" ? "Submitted to Project" : stage
   }
 
+  const candidateAgentName = (candidate: CandidateRecord) => {
+    const details = candidate.details ?? {}
+    const source =
+      typeof details.source === "string" ? details.source.trim() : ""
+    const partnerName =
+      typeof details.referralPartnerName === "string"
+        ? details.referralPartnerName.trim()
+        : ""
+
+    return source.toLocaleLowerCase() === "partner" && partnerName
+      ? partnerName
+      : candidate.agent_name
+  }
+
+  const candidatePassportNumber = (candidate: CandidateRecord) =>
+    typeof candidate.details?.passportNumber === "string"
+      ? candidate.details.passportNumber
+      : ""
+
   const candidateCreatorName = (candidate: CandidateRecord) =>
     candidate.created_by_name ||
     (candidate.created_by
@@ -1118,7 +1309,9 @@ export default function CandidateRoster({
       .map((label) => ({ value: label, label }))
 
   const agentOptions = filterOptions(
-    candidates.map((candidate) => candidate.agent_name || "Unassigned"),
+    candidates.map(
+      (candidate) => candidateAgentName(candidate) || "Unassigned",
+    ),
   )
 
   const projectOptions = filterOptions(
@@ -1143,9 +1336,14 @@ export default function CandidateRoster({
 
       candidate.file_number,
 
+      candidatePassportNumber(candidate),
+
       candidate.phone,
     ) &&
-    matchesSearch(filterQueries.agent, candidate.agent_name || "Unassigned") &&
+    matchesSearch(
+      filterQueries.agent,
+      candidateAgentName(candidate) || "Unassigned",
+    ) &&
     matchesSearch(
       filterQueries.project,
 
@@ -1158,23 +1356,1336 @@ export default function CandidateRoster({
     candidateMatchesFilters(candidate),
   )
 
-  const filteredInquiries = inquiries.filter((inquiry) =>
+  const companyExportDetails = [
+    companyName,
+    companyDetails?.registrationNumber
+      ? `Registration: ${companyDetails.registrationNumber}`
+      : "",
+    [companyDetails?.city, companyDetails?.country].filter(Boolean).join(", "),
+    companyDetails?.officeAddress,
+    companyDetails?.phone ? `Phone: ${companyDetails.phone}` : "",
+    companyDetails?.email ? `Email: ${companyDetails.email}` : "",
+    companyDetails?.website ? `Website: ${companyDetails.website}` : "",
+  ]
+    .filter(Boolean)
+    .join(" | ")
+
+  const pipelineFilterSummary =
+    [
+      search.trim() ? `Search: ${search.trim()}` : "",
+      filterQueries.agent ? `Agent: ${filterQueries.agent}` : "",
+      filterQueries.project ? `Project: ${filterQueries.project}` : "",
+      filterQueries.stage ? `Stage: ${filterQueries.stage}` : "",
+      filterQueries.createdBy ? `Created by: ${filterQueries.createdBy}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ") || "No filters"
+
+  const inquiryFilterSummary =
+    [
+      search.trim() ? `Search: ${search.trim()}` : "",
+      inquiryFilterQueries.agent ? `Agent: ${inquiryFilterQueries.agent}` : "",
+      inquiryFilterQueries.source
+        ? `Source: ${inquiryFilterQueries.source}`
+        : "",
+      inquiryFilterQueries.country
+        ? `Country: ${inquiryFilterQueries.country}`
+        : "",
+      inquiryFilterQueries.job ? `Job: ${inquiryFilterQueries.job}` : "",
+      inquiryFilterQueries.handledBy
+        ? `Handled by: ${inquiryFilterQueries.handledBy}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" | ") || "No filters"
+
+  const exportTimestamp = () => new Date().toLocaleString()
+
+  const exportPipeline = async (format: "excel" | "pdf") => {
+    setExportingCandidates(format)
+    setExportError("")
+
+    try {
+      const hasCaseHandlers = Boolean(permissions.caseHandlersEnabled)
+      const headers = [
+        "File No.",
+        "Candidate Name",
+        "Passport No",
+        "Agent",
+        "Mobile",
+        ...(hasCaseHandlers ? ["Case Handler"] : []),
+        "Passport",
+        "Project",
+        "Stage",
+        "Created by",
+        "Last edited by",
+      ]
+      const rows = filtered.map((candidate) => {
+        const passport =
+          typeof candidate.details?.passportStatus === "string" &&
+          candidate.details.passportStatus
+            ? candidate.details.passportStatus
+            : candidate.details?.passportNumber
+              ? "On file"
+              : "—"
+        const createdBy = [
+          candidateCreatorName(candidate),
+          candidate.created_at
+            ? new Date(candidate.created_at).toLocaleString()
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+        const updatedBy = [
+          candidate.updated_by_name ||
+            (candidate.updated_by
+              ? candidatePeople.get(candidate.updated_by) ||
+                "Former team member"
+              : "—"),
+          candidate.updated_at
+            ? new Date(candidate.updated_at).toLocaleString()
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+
+        return [
+          candidate.file_number || "—",
+          `${candidate.first_name} ${candidate.last_name}`.trim(),
+          candidatePassportNumber(candidate) || "—",
+          candidateAgentName(candidate) || "—",
+          candidate.phone || "—",
+          ...(hasCaseHandlers ? [candidate.case_handler_name || "—"] : []),
+          passport,
+          candidateProject(candidate),
+          candidateStage(candidate),
+          createdBy,
+          updatedBy,
+        ]
+      })
+      const fileDate = new Date().toISOString().slice(0, 10)
+      const exportedAt = exportTimestamp()
+      const exportActorName = currentUserName.trim() || "Workspace user"
+      const footerText = `Exported by: ${exportActorName} | Exported: ${exportedAt}`
+
+      if (format === "excel") {
+        const { default: ExcelJS } = await import("exceljs")
+        const workbook = new ExcelJS.Workbook()
+        workbook.creator = exportActorName
+        workbook.created = new Date()
+        const worksheet = workbook.addWorksheet("Pipeline")
+        worksheet.headerFooter.oddFooter = `&L${footerText.replace(/&/g, "&&")}&C${companyName.replace(/&/g, "&&")}&RPage &P of &N`
+
+        worksheet.addRow(["Candidate Pipeline"])
+        worksheet.addRow([companyExportDetails])
+        worksheet.addRow([`Filters: ${pipelineFilterSummary}`])
+        worksheet.addRow(headers)
+        worksheet.getRow(1).font = { bold: true, size: 16 }
+        worksheet.getRow(4).font = { bold: true }
+        worksheet.columns = headers.map((_, index) => ({
+          width: hasCaseHandlers
+            ? ([18, 26, 24, 22, 18, 22, 16, 24, 22, 28, 28][index] ?? 20)
+            : ([18, 26, 24, 22, 18, 16, 24, 22, 28, 28][index] ?? 20),
+        }))
+        worksheet.getRow(4).eachCell((cell) => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFE9EEF5" },
+          }
+        })
+        worksheet.autoFilter = {
+          from: { row: 4, column: 1 },
+          to: { row: 4, column: headers.length },
+        }
+        worksheet.views = [{ state: "frozen", ySplit: 4 }]
+        rows.forEach((row) => worksheet.addRow(row))
+        worksheet.addRow([])
+        worksheet.addRow([footerText])
+        worksheet.addRow([companyExportDetails])
+
+        const bytes = new Uint8Array(await workbook.xlsx.writeBuffer())
+        const blob = new Blob([bytes.buffer as ArrayBuffer], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement("a")
+        anchor.href = url
+        anchor.download = `candidate-pipeline-${fileDate}.xlsx`
+        anchor.click()
+        window.setTimeout(() => URL.revokeObjectURL(url), 0)
+        return
+      }
+
+      const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib")
+      const pdf = await PDFDocument.create()
+      pdf.setTitle("Candidate pipeline")
+      pdf.setAuthor(exportActorName)
+      const regular = await pdf.embedFont(StandardFonts.Helvetica)
+      const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
+      const pdfSafeText = (value: string) =>
+        value.replace(/\s+/g, " ").replace(/[^\x20-\x7e]/g, "?")
+      const wrapPdfText = (value: string, maxWidth: number, size: number) => {
+        const lines: string[] = []
+        let line = ""
+        for (const word of pdfSafeText(value).split(" ")) {
+          const nextLine = line ? `${line} ${word}` : word
+          if (line && regular.widthOfTextAtSize(nextLine, size) > maxWidth) {
+            lines.push(line)
+            line = word
+          } else {
+            line = nextLine
+          }
+        }
+        if (line) lines.push(line)
+        return lines
+      }
+      const widths = hasCaseHandlers
+        ? [58, 72, 62, 70, 55, 62, 48, 70, 60, 74, 78]
+        : [62, 82, 66, 72, 58, 54, 82, 70, 88, 92]
+      const columns = headers.map((title, index) => ({
+        title,
+        x: 24 + widths.slice(0, index).reduce((sum, width) => sum + width, 0),
+        width: widths[index],
+      }))
+      const pageWidth = 842
+      const pageHeight = 595
+      const companyLines = wrapPdfText(companyExportDetails, 790, 7)
+      const filterLines = wrapPdfText(
+        `Filters: ${pipelineFilterSummary}`,
+        790,
+        7,
+      )
+      const companyStartY = 540
+      const filterStartY = companyStartY - companyLines.length * 9 - 5
+      const headerY = filterStartY - filterLines.length * 9 - 12
+      const firstRowY = headerY - 20
+      const rowsPerPage = Math.max(1, Math.floor((firstRowY - 52) / 20))
+      const pageCount = Math.max(1, Math.ceil(rows.length / rowsPerPage))
+      const footerCompanyLines = wrapPdfText(companyExportDetails, 790, 6)
+
+      for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+        const page = pdf.addPage([pageWidth, pageHeight])
+        page.drawText("Candidate Pipeline", {
+          x: 24,
+          y: 558,
+          size: 16,
+          font: bold,
+          color: rgb(0.12, 0.16, 0.19),
+        })
+        companyLines.forEach((line, lineIndex) => {
+          page.drawText(line, {
+            x: 24,
+            y: companyStartY - lineIndex * 9,
+            size: 7,
+            font: regular,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+        filterLines.forEach((line, lineIndex) => {
+          page.drawText(line, {
+            x: 24,
+            y: filterStartY - lineIndex * 9,
+            size: 7,
+            font: regular,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+        page.drawLine({
+          start: { x: 24, y: headerY - 12 },
+          end: { x: 818, y: headerY - 12 },
+          thickness: 0.8,
+          color: rgb(0.82, 0.85, 0.87),
+        })
+
+        columns.forEach((column) => {
+          page.drawText(column.title.toLocaleUpperCase(), {
+            x: column.x + 2,
+            y: headerY,
+            size: 6,
+            font: bold,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+
+        rows
+          .slice(pageIndex * rowsPerPage, (pageIndex + 1) * rowsPerPage)
+          .forEach((row, rowIndex) => {
+            const y = firstRowY - rowIndex * 20
+            row.forEach((value, columnIndex) => {
+              const column = columns[columnIndex]
+              let text = pdfSafeText(String(value))
+
+              while (
+                text.length > 3 &&
+                regular.widthOfTextAtSize(text, 6) > column.width - 4
+              ) {
+                text = `${text.slice(0, -4)}...`
+              }
+
+              page.drawText(text, {
+                x: column.x + 2,
+                y,
+                size: 6,
+                font: regular,
+                color: rgb(0.12, 0.16, 0.19),
+              })
+            })
+            page.drawLine({
+              start: { x: 24, y: y - 6 },
+              end: { x: 818, y: y - 6 },
+              thickness: 0.35,
+              color: rgb(0.9, 0.91, 0.92),
+            })
+          })
+
+        page.drawLine({
+          start: { x: 24, y: 42 },
+          end: { x: 818, y: 42 },
+          thickness: 0.6,
+          color: rgb(0.82, 0.85, 0.87),
+        })
+        page.drawText(pdfSafeText(footerText), {
+          x: 24,
+          y: 30,
+          size: 6,
+          font: regular,
+          color: rgb(0.38, 0.43, 0.47),
+        })
+        footerCompanyLines.slice(0, 3).forEach((line, lineIndex) => {
+          page.drawText(line, {
+            x: 24,
+            y: 20 - lineIndex * 6,
+            size: 5.5,
+            font: regular,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+        page.drawText(`Page ${pageIndex + 1} of ${pageCount}`, {
+          x: 752,
+          y: 558,
+          size: 8,
+          font: regular,
+          color: rgb(0.38, 0.43, 0.47),
+        })
+      }
+
+      const bytes = new Uint8Array(await pdf.save())
+      const blob = new Blob([bytes.buffer as ArrayBuffer], {
+        type: "application/pdf",
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = `candidate-pipeline-${fileDate}.pdf`
+      anchor.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    } catch (exportError) {
+      console.error("Candidate pipeline export failed", exportError)
+      setExportError(
+        exportError instanceof Error
+          ? exportError.message
+          : "Unable to export the current candidate view.",
+      )
+    } finally {
+      setExportingCandidates(null)
+    }
+  }
+
+  const inquiryMatchesFilters = (inquiry: InquiryRecord, query = search) =>
     matchesSearch(
-      search,
-
+      query,
+      inquiry.inquiry_number,
       inquiry.first_name,
-
       inquiry.last_name,
-
       inquiry.phone,
-
       inquiry.agent_name,
-
       inquiry.job_of_interest.join(" "),
-
       inquiry.desired_countries.join(" "),
-    ),
+    ) &&
+    matchesSearch(
+      inquiryFilterQueries.agent,
+      inquiry.agent_name || "Unassigned",
+    ) &&
+    matchesSearch(
+      inquiryFilterQueries.source,
+      inquirySourceLabel(inquiry.discovery_source),
+    ) &&
+    matchesSearch(
+      inquiryFilterQueries.country,
+      inquiry.desired_countries.join(" "),
+    ) &&
+    matchesSearch(
+      inquiryFilterQueries.job,
+      inquiry.job_of_interest.join(" "),
+    ) &&
+    matchesSearch(inquiryFilterQueries.handledBy, inquiry.handled_by_name)
+
+  const filteredInquiries = inquiries.filter((inquiry) =>
+    inquiryMatchesFilters(inquiry),
   )
+
+  const inquiryFilterOptions = {
+    agent: [
+      ...new Set(
+        inquiries.map((inquiry) => inquiry.agent_name).filter(Boolean),
+      ),
+    ],
+    source: [
+      ...new Set(
+        inquiries.map((inquiry) =>
+          inquirySourceLabel(inquiry.discovery_source),
+        ),
+      ),
+    ],
+    country: [
+      ...new Set(inquiries.flatMap((inquiry) => inquiry.desired_countries)),
+    ],
+    job: [...new Set(inquiries.flatMap((inquiry) => inquiry.job_of_interest))],
+    handledBy: [
+      ...new Set(
+        inquiries.map((inquiry) => inquiry.handled_by_name).filter(Boolean),
+      ),
+    ],
+  }
+
+  const toFilterOptions = (values: string[]): CandidateFilterOption[] =>
+    values
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right))
+      .map((value) => ({ value, label: value }))
+
+  const exportInquiries = async (format: "excel" | "pdf") => {
+    setExportingCandidates(format)
+    setExportError("")
+
+    try {
+      const headers = [
+        "Inq No.",
+        "Candidate",
+        "Phone",
+        "Source",
+        "Agent",
+        "Countries",
+        "Job of interest",
+        "Experience",
+        "Contact",
+        "Handled by",
+        "Inquiry date",
+      ]
+      const rows = filteredInquiries.map((inquiry) => [
+        inquiry.inquiry_number || "—",
+        `${inquiry.first_name} ${inquiry.last_name}`.trim(),
+        inquiry.phone || "—",
+        inquirySourceLabel(inquiry.discovery_source),
+        inquiry.agent_name || "—",
+        inquiry.desired_countries.join(", ") || "—",
+        inquiry.job_of_interest.join(", ") || "—",
+        inquiry.has_experience ? inquiry.experience_description || "Yes" : "No",
+        inquiry.communication_method,
+        inquiry.handled_by_name || "—",
+        inquiry.created_at
+          ? new Date(inquiry.created_at).toLocaleString()
+          : "—",
+      ])
+      const fileDate = new Date().toISOString().slice(0, 10)
+      const exportedAt = exportTimestamp()
+      const exportActorName = currentUserName.trim() || "Workspace user"
+      const footerText = `Exported by: ${exportActorName} | Exported: ${exportedAt}`
+
+      if (format === "excel") {
+        const { default: ExcelJS } = await import("exceljs")
+        const workbook = new ExcelJS.Workbook()
+        workbook.creator = exportActorName
+        workbook.created = new Date()
+        const worksheet = workbook.addWorksheet("Inquiries")
+        worksheet.headerFooter.oddFooter = `&L${footerText.replace(/&/g, "&&")}&C${companyName.replace(/&/g, "&&")}&RPage &P of &N`
+        worksheet.addRow(["Candidate Inquiries"])
+        worksheet.addRow([companyExportDetails])
+        worksheet.addRow([`Filters: ${inquiryFilterSummary}`])
+        worksheet.addRow(headers)
+        worksheet.getRow(1).font = { bold: true, size: 16 }
+        worksheet.getRow(4).font = { bold: true }
+        worksheet.columns = [16, 24, 20, 20, 22, 30, 30, 18, 18, 24, 24].map(
+          (width) => ({ width }),
+        )
+        worksheet.getRow(4).eachCell((cell) => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFE9EEF5" },
+          }
+        })
+        worksheet.autoFilter = {
+          from: { row: 4, column: 1 },
+          to: { row: 4, column: headers.length },
+        }
+        worksheet.views = [{ state: "frozen", ySplit: 4 }]
+        rows.forEach((row) => worksheet.addRow(row))
+        worksheet.addRow([])
+        worksheet.addRow([footerText])
+        worksheet.addRow([companyExportDetails])
+
+        const bytes = new Uint8Array(await workbook.xlsx.writeBuffer())
+        const blob = new Blob([bytes.buffer as ArrayBuffer], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement("a")
+        anchor.href = url
+        anchor.download = `candidate-inquiries-${fileDate}.xlsx`
+        anchor.click()
+        window.setTimeout(() => URL.revokeObjectURL(url), 0)
+        return
+      }
+
+      const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib")
+      const pdf = await PDFDocument.create()
+      pdf.setTitle("Candidate Inquiries")
+      pdf.setAuthor(exportActorName)
+      const regular = await pdf.embedFont(StandardFonts.Helvetica)
+      const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
+      const pdfSafeText = (value: string) =>
+        value.replace(/\s+/g, " ").replace(/[^\x20-\x7e]/g, "?")
+      const wrapPdfText = (value: string, maxWidth: number, size: number) => {
+        const lines: string[] = []
+        let line = ""
+        for (const word of pdfSafeText(value).split(" ")) {
+          const nextLine = line ? `${line} ${word}` : word
+          if (line && regular.widthOfTextAtSize(nextLine, size) > maxWidth) {
+            lines.push(line)
+            line = word
+          } else {
+            line = nextLine
+          }
+        }
+        if (line) lines.push(line)
+        return lines
+      }
+      const widths = [54, 78, 58, 66, 68, 95, 95, 52, 58, 78, 84]
+      const columns = headers.map((title, index) => ({
+        title,
+        x: 24 + widths.slice(0, index).reduce((sum, width) => sum + width, 0),
+        width: widths[index],
+      }))
+      const companyLines = wrapPdfText(companyExportDetails, 790, 7)
+      const filterLines = wrapPdfText(
+        `Filters: ${inquiryFilterSummary}`,
+        790,
+        7,
+      )
+      const companyStartY = 540
+      const filterStartY = companyStartY - companyLines.length * 9 - 5
+      const headerY = filterStartY - filterLines.length * 9 - 12
+      const firstRowY = headerY - 20
+      const rowsPerPage = Math.max(1, Math.floor((firstRowY - 52) / 18))
+      const pageCount = Math.max(1, Math.ceil(rows.length / rowsPerPage))
+      const footerCompanyLines = wrapPdfText(companyExportDetails, 790, 6)
+
+      for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+        const page = pdf.addPage([842, 595])
+        page.drawText("Candidate Inquiries", {
+          x: 24,
+          y: 558,
+          size: 16,
+          font: bold,
+          color: rgb(0.12, 0.16, 0.19),
+        })
+        companyLines.forEach((line, lineIndex) => {
+          page.drawText(line, {
+            x: 24,
+            y: companyStartY - lineIndex * 9,
+            size: 7,
+            font: regular,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+        filterLines.forEach((line, lineIndex) => {
+          page.drawText(line, {
+            x: 24,
+            y: filterStartY - lineIndex * 9,
+            size: 7,
+            font: regular,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+        page.drawLine({
+          start: { x: 24, y: headerY - 12 },
+          end: { x: 818, y: headerY - 12 },
+          thickness: 0.8,
+          color: rgb(0.82, 0.85, 0.87),
+        })
+        columns.forEach((column) => {
+          page.drawText(column.title.toLocaleUpperCase(), {
+            x: column.x + 2,
+            y: headerY,
+            size: 6,
+            font: bold,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+        rows
+          .slice(pageIndex * rowsPerPage, (pageIndex + 1) * rowsPerPage)
+          .forEach((row, rowIndex) => {
+            const y = firstRowY - rowIndex * 18
+            row.forEach((value, columnIndex) => {
+              const column = columns[columnIndex]
+              let text = pdfSafeText(String(value))
+              while (
+                text.length > 3 &&
+                regular.widthOfTextAtSize(text, 6) > column.width - 4
+              ) {
+                text = `${text.slice(0, -4)}...`
+              }
+              page.drawText(text, {
+                x: column.x + 2,
+                y,
+                size: 6,
+                font: regular,
+                color: rgb(0.12, 0.16, 0.19),
+              })
+            })
+            page.drawLine({
+              start: { x: 24, y: y - 5 },
+              end: { x: 818, y: y - 5 },
+              thickness: 0.35,
+              color: rgb(0.9, 0.91, 0.92),
+            })
+          })
+        page.drawLine({
+          start: { x: 24, y: 42 },
+          end: { x: 818, y: 42 },
+          thickness: 0.6,
+          color: rgb(0.82, 0.85, 0.87),
+        })
+        page.drawText(pdfSafeText(footerText), {
+          x: 24,
+          y: 30,
+          size: 6,
+          font: regular,
+          color: rgb(0.38, 0.43, 0.47),
+        })
+        footerCompanyLines.slice(0, 3).forEach((line, lineIndex) => {
+          page.drawText(line, {
+            x: 24,
+            y: 20 - lineIndex * 6,
+            size: 5.5,
+            font: regular,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+        page.drawText(`Page ${pageIndex + 1} of ${pageCount}`, {
+          x: 752,
+          y: 558,
+          size: 8,
+          font: regular,
+          color: rgb(0.38, 0.43, 0.47),
+        })
+      }
+
+      const bytes = new Uint8Array(await pdf.save())
+      const blob = new Blob([bytes.buffer as ArrayBuffer], {
+        type: "application/pdf",
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = `candidate-inquiries-${fileDate}.pdf`
+      anchor.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    } catch (exportError) {
+      console.error("Candidate inquiry export failed", exportError)
+      setExportError(
+        exportError instanceof Error
+          ? exportError.message
+          : "Unable to export the current inquiry view.",
+      )
+    } finally {
+      setExportingCandidates(null)
+    }
+  }
+
+  const downloadCandidateImportTemplate = async () => {
+    setCandidateImportError("")
+
+    try {
+      const [branchResponse, sourceResponse, partnerResponse] =
+        await Promise.all([
+          fetch("/api/branches?purpose=candidate-registration", {
+            cache: "no-store",
+          }),
+          fetch("/api/candidates/sources", { cache: "no-store" }),
+          fetch("/api/candidates/referral-options", { cache: "no-store" }),
+        ])
+
+      const branchPayload = (await branchResponse.json()) as {
+        branches?: { id: string; name: string }[]
+        error?: string
+      }
+      const sourcePayload = (await sourceResponse.json()) as {
+        sources?: { id: string; source: string }[]
+        error?: string
+      }
+      const partnerPayload = (await partnerResponse.json()) as {
+        partners?: { id: string; name: string }[]
+        error?: string
+      }
+
+      if (!branchResponse.ok)
+        throw new Error(
+          branchPayload.error ?? "Unable to load candidate branches.",
+        )
+      if (!sourceResponse.ok)
+        throw new Error(
+          sourcePayload.error ?? "Unable to load candidate sources.",
+        )
+      if (!partnerResponse.ok)
+        throw new Error(
+          partnerPayload.error ?? "Unable to load referral partners.",
+        )
+
+      const { default: ExcelJS } = await import("exceljs")
+      const workbook = new ExcelJS.Workbook()
+      workbook.creator = currentUserName.trim() || "Workspace user"
+
+      const candidateSheet = workbook.addWorksheet("Candidates")
+      candidateSheet.columns = candidateImportHeaders.map((header) => ({
+        width: Math.min(Math.max(header.length + 3, 18), 32),
+      }))
+      candidateSheet.addRow([...candidateImportHeaders])
+      candidateSheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } }
+      candidateSheet.getRow(1).fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF334155" },
+      }
+      candidateSheet.views = [{ state: "frozen", ySplit: 1 }]
+      candidateSheet.autoFilter = {
+        from: { row: 1, column: 1 },
+        to: { row: 1, column: candidateImportHeaders.length },
+      }
+      for (const header of [
+        "Date of Birth",
+        "Passport Issue Date",
+        "Passport Expiry Date",
+        "Employment From",
+        "Employment To",
+      ]) {
+        const index = candidateImportHeaders.indexOf(
+          header as (typeof candidateImportHeaders)[number],
+        )
+        if (index >= 0) candidateSheet.getColumn(index + 1).numFmt = "yyyy-mm-dd"
+      }
+
+      const optionSheet = workbook.addWorksheet("Options")
+      optionSheet.addRow([
+        "Branch",
+        "Branch ID",
+        "Candidate Source",
+        "Agent",
+        "Agent ID",
+        "Partner",
+        "Partner ID",
+      ])
+      const optionCount = Math.max(
+        branchPayload.branches?.length ?? 0,
+        sourcePayload.sources?.length ?? 0,
+        candidateAgentOptions.length,
+        partnerPayload.partners?.length ?? 0,
+      )
+      for (let index = 0; index < optionCount; index += 1) {
+        optionSheet.addRow([
+          branchPayload.branches?.[index]?.name ?? "",
+          branchPayload.branches?.[index]?.id ?? "",
+          sourcePayload.sources?.[index]?.source ?? "",
+          candidateAgentOptions[index]?.displayName ?? "",
+          candidateAgentOptions[index]?.userId ?? "",
+          partnerPayload.partners?.[index]?.name ?? "",
+          partnerPayload.partners?.[index]?.id ?? "",
+        ])
+      }
+      optionSheet.getRow(1).font = { bold: true }
+      optionSheet.columns = [
+        { width: 28 },
+        { width: 38 },
+        { width: 30 },
+        { width: 30 },
+        { width: 38 },
+        { width: 30 },
+        { width: 38 },
+      ]
+
+      const instructionsSheet = workbook.addWorksheet("Instructions")
+      const instructions = [
+        ["Candidate Excel Import"],
+        [
+          "Enter one candidate per row in the Candidates sheet. Keep the header row unchanged.",
+        ],
+        [
+          "Use the exact Branch, Candidate Source, Agent, and Partner values listed on the Options sheet.",
+        ],
+        [
+          "Use the optional IDs when names are duplicated; an ID must match the name on the same row.",
+        ],
+        [
+          "Use YYYY-MM-DD for dates. Separate multiple jobs, countries, cities, and media channels with semicolons.",
+        ],
+        [
+          "Passport Status must be Available or With Agent. Available passports require a storage location; the storage branch must match the candidate branch.",
+        ],
+        [
+          "For Partner source, fill Partner (not Agent). Other sources may use Agent. Recruitment Agent source requires an active agent.",
+        ],
+        [
+          "First name, last name, phone, nationality, branch, passport number and status, next-of-kin details, and at least one job are required.",
+        ],
+        [
+          "Staff registrations also require gender, religion, abroad status, abroad experience, candidate source, and an agent or partner as applicable.",
+        ],
+        [
+          "File No. is generated by the system. Case Handler is not imported; a user with assignment permission can assign it from Pipeline after import.",
+        ],
+      ]
+      instructions.forEach((row) => instructionsSheet.addRow(row))
+      instructionsSheet.getColumn(1).width = 125
+      instructionsSheet.getRow(1).font = { bold: true, size: 16 }
+      instructionsSheet.eachRow((row) => {
+        row.height = 30
+        row.alignment = { vertical: "middle", wrapText: true }
+      })
+
+      const bytes = new Uint8Array(await workbook.xlsx.writeBuffer())
+      const blob = new Blob([bytes.buffer as ArrayBuffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = "candidate-registration-template.xlsx"
+      anchor.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    } catch (error) {
+      console.error("Candidate import template generation failed", error)
+      setCandidateImportError(
+        error instanceof Error
+          ? error.message
+          : "Unable to download the candidate import template.",
+      )
+    }
+  }
+
+  const importCandidateWorkbook = async (file: File) => {
+    setCandidateImportError("")
+    setCandidateImportOutcomes([])
+    setImportingCandidates(true)
+
+    try {
+      if (!file.name.toLocaleLowerCase().endsWith(".xlsx"))
+        throw new Error("Choose an Excel .xlsx workbook.")
+
+      const { default: ExcelJS } = await import("exceljs")
+      const workbook = new ExcelJS.Workbook()
+      await workbook.xlsx.load(await file.arrayBuffer())
+      const worksheet =
+        workbook.getWorksheet("Candidates") ?? workbook.worksheets[0]
+      if (!worksheet)
+        throw new Error("The workbook does not contain a Candidates sheet.")
+
+      const normalizeHeader = (value: string) =>
+        value.trim().toLocaleLowerCase().replace(/[^a-z0-9]/g, "")
+      let headerRowNumber = 0
+      worksheet.eachRow((row, rowNumber) => {
+        const values = new Set<string>()
+        row.eachCell((cell) => values.add(normalizeHeader(cell.text)))
+        if (
+          !headerRowNumber &&
+          values.has(normalizeHeader("First Name")) &&
+          values.has(normalizeHeader("Last Name"))
+        )
+          headerRowNumber = rowNumber
+      })
+      if (!headerRowNumber)
+        throw new Error(
+          "Could not find the First Name and Last Name header row. Use the downloaded template.",
+        )
+
+      const headerMap = new Map<string, number>()
+      const headerNames = new Set<string>()
+      worksheet.getRow(headerRowNumber).eachCell((cell, columnNumber) => {
+        const key = normalizeHeader(cell.text)
+        if (!key) return
+        if (headerNames.has(key))
+          throw new Error(`The workbook contains a duplicate "${cell.text}" column.`)
+        headerNames.add(key)
+        headerMap.set(key, columnNumber)
+      })
+
+      const requiredHeaders = [
+        "First Name",
+        "Last Name",
+        "Phone",
+        "Nationality",
+        "Branch",
+        "Passport Number",
+        "Passport Status",
+        "Next of Kin First Name",
+        "Next of Kin Last Name",
+        "Next of Kin Phone",
+        "Next of Kin Relationship",
+        "Job(s) of Interest",
+      ]
+      const missingHeaders = requiredHeaders.filter(
+        (header) => !headerMap.has(normalizeHeader(header)),
+      )
+      if (missingHeaders.length)
+        throw new Error(
+          `The workbook is missing required columns: ${missingHeaders.join(", ")}.`,
+        )
+
+      const [branchResponse, sourceResponse, partnerResponse] =
+        await Promise.all([
+          fetch("/api/branches?purpose=candidate-registration", {
+            cache: "no-store",
+          }),
+          fetch("/api/candidates/sources", { cache: "no-store" }),
+          fetch("/api/candidates/referral-options", { cache: "no-store" }),
+        ])
+      const branchPayload = (await branchResponse.json()) as {
+        branches?: { id: string; name: string }[]
+        error?: string
+      }
+      const sourcePayload = (await sourceResponse.json()) as {
+        sources?: { id: string; source: string }[]
+        error?: string
+      }
+      const partnerPayload = (await partnerResponse.json()) as {
+        partners?: { id: string; name: string }[]
+        error?: string
+      }
+      if (!branchResponse.ok)
+        throw new Error(
+          branchPayload.error ?? "Unable to load candidate branches.",
+        )
+      if (!sourceResponse.ok)
+        throw new Error(
+          sourcePayload.error ?? "Unable to load candidate sources.",
+        )
+      if (!partnerResponse.ok)
+        throw new Error(
+          partnerPayload.error ?? "Unable to load referral partners.",
+        )
+
+      const branches = branchPayload.branches ?? []
+      const sources = sourcePayload.sources ?? []
+      const partners = partnerPayload.partners ?? []
+      const agents = candidateAgentOptions.map((agent) => ({
+        id: agent.userId,
+        name: agent.displayName,
+      }))
+      const normalizeName = (value: string) =>
+        value.trim().replace(/\s+/g, " ").toLocaleLowerCase()
+
+      const findOption = (
+        options: { id: string; name: string }[],
+        name: string,
+        id: string,
+        label: string,
+      ) => {
+        if (id) {
+          const option = options.find((item) => item.id === id)
+          if (!option)
+            throw new Error(`${label} ID is not active in this company.`)
+          if (name && normalizeName(name) !== normalizeName(option.name))
+            throw new Error(`${label} name does not match the selected ID.`)
+          return option
+        }
+        if (!name) return null
+        const matchingOptions = options.filter(
+          (item) => normalizeName(item.name) === normalizeName(name),
+        )
+        if (matchingOptions.length > 1)
+          throw new Error(
+            `${label} name is duplicated. Enter its ID from the Options sheet.`,
+          )
+        if (!matchingOptions.length)
+          throw new Error(`${label} "${name}" is not active in this company.`)
+        return matchingOptions[0]
+      }
+
+      const getCell = (
+        row: ReturnType<typeof worksheet.getRow>,
+        header: string,
+      ) => {
+        const columnNumber = headerMap.get(normalizeHeader(header))
+        return columnNumber ? row.getCell(columnNumber) : null
+      }
+      const cellText = (
+        row: Parameters<typeof getCell>[0],
+        header: string,
+      ) => getCell(row, header)?.text.trim() ?? ""
+      const parseDate = (
+        row: Parameters<typeof getCell>[0],
+        header: string,
+      ) => {
+        const cell = getCell(row, header)
+        if (!cell || cell.value === null || cell.value === undefined) return ""
+        let value: Date | null = null
+        if (cell.value instanceof Date) {
+          value = cell.value
+        } else if (typeof cell.value === "number") {
+          const epoch = workbook.properties.date1904
+            ? Date.UTC(1904, 0, 1)
+            : Date.UTC(1899, 11, 30)
+          value = new Date(epoch + cell.value * 24 * 60 * 60 * 1000)
+        } else {
+          const text = cell.text.trim()
+          if (!text) return ""
+          const parsed = new Date(text)
+          if (!Number.isNaN(parsed.getTime())) value = parsed
+        }
+        if (!value || Number.isNaN(value.getTime()))
+          throw new Error(`${header} must be a valid date (YYYY-MM-DD).`)
+        return [
+          value.getUTCFullYear().toString().padStart(4, "0"),
+          (value.getUTCMonth() + 1).toString().padStart(2, "0"),
+          value.getUTCDate().toString().padStart(2, "0"),
+        ].join("-")
+      }
+      const splitList = (value: string) =>
+        value
+          .split(";")
+          .map((item) => item.trim())
+          .filter(Boolean)
+
+      const outcomes: CandidateImportOutcome[] = []
+      let rowsWithData = 0
+      for (
+        let rowNumber = headerRowNumber + 1;
+        rowNumber <= worksheet.rowCount;
+        rowNumber += 1
+      ) {
+        const row = worksheet.getRow(rowNumber)
+        const values = candidateImportHeaders.map((header) =>
+          cellText(row, header),
+        )
+        if (values.every((value) => !value)) continue
+        rowsWithData += 1
+        const firstName = cellText(row, "First Name")
+        const lastName = cellText(row, "Last Name")
+        const candidateName = `${firstName} ${lastName}`.trim() || "Unnamed candidate"
+
+        try {
+          const value = (header: string) => cellText(row, header)
+          const requiredValues: [string, string][] = [
+            ["First Name", firstName],
+            ["Last Name", lastName],
+            ["Phone", value("Phone")],
+            ["Nationality", value("Nationality")],
+            ["Branch", value("Branch")],
+            ["Passport Number", value("Passport Number")],
+            ["Passport Status", value("Passport Status")],
+            ["Next of Kin First Name", value("Next of Kin First Name")],
+            ["Next of Kin Last Name", value("Next of Kin Last Name")],
+            ["Next of Kin Phone", value("Next of Kin Phone")],
+            [
+              "Next of Kin Relationship",
+              value("Next of Kin Relationship"),
+            ],
+            ["Job(s) of Interest", value("Job(s) of Interest")],
+          ]
+          const missingValue = requiredValues.find(([, fieldValue]) => !fieldValue)
+          if (missingValue)
+            throw new Error(`${missingValue[0]} is required.`)
+
+          if (!permissions.isAgent) {
+            const staffRequiredValues: [string, string][] = [
+              ["Gender", value("Gender")],
+              ["Religion", value("Religion")],
+              ["Abroad Status", value("Abroad Status")],
+              ["Abroad Experience", value("Abroad Experience")],
+              ["Candidate Source", value("Candidate Source")],
+            ]
+            const missingStaffValue = staffRequiredValues.find(
+              ([, fieldValue]) => !fieldValue,
+            )
+            if (missingStaffValue)
+              throw new Error(`${missingStaffValue[0]} is required.`)
+          }
+
+          const branch = findOption(
+            branches,
+            value("Branch"),
+            value("Branch ID (optional)"),
+            "Branch",
+          )
+          if (!branch) throw new Error("Select an active company branch.")
+
+          const sourceValue = value("Candidate Source")
+          const source = sourceValue
+            ? sources.find(
+                (item) =>
+                  normalizeName(item.source) === normalizeName(sourceValue),
+              )
+            : undefined
+          if (sourceValue && !source)
+            throw new Error(
+              `Candidate source "${sourceValue}" is not configured for this company.`,
+            )
+
+          const sourceName = source?.source ?? ""
+          const isPartnerSource =
+            sourceName.trim().toLocaleLowerCase() === "partner"
+          const agent = isPartnerSource
+            ? null
+            : findOption(
+                agents,
+                value("Agent"),
+                value("Agent ID (optional)"),
+                "Agent",
+              )
+          const partner = findOption(
+            partners,
+            value("Partner"),
+            value("Partner ID (optional)"),
+            "Partner",
+          )
+          if (isPartnerSource && !partner)
+            throw new Error("Partner source requires a registered Partner.")
+          if (!isPartnerSource && partner)
+            throw new Error("Partner must only be filled for Partner source.")
+          if (!isPartnerSource && !permissions.isAgent && !agent)
+            throw new Error("Select an active Agent.")
+          if (
+            sourceName.trim().toLocaleLowerCase() === "recruitment agent" &&
+            !agent &&
+            !permissions.isAgent
+          )
+            throw new Error(
+              "Recruitment Agent source requires an active Agent.",
+            )
+
+          const passportStatusInput = value("Passport Status")
+          const passportStatus =
+            passportStatusInput.toLocaleLowerCase() === "available"
+              ? "Available"
+              : passportStatusInput.toLocaleLowerCase() === "with agent"
+                ? "With Agent"
+                : ""
+          if (!passportStatus)
+            throw new Error(
+              'Passport Status must be "Available" or "With Agent".',
+            )
+          const passportStorageBranch =
+            value("Passport Storage Branch") || branch.name
+          if (
+            passportStatus === "Available" &&
+            normalizeName(passportStorageBranch) !== normalizeName(branch.name)
+          )
+            throw new Error(
+              "Passport Storage Branch must match the candidate Branch.",
+            )
+          if (
+            passportStatus === "Available" &&
+            !value("Passport Storage Location")
+          )
+            throw new Error(
+              "Passport Storage Location is required for an available passport.",
+            )
+          if (
+            passportStatus === "With Agent" &&
+            !agent &&
+            !partner &&
+            !permissions.isAgent
+          )
+            throw new Error(
+              "With Agent passport status requires an assigned Agent or Partner.",
+            )
+
+          const gender = value("Gender")
+          if (
+            gender &&
+            !["male", "female"].includes(gender.toLocaleLowerCase())
+          )
+            throw new Error('Gender must be "Male" or "Female".')
+          const religion = value("Religion")
+          if (
+            religion &&
+            !["christian", "muslim", "hindu", "other"].includes(
+              religion.toLocaleLowerCase(),
+            )
+          )
+            throw new Error(
+              "Religion must be Christian, Muslim, Hindu, or Other.",
+            )
+          const abroadStatus = value("Abroad Status")
+          if (
+            abroadStatus &&
+            !["yes", "no"].includes(abroadStatus.toLocaleLowerCase())
+          )
+            throw new Error('Abroad Status must be "Yes" or "No".')
+          const abroadExperience = value("Abroad Experience")
+          const allowedAbroadExperience = [
+            "none",
+            "certificate",
+            "1 year",
+            "2 years",
+            "3 years",
+            "5+ years",
+          ]
+          if (
+            abroadExperience &&
+            !allowedAbroadExperience.includes(
+              abroadExperience.toLocaleLowerCase(),
+            )
+          )
+            throw new Error(
+              "Abroad Experience must be None, Certificate, 1 Year, 2 Years, 3 Years, or 5+ Years.",
+            )
+
+          const jobOfInterest = splitList(value("Job(s) of Interest"))
+          if (!jobOfInterest.length)
+            throw new Error("Enter at least one Job of Interest.")
+          const details = {
+            otherNames: value("Other Names"),
+            secondaryPhone: value("Secondary Phone"),
+            otherPhone: value("Other Phone"),
+            gender,
+            maritalStatus: value("Marital Status"),
+            abroadStatus,
+            abroadExperience,
+            source: sourceName,
+            mediaChannel: splitList(value("Media Channels")),
+            nationality: value("Nationality"),
+            referralPartnerId: partner?.id ?? "",
+            referralPartnerName: partner?.name ?? "",
+            nin: value("NIN"),
+            passportNumber: value("Passport Number"),
+            passportIssue: parseDate(row, "Passport Issue Date"),
+            passportExpiry: parseDate(row, "Passport Expiry Date"),
+            passportStatus,
+            passportBranch: passportStorageBranch,
+            passportStorageLocation: value("Passport Storage Location"),
+            physicalAddress: value("Physical Address"),
+            residenceCountry: value("Residence Country"),
+            residenceState: value("Residence State/Province"),
+            district: value("District/City"),
+            county: value("County"),
+            subCounty: value("Sub-County"),
+            parish: value("Parish"),
+            fatherPhone: value("Father Phone"),
+            fatherStatus: value("Father Status"),
+            motherPhone: value("Mother Phone"),
+            motherStatus: value("Mother Status"),
+            kinFirstName: value("Next of Kin First Name"),
+            kinLastName: value("Next of Kin Last Name"),
+            kinPhone: value("Next of Kin Phone"),
+            kinRelationship: value("Next of Kin Relationship"),
+            emergencyFirstName: value("Emergency Contact First Name"),
+            emergencyLastName: value("Emergency Contact Last Name"),
+            emergencyPhone: value("Emergency Contact Phone"),
+            emergencyRelationship: value("Emergency Contact Relationship"),
+            jobOfInterest,
+            preferredCountries: splitList(value("Preferred Countries")),
+            preferredCities: value("Preferred Cities"),
+            branch: branch.name,
+            educationQualification: value("Highest Qualification"),
+            educationInstitution: value("Education Institution"),
+            educationYearCompleted: value("Year Completed"),
+            educationField: value("Field of Study"),
+            lastEmployer: value("Last Employer"),
+            previousJobTitle: value("Previous Job Title"),
+            employmentFrom: parseDate(row, "Employment From"),
+            employmentTo: parseDate(row, "Employment To"),
+            employmentDuties: value("Employment Duties"),
+            keySkills: value("Key Skills"),
+            languagesSpoken: value("Languages Spoken"),
+            certifications: value("Certifications"),
+            recruiterNotes: value("Recruiter Notes"),
+          }
+          const dateOfBirth = parseDate(row, "Date of Birth")
+          const response = await fetch("/api/candidates", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            cache: "no-store",
+            body: JSON.stringify({
+              firstName,
+              lastName,
+              phone: value("Phone"),
+              dob: dateOfBirth,
+              placeOfBirth: value("Place of Birth"),
+              nationality: value("Nationality"),
+              religion,
+              branchId: branch.id,
+              agent: agent?.name ?? "",
+              agentId: agent?.id,
+              fatherName: value("Father Name"),
+              motherName: value("Mother Name"),
+              jobOfInterest,
+              details,
+            }),
+          })
+          const payload = (await response.json()) as {
+            error?: string
+            warning?: string
+          }
+          if (!response.ok)
+            throw new Error(
+              payload.error ?? `Candidate registration failed (${response.status}).`,
+            )
+          outcomes.push({ rowNumber, candidateName })
+        } catch (error) {
+          console.error(`Candidate import failed on row ${rowNumber}`, error)
+          outcomes.push({
+            rowNumber,
+            candidateName,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Unable to validate or import this row.",
+          })
+        }
+        setCandidateImportOutcomes([...outcomes])
+      }
+
+      if (!rowsWithData)
+        throw new Error("The Candidates sheet contains no data rows.")
+
+      const importedCount = outcomes.filter((outcome) => !outcome.error).length
+      if (importedCount) {
+        clearClientApiCache()
+        try {
+          const response = await fetch("/api/candidates", {
+            cache: "no-store",
+          })
+          const payload = (await response.json()) as {
+            candidates?: CandidateRecord[]
+            agentOptions?: CandidateAgentOption[]
+            error?: string
+          }
+          if (!response.ok || !payload.candidates)
+            throw new Error(
+              payload.error ?? "Unable to refresh the candidate list.",
+            )
+          setCandidates(payload.candidates)
+          setCandidateAgentOptions(payload.agentOptions ?? [])
+        } catch (error) {
+          console.error("Candidate list refresh after import failed", error)
+          setCandidateImportError(
+            `Imported ${importedCount} candidate${importedCount === 1 ? "" : "s"}, but the Pipeline could not refresh. Reload the page to see them.`,
+          )
+        }
+      }
+    } catch (error) {
+      console.error("Candidate workbook import failed", error)
+      setCandidateImportError(
+        error instanceof Error
+          ? error.message
+          : "Unable to import this workbook.",
+      )
+    } finally {
+      setImportingCandidates(false)
+    }
+  }
 
   const applySearch = (value: string) => {
     setSearch(value)
@@ -1184,23 +2695,8 @@ export default function CandidateRoster({
         ? candidates.filter((candidate) =>
             candidateMatchesFilters(candidate, value),
           ).length
-        : inquiries.filter((inquiry) =>
-            matchesSearch(
-              value,
-
-              inquiry.first_name,
-
-              inquiry.last_name,
-
-              inquiry.phone,
-
-              inquiry.agent_name,
-
-              inquiry.job_of_interest.join(" "),
-
-              inquiry.desired_countries.join(" "),
-            ),
-          ).length
+        : inquiries.filter((inquiry) => inquiryMatchesFilters(inquiry, value))
+            .length
 
     setFilterResultsNotice(`${resultCount.toLocaleString()} results were found`)
 
@@ -2131,8 +3627,8 @@ export default function CandidateRoster({
             onChange={(event) => applySearch(event.target.value)}
             placeholder={
               activePage === "pipeline"
-                ? "Search name, file number, or mobile"
-                : "Search inquiry name or mobile"
+                ? "Search name, file, passport, or mobile"
+                : "Search name, inquiry number, agent, or mobile"
             }
             className="w-full max-w-sm border px-3 py-2 text-sm outline-none"
             style={{
@@ -2143,6 +3639,124 @@ export default function CandidateRoster({
               color: "var(--foreground)",
             }}
           />
+          {(activePage === "pipeline" || activePage === "inquiries") && (
+            <>
+              <button
+                type="button"
+                onClick={() =>
+                  void (activePage === "pipeline"
+                    ? exportPipeline("excel")
+                    : exportInquiries("excel"))
+                }
+                disabled={
+                  (activePage === "pipeline"
+                    ? loading || filtered.length === 0
+                    : inquiriesLoading || filteredInquiries.length === 0) ||
+                  Boolean(exportingCandidates)
+                }
+                className="inline-flex shrink-0 items-center gap-2 border px-3 py-2 text-sm font-600 disabled:opacity-50"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              >
+                {exportingCandidates === "excel" ? (
+                  <Loader2
+                    className="animate-spin"
+                    size={15}
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <FileSpreadsheet size={15} aria-hidden="true" />
+                )}
+                {exportingCandidates === "excel"
+                  ? "Preparing Excel…"
+                  : "Export Excel"}
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void (activePage === "pipeline"
+                    ? exportPipeline("pdf")
+                    : exportInquiries("pdf"))
+                }
+                disabled={
+                  (activePage === "pipeline"
+                    ? loading || filtered.length === 0
+                    : inquiriesLoading || filteredInquiries.length === 0) ||
+                  Boolean(exportingCandidates)
+                }
+                className="inline-flex shrink-0 items-center gap-2 border px-3 py-2 text-sm font-600 disabled:opacity-50"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                }}
+              >
+                {exportingCandidates === "pdf" ? (
+                  <Loader2
+                    className="animate-spin"
+                    size={15}
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <FileText size={15} aria-hidden="true" />
+                )}
+                {exportingCandidates === "pdf"
+                  ? "Preparing PDF…"
+                  : "Export PDF"}
+              </button>
+            </>
+          )}
+          {activePage === "pipeline" &&
+            permissions.canRegisterCandidates && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void downloadCandidateImportTemplate()}
+                  disabled={importingCandidates}
+                  className="inline-flex shrink-0 items-center gap-2 border px-3 py-2 text-sm font-600 disabled:opacity-50"
+                  style={{
+                    borderColor: "var(--border)",
+                    color: "var(--foreground)",
+                  }}
+                >
+                  Download template
+                </button>
+                <button
+                  type="button"
+                  onClick={() => importFileRef.current?.click()}
+                  disabled={importingCandidates || loading}
+                  className="inline-flex shrink-0 items-center gap-2 border px-3 py-2 text-sm font-600 disabled:opacity-50"
+                  style={{
+                    borderColor: "var(--border)",
+                    color: "var(--foreground)",
+                  }}
+                >
+                  {importingCandidates ? (
+                    <Loader2
+                      className="animate-spin"
+                      size={15}
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <FileSpreadsheet size={15} aria-hidden="true" />
+                  )}
+                  {importingCandidates ? "Importing…" : "Import Excel"}
+                </button>
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  className="hidden"
+                  aria-label="Select candidate import workbook"
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0]
+                    event.currentTarget.value = ""
+                    if (file) void importCandidateWorkbook(file)
+                  }}
+                />
+              </>
+            )}
           {activePage === "pipeline" &&
             permissions.canSendBulkSms &&
             selectedIds.length > 0 && (
@@ -2235,6 +3849,68 @@ export default function CandidateRoster({
         >
           {recordActionError}
         </p>
+      )}
+      {exportError && (
+        <p
+          role="alert"
+          className="border-b border-red-500/30 bg-red-500/10 px-6 py-3 text-sm text-red-600"
+        >
+          {exportError}
+        </p>
+      )}
+      {candidateImportError && activePage === "pipeline" && (
+        <p
+          role="alert"
+          className="border-b border-red-500/30 bg-red-500/10 px-6 py-3 text-sm text-red-600"
+        >
+          {candidateImportError}
+        </p>
+      )}
+      {candidateImportOutcomes.length > 0 && activePage === "pipeline" && (
+        <section
+          aria-label="Candidate import results"
+          className="border-b px-6 py-4"
+          style={{
+            borderColor: "var(--border)",
+            background: "var(--card)",
+            color: "var(--foreground)",
+          }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-600">
+              Import complete:{" "}
+              {candidateImportOutcomes.filter((outcome) => !outcome.error).length}{" "}
+              imported,{" "}
+              {candidateImportOutcomes.filter((outcome) => outcome.error).length}{" "}
+              failed.
+            </p>
+            <button
+              type="button"
+              onClick={() => setCandidateImportOutcomes([])}
+              className="text-xs font-600"
+              style={{ color: "var(--primary)" }}
+            >
+              Dismiss report
+            </button>
+          </div>
+          {candidateImportOutcomes.some((outcome) => outcome.error) ? (
+            <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs">
+              {candidateImportOutcomes
+                .filter(
+                  (
+                    outcome,
+                  ): outcome is CandidateImportOutcome & { error: string } =>
+                    Boolean(outcome.error),
+                )
+                .map((outcome) => (
+                  <li key={outcome.rowNumber} role="listitem">
+                    Row {outcome.rowNumber} ({outcome.candidateName}):{" "}
+                    {outcome.error}
+                  </li>
+                ))}
+            </ul>
+          ) : null}
+        </section>
       )}
       {bulkSmsNotice && (
         <div
@@ -2333,6 +4009,122 @@ export default function CandidateRoster({
           </span>
         </div>
       )}
+      {activePage === "inquiries" && (
+        <div
+          className="flex flex-wrap items-center gap-2 border-b px-6 py-3"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <CandidateFilterInput
+            label="Agent"
+            value={inquiryFilterInputs.agent}
+            query={inquiryFilterQueries.agent}
+            options={toFilterOptions(inquiryFilterOptions.agent)}
+            onChange={(value) =>
+              setInquiryFilterInputs((current) => ({
+                ...current,
+                agent: value,
+              }))
+            }
+            onChoose={(value) =>
+              setInquiryFilterInputs((current) => ({
+                ...current,
+                agent: value,
+              }))
+            }
+          />
+          <CandidateFilterInput
+            label="Source"
+            value={inquiryFilterInputs.source}
+            query={inquiryFilterQueries.source}
+            options={toFilterOptions(inquiryFilterOptions.source)}
+            onChange={(value) =>
+              setInquiryFilterInputs((current) => ({
+                ...current,
+                source: value,
+              }))
+            }
+            onChoose={(value) =>
+              setInquiryFilterInputs((current) => ({
+                ...current,
+                source: value,
+              }))
+            }
+          />
+          <CandidateFilterInput
+            label="Country"
+            value={inquiryFilterInputs.country}
+            query={inquiryFilterQueries.country}
+            options={toFilterOptions(inquiryFilterOptions.country)}
+            onChange={(value) =>
+              setInquiryFilterInputs((current) => ({
+                ...current,
+                country: value,
+              }))
+            }
+            onChoose={(value) =>
+              setInquiryFilterInputs((current) => ({
+                ...current,
+                country: value,
+              }))
+            }
+          />
+          <CandidateFilterInput
+            label="Job"
+            value={inquiryFilterInputs.job}
+            query={inquiryFilterQueries.job}
+            options={toFilterOptions(inquiryFilterOptions.job)}
+            onChange={(value) =>
+              setInquiryFilterInputs((current) => ({ ...current, job: value }))
+            }
+            onChoose={(value) =>
+              setInquiryFilterInputs((current) => ({ ...current, job: value }))
+            }
+          />
+          <CandidateFilterInput
+            label="Handled by"
+            value={inquiryFilterInputs.handledBy}
+            query={inquiryFilterQueries.handledBy}
+            options={toFilterOptions(inquiryFilterOptions.handledBy)}
+            onChange={(value) =>
+              setInquiryFilterInputs((current) => ({
+                ...current,
+                handledBy: value,
+              }))
+            }
+            onChoose={(value) =>
+              setInquiryFilterInputs((current) => ({
+                ...current,
+                handledBy: value,
+              }))
+            }
+          />
+          {Object.values(inquiryFilterInputs).some(Boolean) && (
+            <button
+              type="button"
+              onClick={() =>
+                setInquiryFilterInputs({
+                  agent: "",
+                  source: "",
+                  country: "",
+                  job: "",
+                  handledBy: "",
+                })
+              }
+              className="px-2 py-2 text-sm font-600"
+              style={{ color: "var(--primary)" }}
+            >
+              Clear filters
+            </button>
+          )}
+          <span
+            className="ml-auto text-xs"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            {filteredInquiries.length.toLocaleString()} of{" "}
+            {inquiries.length.toLocaleString()} inquiries
+          </span>
+        </div>
+      )}
       {filterResultsNotice && (
         <div
           role="status"
@@ -2359,8 +4151,17 @@ export default function CandidateRoster({
         </p>
       )}
 
+      {fileNumberCopyError && activePage === "pipeline" && (
+        <p
+          role="alert"
+          className="border-b border-red-500/30 bg-red-500/10 px-6 py-3 text-sm text-red-600"
+        >
+          {fileNumberCopyError}
+        </p>
+      )}
+
       {activePage === "pipeline" ? (
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-hidden">
           <div className="app-table-scroll">
             <table className="candidate-pipeline-table w-full min-w-260 text-sm">
               <thead
@@ -2394,6 +4195,8 @@ export default function CandidateRoster({
 
                     "Candidate Name",
 
+                    "Passport No",
+
                     "Agent",
 
                     "Mobile",
@@ -2426,7 +4229,7 @@ export default function CandidateRoster({
                 {loading && (
                   <tr>
                     <td
-                      colSpan={permissions.caseHandlersEnabled ? 11 : 10}
+                      colSpan={permissions.caseHandlersEnabled ? 12 : 11}
                       className="px-4 py-10 text-center"
                       style={{ color: "var(--muted-foreground)" }}
                     >
@@ -2437,7 +4240,7 @@ export default function CandidateRoster({
                 {error && (
                   <tr>
                     <td
-                      colSpan={permissions.caseHandlersEnabled ? 11 : 10}
+                      colSpan={permissions.caseHandlersEnabled ? 12 : 11}
                       role="alert"
                       className="px-4 py-10 text-center"
                       style={{ color: "#ef4444" }}
@@ -2449,7 +4252,7 @@ export default function CandidateRoster({
                 {!loading && !error && filtered.length === 0 && (
                   <tr>
                     <td
-                      colSpan={permissions.caseHandlersEnabled ? 11 : 10}
+                      colSpan={permissions.caseHandlersEnabled ? 12 : 11}
                       className="px-4 py-10 text-center"
                       style={{ color: "var(--muted-foreground)" }}
                     >
@@ -2496,7 +4299,7 @@ export default function CandidateRoster({
                     }}
                   >
                     <td className="px-3 py-2">
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-0.5">
                         {canSelectCandidates && (
                           <input
                             type="checkbox"
@@ -2518,7 +4321,7 @@ export default function CandidateRoster({
                               ? "View candidate and finance details"
                               : "View candidate details"
                           }
-                          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                          className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
                           style={{ color: "var(--foreground)" }}
                         >
                           <Eye size={15} aria-hidden="true" />
@@ -2529,7 +4332,7 @@ export default function CandidateRoster({
                             onClick={() => setDrawerCandidate(candidate)}
                             aria-label={`View attachments for ${candidate.first_name} ${candidate.last_name}`}
                             title="View attachments"
-                            className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                            className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
                             style={{ color: "var(--primary)" }}
                           >
                             <Paperclip size={15} aria-hidden="true" />
@@ -2541,7 +4344,7 @@ export default function CandidateRoster({
                             onClick={() => openStageUpdate(candidate.id)}
                             aria-label={`Advance stage for ${candidate.first_name} ${candidate.last_name}`}
                             title="Update candidate stage"
-                            className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                            className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
                             style={{ color: "var(--foreground)" }}
                           >
                             <RefreshCw size={14} aria-hidden="true" />
@@ -2560,7 +4363,7 @@ export default function CandidateRoster({
                               }}
                               aria-label={`Edit ${candidate.first_name} ${candidate.last_name}`}
                               title="Edit candidate"
-                              className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
+                              className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--secondary)]"
                               style={{ color: "var(--foreground)" }}
                             >
                               <Pencil size={14} aria-hidden="true" />
@@ -2582,7 +4385,7 @@ export default function CandidateRoster({
                             disabled={deletingRecordId === candidate.id}
                             aria-label={`Delete ${candidate.first_name} ${candidate.last_name}`}
                             title="Delete candidate"
-                            className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                            className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-red-500/10 disabled:opacity-50"
                             style={{ color: "#b43c45" }}
                           >
                             <Trash2 size={14} aria-hidden="true" />
@@ -2594,14 +4397,49 @@ export default function CandidateRoster({
                       className="px-3 py-2 mono text-xs"
                       title={candidate.file_number}
                     >
-                      {candidate.file_number
-                        ? `${candidate.file_number[0]}...${candidate.file_number.slice(-3)}`
-                        : "—"}
+                      {candidate.file_number ? (
+                        <div className="flex items-center gap-1.5 whitespace-nowrap">
+                          <span>
+                            {candidate.file_number.length > 8
+                              ? `${candidate.file_number.slice(0, 2)}...${candidate.file_number.slice(-4)}`
+                              : candidate.file_number}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void copyFileNumber(candidate)}
+                            aria-label={
+                              copiedFileNumberId === candidate.id
+                                ? `Copied file number ${candidate.file_number}`
+                                : `Copy file number ${candidate.file_number}`
+                            }
+                            title={
+                              copiedFileNumberId === candidate.id
+                                ? "File number copied"
+                                : "Copy file number"
+                            }
+                            className="flex h-6 w-6 items-center justify-center rounded transition-colors hover:bg-[var(--secondary)]"
+                            style={{ color: "var(--muted-foreground)" }}
+                          >
+                            {copiedFileNumberId === candidate.id ? (
+                              <Check size={13} aria-hidden="true" />
+                            ) : (
+                              <Copy size={13} aria-hidden="true" />
+                            )}
+                          </button>
+                        </div>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 font-600">
                       {candidate.first_name} {candidate.last_name}
                     </td>
-                    <td className="px-3 py-2">{candidate.agent_name || "—"}</td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
+                      {candidatePassportNumber(candidate) || "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {candidateAgentName(candidate) || "—"}
+                    </td>
                     <td className="px-3 py-2 mono">{candidate.phone || "—"}</td>
                     {permissions.caseHandlersEnabled && (
                       <td className="px-3 py-2">
@@ -2802,7 +4640,7 @@ export default function CandidateRoster({
                           style={{ color: "var(--muted-foreground)" }}
                         >
                           {inquiries.length
-                            ? "No inquiries match this search."
+                            ? "No inquiries match these filters."
                             : "No open inquiries yet."}
                         </td>
                       </tr>

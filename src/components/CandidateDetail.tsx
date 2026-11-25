@@ -430,8 +430,9 @@ export default function CandidateDetail({ candidate, isNew, inquiryId, isAgent =
           form.abroadStatus.trim() &&
           form.abroadExperience.trim() &&
           candidateSources.some((option) => option.source === form.source) &&
-          form.agent.trim() &&
-          (!isPartnerSource || form.referralPartnerId?.trim()) &&
+          (isPartnerSource
+            ? form.referralPartnerId?.trim()
+            : form.agent.trim()) &&
           (!isRecruitmentAgentSource || form.agentUserId))),
     );
   const kinSectionComplete = Boolean(
@@ -758,6 +759,8 @@ export default function CandidateDetail({ candidate, isNew, inquiryId, isAgent =
                     setForm((current) => ({
                       ...current,
                       source,
+                      agent: "",
+                      agentUserId: undefined,
                       ...(source.trim().toLocaleLowerCase() === "partner"
                         ? {}
                         : { referralPartnerId: "", referralPartnerName: "" }),
@@ -798,6 +801,8 @@ export default function CandidateDetail({ candidate, isNew, inquiryId, isAgent =
                       ...current,
                       referralPartnerId: partnerId,
                       referralPartnerName: partner?.name ?? "",
+                      agent: partner?.name ?? "",
+                      agentUserId: undefined,
                     }));
                   }}
                   options={[
@@ -815,6 +820,9 @@ export default function CandidateDetail({ candidate, isNew, inquiryId, isAgent =
                       : "var(--border)",
                   }}
                 />
+                <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
+                  The referring partner will be recorded as the candidate's agent.
+                </p>
                 {partnerOptionsLoading && (
                   <p role="status" className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>
                     Loading registered partners…
@@ -829,7 +837,7 @@ export default function CandidateDetail({ candidate, isNew, inquiryId, isAgent =
               </div>
             )}
 
-            {!(isAgent && isNew) && <div className="col-span-2">
+            {!(isAgent && isNew) && !isPartnerSource && <div className="col-span-2">
               <label className="text-xs font-600 block mb-1" style={{ color: "var(--muted-foreground)" }}>
                 {isRecruitmentAgentSource ? "Recruitment Agent (also assigned)" : "Agent"}
                 <span style={{ color: "#ef4444" }}> *</span>

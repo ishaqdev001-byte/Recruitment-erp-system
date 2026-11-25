@@ -1,11 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
-
-import nodemailer from "nodemailer"
-
 import { NextResponse } from "next/server"
-
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-
 import { normalizeUgandanPhone } from "@/lib/server/smsug"
 
 export const runtime = "nodejs"
@@ -29,92 +24,126 @@ function createAdminClient() {
   })
 }
 
-function escapeEmailHtml(value: string) {
-  return value.replace(/[&<>"']/g, (character) => {
-    const entities: Record<string, string> = {
-      "&": "&amp;",
-
-      "<": "&lt;",
-
-      ">": "&gt;",
-
-      '"': "&quot;",
-
-      "'": "&#39;",
-    }
-
-    return entities[character] ?? character
-  })
+async function findAuthUserByEmail(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  email: string,
+) {
+  for (let page = 1; ; page += 1) {
+    const { data, error } = await admin.auth.admin.listUsers({
+      page,
+      perPage: 1000,
+    })
+    if (error) throw error
+    const existingUser = data.users.find(
+      (user) => user.email?.toLowerCase() === email,
+    )
+    if (existingUser) return true
+    if (data.users.length < 1000) return false
+  }
 }
 
-async function sendInvitationEmail(options: {
-  to: string
-
-  name: string
-
-  companyName: string
-
-  actionLink: string
-}) {
-  const host = process.env.SYSTEM_SMTP_HOST?.trim()
-
-  const port = Number(process.env.SYSTEM_SMTP_PORT ?? "587")
-
-  const user = process.env.SYSTEM_SMTP_USER?.trim()
-
-  const pass = process.env.SYSTEM_SMTP_PASS?.trim()
-
-  const from = process.env.SYSTEM_SMTP_FROM?.trim() || user
-
-  if (!host || !user || !pass || !from || !Number.isInteger(port)) {
-    throw new Error("Invitation email delivery is not configured.")
+async function removeProvisionedAgentAccount(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  companyId: string,
+  userId: string,
+) {
+  const { error: membershipError } = await admin
+    .from("company_memberships")
+    .delete()
+    .eq("company_id", companyId)
+    .eq("user_id", userId)
+  if (membershipError) {
+    console.error("Agent account membership rollback failed", membershipError)
   }
 
-  const transport = nodemailer.createTransport({
-    host,
+  const { error: profileError } = await admin
+    .from("profiles")
+    .delete()
+    .eq("id", userId)
+  if (profileError) {
+    console.error("Agent account profile rollback failed", profileError)
+  }
 
-    port,
+  const { error: userError } = await admin.auth.admin.deleteUser(userId)
+  if (userError) {
+    console.error("Agent auth account rollback failed", userError)
+  }
+}
 
-    secure: port === 465,
+async function provisionAgentAccount(options: {
+  admin: NonNullable<ReturnType<typeof createAdminClient>>
+  companyId: string
+  roleId: string
+  branchId: string
+  branchName: string
+  name: string
+  phone: string
+  email: string
+  password: string
+}) {
+  const {
+    admin,
+    companyId,
+    roleId,
+    branchId,
+    branchName,
+    name,
+    phone,
+    email,
+    password,
+  } = options
+  if (await findAuthUserByEmail(admin, email)) {
+    return {
+      error: "That email already belongs to an account. Use a different email.",
+      status: 409,
+    } as const
+  }
 
-    auth: { user, pass },
-
-    requireTLS: port !== 465,
-
-    connectionTimeout: 10000,
-
-    greetingTimeout: 10000,
-
-    socketTimeout: 20000,
-  })
-
-  const name = escapeEmailHtml(options.name)
-
-  const companyName = escapeEmailHtml(options.companyName)
-
-  const actionLink = escapeEmailHtml(options.actionLink)
-
-  try {
-    const delivery = await transport.sendMail({
-      from: `"Kilax Smart Recruit" <${from}>`,
-
-      to: options.to,
-
-      subject: `You are invited to join ${options.companyName}`,
-
-      text: `Hello ${options.name},\n\nYou have been invited to join ${options.companyName} as a Recruitment Agent.\n\nAccept the invitation and set up your password: ${options.actionLink}`,
-
-      html: `<h2>You have been invited to join ${companyName}</h2><p>Hello ${name},</p><p>You have been invited to join <strong>${companyName}</strong> as a Recruitment Agent.</p><p><a href="${actionLink}">Accept invitation and set up your password</a></p>`,
+  const { data: createdAccount, error: authError } =
+    await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { full_name: name },
     })
 
-    if (!delivery.accepted.length || delivery.rejected.length) {
-      throw new Error(
-        "The SMTP server did not accept the invitation recipient.",
-      )
-    }
-  } finally {
-    transport.close()
+  if (authError || !createdAccount.user) {
+    return {
+      error:
+        "Unable to create the agent login. Check the email and password requirements.",
+      status: 400,
+    } as const
   }
+
+  const authUser = createdAccount.user
+
+  const { error: profileError } = await admin.from("profiles").upsert({
+    id: authUser.id,
+    display_name: name,
+    phone,
+    branch: branchName,
+    must_change_password: true,
+  })
+  if (profileError) {
+    await removeProvisionedAgentAccount(admin, companyId, authUser.id)
+    throw profileError
+  }
+
+  const { error: membershipError } = await admin
+    .from("company_memberships")
+    .insert({
+      company_id: companyId,
+      user_id: authUser.id,
+      role_id: roleId,
+      branch_id: branchId,
+      status: "active",
+    })
+  if (membershipError) {
+    await removeProvisionedAgentAccount(admin, companyId, authUser.id)
+    throw membershipError
+  }
+
+  return { userId: authUser.id } as const
 }
 
 async function getAccess() {
@@ -286,7 +315,7 @@ export async function GET() {
       .from("company_recruitment_agents")
 
       .select(
-        "id, name, username, email, phone, branch_id, linked_user_id, status",
+        "id, agent_code, name, username, email, phone, branch_id, linked_user_id, status",
       )
 
       .eq("company_id", access.companyId)
@@ -324,6 +353,8 @@ export async function GET() {
       {
         agents: (agentRows ?? []).map((agent) => ({
           id: agent.id,
+
+          agentCode: agent.agent_code,
 
           name: agent.name,
 
@@ -485,19 +516,24 @@ export async function POST(request: Request) {
       const phone = normalizeUgandanPhone(phoneInput)
 
       const branchId = typeof body?.branchId === "string" ? body.branchId : ""
+      const createLogin = body?.createLogin === true
+      const password = typeof body?.password === "string" ? body.password : ""
 
       if (
         !name ||
         name.length > 200 ||
         !usernamePattern.test(username) ||
         (email && (!/^\S+@\S+\.\S+$/.test(email) || email.length > 200)) ||
+        (createLogin && !email) ||
+        (createLogin && (password.length < 8 || password.length > 72)) ||
         !phone ||
         !uuidPattern.test(branchId)
       ) {
         return NextResponse.json(
           {
-            error:
-              "Enter a valid agent name, username, phone, email, and branch.",
+            error: createLogin
+              ? "Enter the agent’s email and a password between 8 and 72 characters."
+              : "Enter a valid agent name, username, phone, email, and branch.",
           },
           { status: 400, headers },
         )
@@ -518,7 +554,7 @@ export async function POST(request: Request) {
 
         .from("company_branches")
 
-        .select("id")
+        .select("id, name")
 
         .eq("id", branchId)
 
@@ -535,6 +571,28 @@ export async function POST(request: Request) {
           { error: "Choose an active branch in this company." },
           { status: 400, headers },
         )
+
+      let agentRoleId = ""
+      if (createLogin) {
+        const { data: role, error: roleError } = await access.admin
+          .from("company_roles")
+          .select("id")
+          .eq("company_id", access.companyId)
+          .ilike("name", "Recruitment Agent")
+          .limit(1)
+          .maybeSingle()
+        if (roleError) throw roleError
+        if (!role) {
+          return NextResponse.json(
+            {
+              error:
+                "The Recruitment Agent role is not configured for this company.",
+            },
+            { status: 409, headers },
+          )
+        }
+        agentRoleId = role.id
+      }
 
       const { data: agent, error } = await access.admin
 
@@ -572,7 +630,64 @@ export async function POST(request: Request) {
       if (error || !agent)
         throw error ?? new Error("Agent record could not be created.")
 
-      return NextResponse.json({ agentId: agent.id }, { status: 201, headers })
+      if (createLogin) {
+        const provisioned = await provisionAgentAccount({
+          admin: access.admin,
+          companyId: access.companyId,
+          roleId: agentRoleId,
+          branchId,
+          branchName: branch.name,
+          name,
+          phone,
+          email,
+          password,
+        })
+        if ("error" in provisioned) {
+          const { error: deleteError } = await access.admin
+            .from("company_recruitment_agents")
+            .delete()
+            .eq("id", agent.id)
+            .eq("company_id", access.companyId)
+          if (deleteError) {
+            console.error("Agent roster rollback failed", deleteError)
+          }
+          return NextResponse.json({ error: provisioned.error }, {
+            status: provisioned.status,
+            headers,
+          })
+        }
+
+        const { error: linkError } = await access.admin
+          .from("company_recruitment_agents")
+          .update({
+            linked_user_id: provisioned.userId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", agent.id)
+          .eq("company_id", access.companyId)
+          .is("linked_user_id", null)
+        if (linkError) {
+          await removeProvisionedAgentAccount(
+            access.admin,
+            access.companyId,
+            provisioned.userId,
+          )
+          const { error: deleteError } = await access.admin
+            .from("company_recruitment_agents")
+            .delete()
+            .eq("id", agent.id)
+            .eq("company_id", access.companyId)
+          if (deleteError) {
+            console.error("Agent roster rollback failed", deleteError)
+          }
+          throw linkError
+        }
+      }
+
+      return NextResponse.json({ agentId: agent.id, hasAccount: createLogin }, {
+        status: 201,
+        headers,
+      })
     }
 
     const agentId = typeof body?.agentId === "string" ? body.agentId : ""
@@ -615,6 +730,100 @@ export async function POST(request: Request) {
         { error: "You can only manage agents in your assigned branch." },
         { status: 403, headers },
       )
+    }
+
+    if (action === "link-account") {
+      const email =
+        typeof body?.email === "string" ? body.email.trim().toLowerCase() : ""
+      const password = typeof body?.password === "string" ? body.password : ""
+      if (
+        agent.status !== "active" ||
+        agent.linked_user_id ||
+        !/^\S+@\S+\.\S+$/.test(email) ||
+        email.length > 200 ||
+        password.length < 8 ||
+        password.length > 72
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Choose an active accountless agent, enter a valid email, and set a password between 8 and 72 characters.",
+          },
+          { status: 400, headers },
+        )
+      }
+
+      const [
+        { data: branch, error: branchError },
+        { data: role, error: roleError },
+      ] = await Promise.all([
+        access.admin
+          .from("company_branches")
+          .select("id, name")
+          .eq("id", agent.branch_id)
+          .eq("company_id", access.companyId)
+          .eq("status", "active")
+          .maybeSingle(),
+        access.admin
+          .from("company_roles")
+          .select("id")
+          .eq("company_id", access.companyId)
+          .ilike("name", "Recruitment Agent")
+          .limit(1)
+          .maybeSingle(),
+      ])
+      if (branchError || roleError) throw branchError ?? roleError
+      if (!branch || !role) {
+        return NextResponse.json(
+          {
+            error:
+              "The agent’s branch or Recruitment Agent role is unavailable.",
+          },
+          { status: 409, headers },
+        )
+      }
+
+      const provisioned = await provisionAgentAccount({
+        admin: access.admin,
+        companyId: access.companyId,
+        roleId: role.id,
+        branchId: branch.id,
+        branchName: branch.name,
+        name: agent.name,
+        phone: agent.phone ?? "",
+        email,
+        password,
+      })
+      if ("error" in provisioned) {
+        return NextResponse.json({ error: provisioned.error }, {
+          status: provisioned.status,
+          headers,
+        })
+      }
+
+      const { error: linkError } = await access.admin
+        .from("company_recruitment_agents")
+        .update({
+          email,
+          linked_user_id: provisioned.userId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", agentId)
+        .eq("company_id", access.companyId)
+        .is("linked_user_id", null)
+      if (linkError) {
+        await removeProvisionedAgentAccount(
+          access.admin,
+          access.companyId,
+          provisioned.userId,
+        )
+        throw linkError
+      }
+
+      return NextResponse.json({ ok: true, hasAccount: true }, {
+        status: 201,
+        headers,
+      })
     }
 
     if (action === "update") {

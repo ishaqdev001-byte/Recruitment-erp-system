@@ -3949,6 +3949,8 @@ export default function App() {
           <Candidates
             page="pipeline"
             companyName={session?.companyName ?? ""}
+            currentUserName={session?.userName ?? activeUser?.name ?? ""}
+            companyDetails={activeCompany}
             onNavigate={handleNavigate}
           />
         )
@@ -3958,6 +3960,8 @@ export default function App() {
           <Candidates
             page="inquiries"
             companyName={session?.companyName ?? ""}
+            currentUserName={session?.userName ?? activeUser?.name ?? ""}
+            companyDetails={activeCompany}
             onNavigate={handleNavigate}
           />
         )

@@ -336,17 +336,6 @@ export async function PATCH(
           { status: 400, headers },
         )
 
-      const assignedAgent =
-        typeof updates.agent_name === "string" ? updates.agent_name : ""
-
-      const passportError = passportSetupError(details, assignedAgent)
-
-      if (passportError)
-        return NextResponse.json({ error: passportError }, {
-          status: 400,
-          headers,
-        })
-
       const source =
         typeof details.source === "string" ? details.source.trim() : ""
 
@@ -459,11 +448,34 @@ export async function PATCH(
         details.referralPartnerId = partner.id
 
         details.referralPartnerName = partner.supplier_name
+
+        updates.agent_name = partner.supplier_name
+
+        updates.agent_id = null
+
+        updates.agent_user_id = null
       } else {
         details.referralPartnerId = ""
 
         details.referralPartnerName = ""
       }
+
+      const assignedAgent =
+        sourceType === "partner"
+          ? typeof details.referralPartnerName === "string"
+            ? details.referralPartnerName
+            : ""
+          : typeof updates.agent_name === "string"
+            ? updates.agent_name
+            : ""
+
+      const passportError = passportSetupError(details, assignedAgent)
+
+      if (passportError)
+        return NextResponse.json({ error: passportError }, {
+          status: 400,
+          headers,
+        })
 
       if (sourceType === "recruitment agent") {
         const assignedAgentId =
@@ -596,7 +608,26 @@ export async function PATCH(
         updates.details.branch = branch.name
     }
 
-    if ("agentId" in body || "agentUserId" in body) {
+    const updatedDetails =
+      updates.details && typeof updates.details === "object"
+        ? updates.details as Record<string, unknown>
+        : currentCandidate.details &&
+            typeof currentCandidate.details === "object" &&
+            !Array.isArray(currentCandidate.details)
+          ? currentCandidate.details as Record<string, unknown>
+          : {}
+    const isPartnerSource =
+      typeof updatedDetails.source === "string" &&
+      updatedDetails.source.trim().toLocaleLowerCase() === "partner"
+
+    if (isPartnerSource) {
+      updates.agent_id = null
+
+      updates.agent_user_id = null
+
+      if (typeof updatedDetails.referralPartnerName === "string")
+        updates.agent_name = updatedDetails.referralPartnerName
+    } else if ("agentId" in body || "agentUserId" in body) {
       const requestedAgentUserId =
         body.agentId === "" || body.agentUserId === ""
           ? null

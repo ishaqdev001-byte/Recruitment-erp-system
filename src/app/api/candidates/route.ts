@@ -1056,8 +1056,11 @@ export async function POST(request: Request) {
       inquiryCreatedBy = inquiry.created_by
     }
 
-    const requestedAgentUserId =
-      typeof body.agentId === "string" && body.agentId
+    const isPartnerSource = sourceType === "partner"
+
+    const requestedAgentUserId = isPartnerSource
+      ? null
+      : typeof body.agentId === "string" && body.agentId
         ? body.agentId
         : typeof body.agentUserId === "string" && body.agentUserId
           ? body.agentUserId
@@ -1093,20 +1096,25 @@ export async function POST(request: Request) {
       )
     }
 
-    const requestedAgentName =
-      typeof body.agent === "string" ? body.agent.trim() : ""
+    const requestedAgentName = isPartnerSource
+      ? ""
+      : typeof body.agent === "string"
+        ? body.agent.trim()
+        : ""
 
-    let assignedAgent = requestedAgentUserId
-      ? agents.find(
-          (person) =>
-            person.id === requestedAgentUserId ||
-            person.linked_user_id === requestedAgentUserId,
-        )
-      : agents.find(
-          (person) =>
-            person.name.trim().toLocaleLowerCase() ===
-            requestedAgentName.toLocaleLowerCase(),
-        )
+    let assignedAgent = isPartnerSource
+      ? undefined
+      : requestedAgentUserId
+        ? agents.find(
+            (person) =>
+              person.id === requestedAgentUserId ||
+              person.linked_user_id === requestedAgentUserId,
+          )
+        : agents.find(
+            (person) =>
+              person.name.trim().toLocaleLowerCase() ===
+              requestedAgentName.toLocaleLowerCase(),
+          )
 
     if (requestedAgentUserId && !assignedAgent) {
       return NextResponse.json(
@@ -1115,7 +1123,7 @@ export async function POST(request: Request) {
       )
     }
 
-    if (candidateScope === "assigned") {
+    if (candidateScope === "assigned" && !isPartnerSource) {
       const ownAgent = agents.find(
         (person) => person.linked_user_id === user.id,
       )
@@ -1129,13 +1137,21 @@ export async function POST(request: Request) {
       }
 
       assignedAgent = ownAgent
-    } else if (!assignedAgent && (inquiryAgentId || inquiryAgentUserId)) {
+    } else if (
+      !isPartnerSource &&
+      !assignedAgent &&
+      (inquiryAgentId || inquiryAgentUserId)
+    ) {
       assignedAgent = agents.find(
         (person) =>
           person.id === inquiryAgentId ||
           person.linked_user_id === inquiryAgentUserId,
       )
-    } else if (!assignedAgent && inquiryCreatedBy === user.id) {
+    } else if (
+      !isPartnerSource &&
+      !assignedAgent &&
+      inquiryCreatedBy === user.id
+    ) {
       assignedAgent = agents.find((person) => person.linked_user_id === user.id)
     }
 
@@ -1146,10 +1162,14 @@ export async function POST(request: Request) {
       )
     }
 
-    const agentId = assignedAgent?.id ?? null
-    const agentUserId = assignedAgent?.linked_user_id ?? null
+    const agentId = isPartnerSource ? null : assignedAgent?.id ?? null
+    const agentUserId = isPartnerSource
+      ? null
+      : assignedAgent?.linked_user_id ?? null
 
-    const agentName = assignedAgent?.name ?? requestedAgentName
+    let agentName = isPartnerSource
+      ? ""
+      : assignedAgent?.name ?? requestedAgentName
 
     if (sourceType === "recruitment agent" && !assignedAgent) {
       return NextResponse.json(
@@ -1160,14 +1180,6 @@ export async function POST(request: Request) {
         { status: 400, headers },
       )
     }
-
-    const passportError = passportSetupError(details, agentName)
-
-    if (passportError)
-      return NextResponse.json({ error: passportError }, {
-        status: 400,
-        headers,
-      })
 
     const branchId =
       typeof body.branchId === "string" && isUuid(body.branchId)
@@ -1271,11 +1283,21 @@ export async function POST(request: Request) {
       details.referralPartnerId = partner.id
 
       details.referralPartnerName = partner.supplier_name
+
+      agentName = partner.supplier_name
     } else {
       details.referralPartnerId = ""
 
       details.referralPartnerName = ""
     }
+
+    const passportError = passportSetupError(details, agentName)
+
+    if (passportError)
+      return NextResponse.json({ error: passportError }, {
+        status: 400,
+        headers,
+      })
 
     if (
       details.passportStatus === "Available" &&

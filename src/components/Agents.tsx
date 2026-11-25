@@ -15,6 +15,7 @@ import { matchesSearch } from "@/lib/search"
 
 type AgentRecord = {
   id: string
+  agentCode: string
   name: string
   username: string
   email: string
@@ -133,11 +134,13 @@ export default function Agents() {
   const [canManageAgents, setCanManageAgents] = useState(false)
   const [canViewCandidates, setCanViewCandidates] = useState(false)
   const [canResetPasswords, setCanResetPasswords] = useState(false)
+  const [createLogin, setCreateLogin] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [agentCandidatesLoading, setAgentCandidatesLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const [statusMessage, setStatusMessage] = useState("")
   const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
@@ -233,7 +236,15 @@ export default function Agents() {
     (agent) => agent.status === "disabled",
   ).length
   const filtered = agents.filter((agent) =>
-    matchesSearch(search, agent.name, agent.phone, agent.email, agent.branch),
+    matchesSearch(
+      search,
+      agent.agentCode,
+      agent.name,
+      agent.username,
+      agent.phone,
+      agent.email,
+      agent.branch,
+    ),
   )
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId)
   const selectedMetrics = selectedAgent
@@ -292,12 +303,20 @@ export default function Agents() {
           phone: String(formData.get("phone") ?? "").trim(),
           email: String(formData.get("email") ?? "").trim(),
           branchId: String(formData.get("branchId") ?? ""),
+          createLogin,
+          password: String(formData.get("password") ?? ""),
         }),
       })
       const payload = (await response.json()) as { error?: string }
       if (!response.ok)
         throw new Error(payload.error ?? "Unable to add this agent.")
       setCreatingAgent(false)
+      setCreateLogin(false)
+      setStatusMessage(
+        createLogin
+          ? "Agent login created. Share the username and initial password with the agent; they must change the password at first sign-in."
+          : "",
+      )
       setReloadKey((key) => key + 1)
     } catch (createError) {
       setError(
@@ -317,24 +336,25 @@ export default function Agents() {
     setSaving(true)
     setError("")
     try {
-      const response = await fetch("/api/workspace/users", {
+      const response = await fetch("/api/workspace/agents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "link-agent-account",
+          action: "link-account",
           agentId: linkingAgent.id,
           email: String(formData.get("email") ?? "").trim(),
+          password: String(formData.get("password") ?? ""),
         }),
       })
       const payload = (await response.json()) as {
         error?: string
-        invitationEmailWarning?: string
       }
       if (!response.ok)
         throw new Error(payload.error ?? "Unable to link this agent.")
       setLinkingAgent(null)
-      if (payload.invitationEmailWarning)
-        setError(payload.invitationEmailWarning)
+      setStatusMessage(
+        "Agent login created. Share the username and initial password with the agent; they must change the password at first sign-in.",
+      )
       setReloadKey((key) => key + 1)
     } catch (linkError) {
       setError(
@@ -473,7 +493,7 @@ export default function Agents() {
                 className="mt-1 text-xs"
                 style={{ color: "var(--muted-foreground)" }}
               >
-                @{selectedAgent.username} ·{" "}
+                Code {selectedAgent.agentCode} · @{selectedAgent.username} ·{" "}
                 {selectedAgent.hasAccount
                   ? "Linked account"
                   : "No login account"}
@@ -531,6 +551,7 @@ export default function Agents() {
               >
                 {[
                   ["Full name", selectedAgent.name],
+                  ["Agent code", selectedAgent.agentCode],
                   ["Username", selectedAgent.username],
                   [
                     "Account",
@@ -961,7 +982,7 @@ export default function Agents() {
           />
           <input
             aria-label="Search agents"
-            placeholder="Search name, phone, email, or branch"
+            placeholder="Search code, name, username, phone, email, or branch"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none"
@@ -981,6 +1002,14 @@ export default function Agents() {
           {error}
         </div>
       )}
+      {statusMessage && (
+        <div
+          role="status"
+          className="mx-6 mt-4 border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400"
+        >
+          {statusMessage}
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div
           className="overflow-x-auto border"
@@ -996,6 +1025,7 @@ export default function Agents() {
                   {[
                     "Actions",
                     "Agent",
+                    "Agent code",
                     "Phone",
                     "Email address",
                     "Registered branch",
@@ -1016,7 +1046,7 @@ export default function Agents() {
                 {loading && (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-4 py-10 text-center text-sm"
                       style={{ color: "var(--muted-foreground)" }}
                     >
@@ -1027,7 +1057,7 @@ export default function Agents() {
                 {!loading && !error && filtered.length === 0 && (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-4 py-10 text-center text-sm"
                       style={{ color: "var(--muted-foreground)" }}
                     >
@@ -1080,7 +1110,7 @@ export default function Agents() {
                                 }}
                               >
                                 <UserPlus size={14} aria-hidden="true" />
-                                Link account
+                                Set up login
                               </button>
                             )}
                             {canResetPasswords && agent.hasAccount && (
@@ -1175,6 +1205,9 @@ export default function Agents() {
                               </span>
                             </span>
                           </div>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 font-700 tracking-wide">
+                          {agent.agentCode}
                         </td>
                         <td
                           className="whitespace-nowrap px-4 py-3 text-xs"
@@ -1331,9 +1364,9 @@ export default function Agents() {
               className="mt-4 text-xs leading-5"
               style={{ color: "var(--muted-foreground)" }}
             >
-              Accountless agents do not have a login until you link an email
-              account. Linked account email changes are managed from Users &
-              Roles.
+              Accountless agents have no login until you link an email and set
+              an initial password. Linked account email changes are managed from
+              Users & Roles.
             </p>
             <div className="mt-6 flex gap-3">
               <button
@@ -1380,8 +1413,8 @@ export default function Agents() {
               className="mb-5 text-xs leading-5"
               style={{ color: "var(--muted-foreground)" }}
             >
-              This creates an agent roster entry without a login. You can link
-              an account and send an invitation later.
+              Create an accountless roster entry or set up username/password
+              sign-in now. No invitation email is sent.
             </p>
             <div className="space-y-4">
               <label
@@ -1432,8 +1465,10 @@ export default function Agents() {
                 className="block text-xs font-700 uppercase tracking-wider"
                 style={{ color: "var(--muted-foreground)" }}
               >
-                Email address (optional until account linking)
+                Email address{" "}
+                {createLogin ? "(required for account setup)" : "(optional)"}
                 <input
+                  required={createLogin}
                   maxLength={200}
                   name="email"
                   type="email"
@@ -1441,6 +1476,49 @@ export default function Agents() {
                   style={fieldStyle}
                 />
               </label>
+              <label
+                className="flex items-start gap-2 text-xs"
+                style={{ color: "var(--foreground)" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={createLogin}
+                  onChange={(event) => setCreateLogin(event.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-700">Create login now</span>
+                  <span
+                    className="mt-1 block leading-5"
+                    style={{ color: "var(--muted-foreground)" }}
+                  >
+                    The agent signs in with the username and password below. The
+                    email is used for the account only; no invite is sent.
+                  </span>
+                </span>
+              </label>
+              {createLogin && (
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Default password
+                  <input
+                    required
+                    minLength={8}
+                    maxLength={72}
+                    name="password"
+                    type="password"
+                    autoComplete="new-password"
+                    className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                    style={fieldStyle}
+                  />
+                  <span className="mt-1 block font-normal normal-case tracking-normal">
+                    Minimum 8 characters. The agent must change it at first
+                    sign-in.
+                  </span>
+                </label>
+              )}
               <label
                 className="block text-xs font-700 uppercase tracking-wider"
                 style={{ color: "var(--muted-foreground)" }}
@@ -1507,9 +1585,10 @@ export default function Agents() {
               className="mb-5 text-xs leading-5"
               style={{ color: "var(--muted-foreground)" }}
             >
-              An invitation will be sent to this email. The agent will choose a
-              password when accepting it and sign in with username{" "}
-              <strong>{linkingAgent.username}</strong>.
+              Set the agent’s login email and initial password. No invitation
+              email is sent; share these credentials directly. They sign in with
+              username <strong>{linkingAgent.username}</strong> and must change
+              the password at first sign-in.
             </p>
             <label
               className="block text-xs font-700 uppercase tracking-wider"
@@ -1526,6 +1605,22 @@ export default function Agents() {
                 style={fieldStyle}
               />
             </label>
+            <label
+              className="mt-4 block text-xs font-700 uppercase tracking-wider"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Default password
+              <input
+                required
+                minLength={8}
+                maxLength={72}
+                name="password"
+                type="password"
+                autoComplete="new-password"
+                className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                style={fieldStyle}
+              />
+            </label>
             <div className="mt-6 flex gap-3">
               <button
                 type="submit"
@@ -1536,7 +1631,7 @@ export default function Agents() {
                   color: "var(--primary-foreground)",
                 }}
               >
-                {saving ? "Sending invitation…" : "Send invitation"}
+                {saving ? "Creating login…" : "Create login"}
               </button>
               <button
                 type="button"

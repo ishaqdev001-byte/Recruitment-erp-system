@@ -1135,6 +1135,16 @@ export async function POST(request: Request) {
         { status: 400, headers: responseHeaders },
       )
 
+    if (body.action === "link-agent-account") {
+      return NextResponse.json(
+        {
+          error:
+            "Agent logins are now created directly from Agents with an initial password; invitation emails are not used.",
+        },
+        { status: 410, headers: responseHeaders },
+      )
+    }
+
     const access = await getAuthorizedCompany(
       body.action === "link-agent-account" ? "agents.manage" : "users.edit",
     )

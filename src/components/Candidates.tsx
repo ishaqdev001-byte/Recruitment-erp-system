@@ -128,6 +128,10 @@ function candidateFromRecord(value: Record<string, unknown>): Candidate {
           (entry): entry is string => typeof entry === "string",
         )
       : []
+  const isPartnerSource = text("source").trim().toLocaleLowerCase() === "partner"
+  const referralPartnerName = text("referralPartnerName")
+  const agentName = typeof value.agent_name === "string" ? value.agent_name : ""
+
   return {
     id: typeof value.id === "string" ? value.id : crypto.randomUUID(),
     inquiryNumber:
@@ -150,7 +154,7 @@ function candidateFromRecord(value: Record<string, unknown>): Candidate {
     source: text("source"),
     referralPartnerId: text("referralPartnerId"),
     referralPartnerName: text("referralPartnerName"),
-    agent: typeof value.agent_name === "string" ? value.agent_name : "",
+    agent: isPartnerSource ? referralPartnerName || agentName : agentName,
     agentUserId:
       typeof value.agent_id === "string"
         ? value.agent_id

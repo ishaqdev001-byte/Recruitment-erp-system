@@ -465,7 +465,7 @@ export async function GET() {
       .from("candidates")
 
       .select(
-        "id, source_row_number, branch_id, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by, case_handler_user_id",
+        "id, source_row_number, branch_id, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_id, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by, case_handler_user_id",
       )
 
       .eq("company_id", membership.company_id)
@@ -493,6 +493,30 @@ export async function GET() {
     if (peopleError)
       console.error("Candidate staff-name lookup failed", peopleError)
 
+    const agentAdmin = createCandidateAdminClient()
+    if (!agentAdmin) {
+      return NextResponse.json(
+        {
+          error:
+            "Agent options require SUPABASE_SERVICE_ROLE_KEY in the server environment.",
+        },
+        { status: 503, headers },
+      )
+    }
+    const { data: rosterAgents, error: rosterAgentError } = await agentAdmin
+      .from("company_recruitment_agents")
+      .select("id, name")
+      .eq("company_id", membership.company_id)
+      .eq("status", "active")
+      .order("name")
+    if (rosterAgentError) {
+      console.error("Candidate agent roster lookup failed", rosterAgentError)
+      return NextResponse.json(
+        { error: "Unable to load candidate agent options." },
+        { status: 503, headers },
+      )
+    }
+
     const names = new Map(
       (people ?? []).map((person: { user_id: string; display_name: string }) => [
         person.user_id,
@@ -500,17 +524,10 @@ export async function GET() {
       ]),
     )
 
-    const agentOptions = (people ?? [])
-
-      .filter((person: { role_name?: string | null }) =>
-        person.role_name?.toLocaleLowerCase().includes("agent"),
-      )
-
-      .map((person: { user_id: string; display_name: string }) => ({
-        userId: person.user_id,
-
-        displayName: person.display_name,
-      }))
+    const agentOptions = (rosterAgents ?? []).map((agent) => ({
+      userId: agent.id,
+      displayName: agent.name,
+    }))
 
     const canAssignCaseHandlerToCandidates =
       company.primary_admin_user_id === user.id || Boolean(canAssignCaseHandler)
@@ -993,6 +1010,7 @@ export async function POST(request: Request) {
       }
     }
 
+    let inquiryAgentId: string | null = null
     let inquiryAgentUserId: string | null = null
 
     let inquiryCreatedBy: string | null = null
@@ -1001,7 +1019,9 @@ export async function POST(request: Request) {
       const { data: inquiry, error: inquiryError } = await supabase
         .from("candidate_inquiries")
 
-        .select("id, agent_user_id, created_by, first_name, last_name, phone")
+        .select(
+          "id, agent_id, agent_user_id, created_by, first_name, last_name, phone",
+        )
 
         .eq("id", inquiryId)
         .eq("company_id", membership.company_id)
@@ -1030,15 +1050,18 @@ export async function POST(request: Request) {
         )
       }
 
+      inquiryAgentId = inquiry.agent_id
       inquiryAgentUserId = inquiry.agent_user_id
 
       inquiryCreatedBy = inquiry.created_by
     }
 
     const requestedAgentUserId =
-      typeof body.agentUserId === "string" && body.agentUserId
-        ? body.agentUserId
-        : null
+      typeof body.agentId === "string" && body.agentId
+        ? body.agentId
+        : typeof body.agentUserId === "string" && body.agentUserId
+          ? body.agentUserId
+          : null
 
     if (requestedAgentUserId && !isUuid(requestedAgentUserId)) {
       return NextResponse.json({ error: "The assigned agent is invalid." }, {
@@ -1047,36 +1070,41 @@ export async function POST(request: Request) {
       })
     }
 
-    const { data: people, error: peopleError } = await supabase.rpc(
-      "list_candidate_inquiry_people",
-
-      { requested_company_id: membership.company_id },
-    )
-
-    if (peopleError) {
-      console.error("Candidate agent lookup failed", peopleError)
-
+    const agentAdmin = createCandidateAdminClient()
+    if (!agentAdmin) {
+      return NextResponse.json(
+        {
+          error:
+            "Agent assignment requires SUPABASE_SERVICE_ROLE_KEY in the server environment.",
+        },
+        { status: 503, headers },
+      )
+    }
+    const { data: agents, error: agentError } = await agentAdmin
+      .from("company_recruitment_agents")
+      .select("id, name, linked_user_id")
+      .eq("company_id", membership.company_id)
+      .eq("status", "active")
+    if (agentError) {
+      console.error("Candidate agent lookup failed", agentError)
       return NextResponse.json(
         { error: "Unable to verify the assigned agent." },
         { status: 503, headers },
       )
     }
 
-    const agents = (people ?? []).filter((person: { role_name: string }) =>
-      person.role_name.toLocaleLowerCase().includes("agent"),
-    )
-
     const requestedAgentName =
       typeof body.agent === "string" ? body.agent.trim() : ""
 
     let assignedAgent = requestedAgentUserId
       ? agents.find(
-          (person: { user_id: string }) =>
-            person.user_id === requestedAgentUserId,
+          (person) =>
+            person.id === requestedAgentUserId ||
+            person.linked_user_id === requestedAgentUserId,
         )
       : agents.find(
-          (person: { display_name: string }) =>
-            person.display_name.trim().toLocaleLowerCase() ===
+          (person) =>
+            person.name.trim().toLocaleLowerCase() ===
             requestedAgentName.toLocaleLowerCase(),
         )
 
@@ -1088,7 +1116,10 @@ export async function POST(request: Request) {
     }
 
     if (candidateScope === "assigned") {
-      if (requestedAgentUserId && requestedAgentUserId !== user.id) {
+      const ownAgent = agents.find(
+        (person) => person.linked_user_id === user.id,
+      )
+      if (requestedAgentUserId && assignedAgent?.id !== ownAgent?.id) {
         return NextResponse.json(
           {
             error: "You can only assign candidates to your own agent account.",
@@ -1097,17 +1128,15 @@ export async function POST(request: Request) {
         )
       }
 
+      assignedAgent = ownAgent
+    } else if (!assignedAgent && (inquiryAgentId || inquiryAgentUserId)) {
       assignedAgent = agents.find(
-        (person: { user_id: string }) => person.user_id === user.id,
-      )
-    } else if (!assignedAgent && inquiryAgentUserId) {
-      assignedAgent = agents.find(
-        (person: { user_id: string }) => person.user_id === inquiryAgentUserId,
+        (person) =>
+          person.id === inquiryAgentId ||
+          person.linked_user_id === inquiryAgentUserId,
       )
     } else if (!assignedAgent && inquiryCreatedBy === user.id) {
-      assignedAgent = agents.find(
-        (person: { user_id: string }) => person.user_id === user.id,
-      )
+      assignedAgent = agents.find((person) => person.linked_user_id === user.id)
     }
 
     if (requestedAgentName && !assignedAgent && candidateScope !== "assigned") {
@@ -1117,9 +1146,10 @@ export async function POST(request: Request) {
       )
     }
 
-    const agentUserId = assignedAgent?.user_id ?? null
+    const agentId = assignedAgent?.id ?? null
+    const agentUserId = assignedAgent?.linked_user_id ?? null
 
-    const agentName = assignedAgent?.display_name ?? requestedAgentName
+    const agentName = assignedAgent?.name ?? requestedAgentName
 
     if (sourceType === "recruitment agent" && !assignedAgent) {
       return NextResponse.json(
@@ -1322,6 +1352,8 @@ export async function POST(request: Request) {
 
         agent_name: agentName,
 
+        agent_id: agentId,
+
         agent_user_id: agentUserId,
 
         religion: typeof body.religion === "string" ? body.religion.trim() : "",
@@ -1342,7 +1374,7 @@ export async function POST(request: Request) {
         details,
       })
       .select(
-        "id, source_row_number, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by",
+        "id, source_row_number, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_id, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by",
       )
       .single()
 
@@ -1424,6 +1456,13 @@ export async function POST(request: Request) {
         { status: error?.code === "23505" ? 409 : 403, headers },
       )
     }
+
+    const { data: people, error: peopleError } = await supabase.rpc(
+      "list_candidate_inquiry_people",
+      { requested_company_id: membership.company_id },
+    )
+    if (peopleError)
+      console.error("Candidate creator-name lookup failed", peopleError)
 
     const actorNames = new Map(
       (people ?? []).map((person: { user_id: string; display_name: string }) => [

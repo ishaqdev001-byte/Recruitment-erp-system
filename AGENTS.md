@@ -2,6 +2,8 @@
 
 Next.js App Router application using React 19, TypeScript, and Tailwind CSS v4.
 
+For the standalone Recruitment Agent roster and account linking, apply `supabase/migrations/20261124160000_company_recruitment_agent_roster.sql`. Users with `agents.manage` can create accountless agents, assign them to candidates, and link them later by sending an invitation to their email; linked agents sign in on the company login page using their company-scoped username. Only the Chairman can reset linked agent passwords. The permission is enabled for Chairman roles and can be assigned to other roles in Users & Roles. Accountless agents receive Pipeline bulk-SMS updates at their saved phone number; SMSUG configuration and charges apply. Agent invitations use the existing server-only `SYSTEM_SMTP_*` email settings. This standalone roster replaces the older Users & Roles note below that describes the Agents page as listing only company users.
+
 ## Development
 
 Run `pnpm dev` to start the development server on port `37737`, `pnpm build` to create a production build, and `pnpm start` to serve it on the same port. Deployments using the start script must expose/forward TCP port `37737`.

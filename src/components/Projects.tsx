@@ -48,7 +48,7 @@ type ProjectForm = {
   projectName: string;
   accountId: string;
   projectManagerId: string;
-  projectSourceType: ProjectSourceType;
+  projectSourceType: ProjectSourceType | "";
   partnerId: string;
   contractorName: string;
   country: string;
@@ -81,7 +81,7 @@ type ProjectManagerOption = { id: string; name: string; position: string };
 type ProjectStaffOption = { id: string; name: string; position: string };
 
 const initialForm = (): ProjectForm => ({
-  projectName: "", accountId: "", projectManagerId: "", projectSourceType: "contractor", partnerId: "", contractorName: "", country: "", salaryRange: "", ageBracket: "",
+  projectName: "", accountId: "", projectManagerId: "", projectSourceType: "", partnerId: "", contractorName: "", country: "", salaryRange: "", ageBracket: "",
   totalDemand: "", contractorServiceCharge: "", partnerServiceCharge: "", candidateServiceCharge: "", interviewMode: "Face to face", status: "active",
   visaCount: "0", ticketCount: "0",
 });
@@ -211,8 +211,13 @@ export default function Projects() {
 
   const saveProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const projectSourceType = form.projectSourceType;
+    if (!projectSourceType) {
+      setError("Choose whether this project is from a contractor or a partner.");
+      return;
+    }
     const matchingContractor =
-      form.projectSourceType === "contractor"
+      projectSourceType === "contractor"
         ? contractors.find(
             (contractor) =>
               contractor.company_name.toLocaleLowerCase() ===
@@ -220,7 +225,7 @@ export default function Projects() {
           )
         : null;
     const matchingPartner =
-      form.projectSourceType === "partner"
+      projectSourceType === "partner"
         ? partners.find((partner) => partner.id === form.partnerId) ??
           (editingProject?.partner_id === form.partnerId
             ? {
@@ -229,11 +234,11 @@ export default function Projects() {
               }
             : null)
         : null;
-    if (form.projectSourceType === "contractor" && !matchingContractor) {
+    if (projectSourceType === "contractor" && !matchingContractor) {
       setError("Select a registered contractor so visa charges can appear in Contractor Finance.");
       return;
     }
-    if (form.projectSourceType === "partner" && !matchingPartner) {
+    if (projectSourceType === "partner" && !matchingPartner) {
       setError("Select an active partner registered by this company.");
       return;
     }
@@ -245,17 +250,17 @@ export default function Projects() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectName: form.projectName,
-          accountId: form.accountId,
-          projectSourceType: form.projectSourceType,
+          ...(!editingProject ? { accountId: form.accountId } : {}),
+          projectSourceType,
           partnerId: matchingPartner?.id ?? null,
           ...(!editingProject || permissions.canViewFull
             ? {
                 partnerServiceCharge:
-                  form.projectSourceType === "partner"
+                  projectSourceType === "partner"
                     ? form.partnerServiceCharge || "0"
                     : "0",
                 contractorServiceCharge:
-                  form.projectSourceType === "contractor"
+                  projectSourceType === "contractor"
                     ? form.contractorServiceCharge || "0"
                     : "0",
               }
@@ -429,7 +434,7 @@ export default function Projects() {
               {!loading && filteredProjects.map((project) => <tr key={project.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3"><div className="flex items-center gap-1"><button type="button" aria-label={`Edit ${project.project_name}`} title="Edit project" disabled={!permissions.canEdit} onClick={() => openEditProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "var(--muted-foreground)" }}><Pencil size={15} aria-hidden="true" /></button><button type="button" aria-label={`View visa candidates for ${project.project_name}`} title="View visa candidates" onClick={() => openVisaCandidates(project)} className="p-2" style={{ color: "var(--foreground)" }}><Eye size={15} aria-hidden="true" /></button><button type="button" aria-label={`Delete ${project.project_name}`} title="Delete project" disabled={!permissions.canDelete} onClick={() => void deleteProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "#ef4444" }}><Trash2 size={15} aria-hidden="true" /></button></div></td>
                 <td className="whitespace-nowrap px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>{project.project_name}</td>
-                <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.contractor_name}</td>
+                <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.project_source_type === "partner" ? "Partner: " : "Contractor: "}{project.contractor_name}</td>
                 {projectSettings.projectsManagerEnabled && <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.project_manager_name || "Unassigned"}</td>}
                 <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>
                   {project.can_assign_staff ? (
@@ -479,7 +484,7 @@ export default function Projects() {
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project name<input required maxLength={200} value={form.projectName} onChange={(event) => setForm((current) => ({ ...current, projectName: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             {!editingProject && <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project account<select required value={form.accountId} onChange={(event) => setForm((current) => ({ ...current, accountId: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}><option value="">Select an active account</option>{accountOptions.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select>{accountOptions.length === 0 && <span className="mt-1 block normal-case tracking-normal text-amber-500">No active account is available for your branch. Ask an administrator to configure one.</span>}</label>}
             {permissions.canManageManagers && projectSettings.projectsManagerEnabled && <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Projects Manager<SearchableSelect required={managerOptions.length > 0} disabled={managerOptions.length === 0} ariaLabel="Search and select Projects Manager from company staff" value={form.projectManagerId} onChange={(projectManagerId) => setForm((current) => ({ ...current, projectManagerId }))} options={managerOptions.map((manager) => ({ value: manager.id, label: manager.name, description: manager.position || "Projects Manager" }))} placeholder={managerOptions.length ? "Search at least 2 characters" : "No active Projects Manager"} minQueryLength={2} className="mt-1 normal-case tracking-normal" />{managerOptions.length === 0 && <span className="mt-1 block normal-case tracking-normal text-amber-500">No active Projects Manager is available. You can still assign this project to staff from the project list.</span>}</label>}
-            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project source<select required disabled={Boolean(editingProject && !permissions.canViewFull)} value={form.projectSourceType} onChange={(event) => { const projectSourceType = event.target.value as ProjectSourceType; setForm((current) => ({ ...current, projectSourceType, partnerId: "", contractorName: "", contractorServiceCharge: projectSourceType === "contractor" ? "" : "0", partnerServiceCharge: projectSourceType === "partner" ? "" : "0" })); }} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none disabled:opacity-60" style={fieldStyle}><option value="contractor">From a contractor</option><option value="partner">From a partner</option></select>{editingProject && !permissions.canViewFull && <span className="mt-1 block normal-case tracking-normal">Only users with full project access can change the source or service charge.</span>}</label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project source<select required disabled={Boolean(editingProject && !permissions.canViewFull)} value={form.projectSourceType} onChange={(event) => { const projectSourceType = event.target.value as ProjectSourceType; setForm((current) => ({ ...current, projectSourceType, partnerId: "", contractorName: "", contractorServiceCharge: projectSourceType === "contractor" ? "" : "0", partnerServiceCharge: projectSourceType === "partner" ? "" : "0" })); }} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none disabled:opacity-60" style={fieldStyle}><option value="" disabled>Select a project source</option><option value="contractor">From a contractor</option><option value="partner">From a partner</option></select>{editingProject && !permissions.canViewFull && <span className="mt-1 block normal-case tracking-normal">Only users with full project access can change the source or service charge.</span>}</label>
             {form.projectSourceType === "contractor" ? (
               <label className="relative z-20 block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Contractor name<SearchableSelect required ariaLabel="Select a registered contractor" value={form.contractorName} onChange={(contractorName) => setForm((current) => ({ ...current, contractorName }))} options={contractors.map((contractor) => ({ value: contractor.company_name, label: contractor.company_name }))} placeholder={contractors.length ? "Search registered contractors" : "No contractors registered"} className="z-50 mt-1 normal-case tracking-normal" /></label>
             ) : (

@@ -8,6 +8,7 @@ import {
   UserRound,
   Users,
   UserCheck,
+  UserPlus,
   UserX,
 } from "lucide-react"
 import { matchesSearch } from "@/lib/search"
@@ -15,12 +16,13 @@ import { matchesSearch } from "@/lib/search"
 type AgentRecord = {
   id: string
   name: string
+  username: string
   email: string
   phone: string
   branch: string
   branchId: string | null
-  roleId: string
-  role: string
+  linkedUserId: string | null
+  hasAccount: boolean
   status: string
 }
 
@@ -34,6 +36,7 @@ type CandidateRecord = {
   id: string
   first_name: string
   last_name: string
+  agent_id?: string | null
   agent_name: string
   agent_user_id: string | null
   details: Record<string, unknown> | null
@@ -52,9 +55,11 @@ type AgentCandidateRecord = {
   createdAt: string
 }
 type AgentPayload = {
-  users: AgentRecord[]
+  agents: AgentRecord[]
   branches?: BranchRecord[]
-  canEditAgentDetails?: boolean
+  canManageAgents?: boolean
+  canViewCandidates?: boolean
+  canResetPasswords?: boolean
   error?: string
 }
 
@@ -74,10 +79,12 @@ function candidateMetrics(
     agents.filter((entry) => normalized(entry.name) === normalized(agent.name))
       .length === 1
   const assigned = candidates.filter((candidate) =>
-    candidate.agent_user_id
-      ? candidate.agent_user_id === agent.id
-      : nameIsUnique &&
-        normalized(candidate.agent_name) === normalized(agent.name),
+    candidate.agent_id
+      ? candidate.agent_id === agent.id
+      : candidate.agent_user_id
+        ? candidate.agent_user_id === agent.linkedUserId
+        : nameIsUnique &&
+          normalized(candidate.agent_name) === normalized(agent.name),
   )
   const lifecycle = assigned.map((candidate) => candidate.details ?? {})
   const deployed = lifecycle.filter(
@@ -120,8 +127,12 @@ export default function Agents() {
     useState<AgentCandidateRecord[]>([])
   const [search, setSearch] = useState("")
   const [editingAgent, setEditingAgent] = useState<AgentRecord | null>(null)
-  const [canEditAgentDetails, setCanEditAgentDetails] = useState(false)
-  const [canDelete, setCanDelete] = useState(false)
+  const [creatingAgent, setCreatingAgent] = useState(false)
+  const [linkingAgent, setLinkingAgent] = useState<AgentRecord | null>(null)
+  const [resettingAgent, setResettingAgent] = useState<AgentRecord | null>(null)
+  const [canManageAgents, setCanManageAgents] = useState(false)
+  const [canViewCandidates, setCanViewCandidates] = useState(false)
+  const [canResetPasswords, setCanResetPasswords] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [agentCandidatesLoading, setAgentCandidatesLoading] = useState(false)
@@ -135,35 +146,37 @@ export default function Agents() {
       setLoading(true)
       setError("")
       try {
-        const [usersResponse, candidatesResponse] = await Promise.all([
-          fetch("/api/workspace/users", { cache: "no-store" }),
-          fetch("/api/candidates", { cache: "no-store" }),
-        ])
-        const [usersPayload, candidatesPayload] = await Promise.all([
-          usersResponse.json() as Promise<AgentPayload>,
-          candidatesResponse.json() as Promise<{
+        const agentsResponse = await fetch("/api/workspace/agents", {
+          cache: "no-store",
+        })
+        const agentsPayload = (await agentsResponse.json()) as AgentPayload
+        if (!agentsResponse.ok)
+          throw new Error(
+            agentsPayload.error ?? "Unable to load company agents.",
+          )
+        let candidateRows: CandidateRecord[] = []
+        if (agentsPayload.canViewCandidates) {
+          const candidatesResponse = await fetch("/api/candidates", {
+            cache: "no-store",
+          })
+          const candidatesPayload = (await candidatesResponse.json()) as {
             candidates?: CandidateRecord[]
             error?: string
-          }>,
-        ])
-        if (!usersResponse.ok)
-          throw new Error(
-            usersPayload.error ?? "Unable to load company agents.",
-          )
-        if (!candidatesResponse.ok)
-          throw new Error(
-            candidatesPayload.error ?? "Unable to load candidate assignments.",
-          )
+          }
+          if (!candidatesResponse.ok)
+            throw new Error(
+              candidatesPayload.error ??
+                "Unable to load candidate assignments.",
+            )
+          candidateRows = candidatesPayload.candidates ?? []
+        }
         if (cancelled) return
-        setAgents(
-          usersPayload.users.filter((user) =>
-            normalized(user.role) === "recruitment agent",
-          ),
-        )
-        setBranches(usersPayload.branches ?? [])
-        setCanEditAgentDetails(usersPayload.canEditAgentDetails === true)
-        setCanDelete(usersPayload.canDeleteAgents === true)
-        setCandidates(candidatesPayload.candidates ?? [])
+        setAgents(agentsPayload.agents ?? [])
+        setBranches(agentsPayload.branches ?? [])
+        setCanManageAgents(agentsPayload.canManageAgents === true)
+        setCanViewCandidates(agentsPayload.canViewCandidates === true)
+        setCanResetPasswords(agentsPayload.canResetPasswords === true)
+        setCandidates(candidateRows)
       } catch (loadError) {
         if (!cancelled)
           setError(
@@ -234,13 +247,14 @@ export default function Agents() {
     setSaving(true)
     setError("")
     try {
-      const response = await fetch("/api/workspace/users", {
+      const response = await fetch("/api/workspace/agents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "edit-agent-details",
-          userId: editingAgent.id,
+          action: "update",
+          agentId: editingAgent.id,
           name: String(formData.get("name") ?? "").trim(),
+          username: String(formData.get("username") ?? "").trim(),
           phone: String(formData.get("phone") ?? "").trim(),
           email: String(formData.get("email") ?? "").trim(),
           branchId: String(formData.get("branchId") ?? ""),
@@ -262,16 +276,154 @@ export default function Agents() {
     }
   }
 
+  const createAgent = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const formData = new FormData(event.currentTarget)
+    setSaving(true)
+    setError("")
+    try {
+      const response = await fetch("/api/workspace/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          name: String(formData.get("name") ?? "").trim(),
+          username: String(formData.get("username") ?? "").trim(),
+          phone: String(formData.get("phone") ?? "").trim(),
+          email: String(formData.get("email") ?? "").trim(),
+          branchId: String(formData.get("branchId") ?? ""),
+        }),
+      })
+      const payload = (await response.json()) as { error?: string }
+      if (!response.ok)
+        throw new Error(payload.error ?? "Unable to add this agent.")
+      setCreatingAgent(false)
+      setReloadKey((key) => key + 1)
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "Unable to add this agent.",
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const linkAgent = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!linkingAgent) return
+    const formData = new FormData(event.currentTarget)
+    setSaving(true)
+    setError("")
+    try {
+      const response = await fetch("/api/workspace/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "link-agent-account",
+          agentId: linkingAgent.id,
+          email: String(formData.get("email") ?? "").trim(),
+        }),
+      })
+      const payload = (await response.json()) as {
+        error?: string
+        invitationEmailWarning?: string
+      }
+      if (!response.ok)
+        throw new Error(payload.error ?? "Unable to link this agent.")
+      setLinkingAgent(null)
+      if (payload.invitationEmailWarning)
+        setError(payload.invitationEmailWarning)
+      setReloadKey((key) => key + 1)
+    } catch (linkError) {
+      setError(
+        linkError instanceof Error
+          ? linkError.message
+          : "Unable to link this agent.",
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const setAgentStatus = async (agent: AgentRecord) => {
+    setError("")
+    try {
+      const response = await fetch("/api/workspace/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "status",
+          agentId: agent.id,
+          status: agent.status === "active" ? "disabled" : "active",
+        }),
+      })
+      const payload = (await response.json()) as { error?: string }
+      if (!response.ok)
+        throw new Error(payload.error ?? "Unable to change agent status.")
+      setReloadKey((key) => key + 1)
+    } catch (statusError) {
+      setError(
+        statusError instanceof Error
+          ? statusError.message
+          : "Unable to change agent status.",
+      )
+    }
+  }
+
+  const resetAgentPassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!resettingAgent) return
+    const formData = new FormData(event.currentTarget)
+    setSaving(true)
+    setError("")
+    try {
+      const response = await fetch("/api/workspace/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reset-password",
+          agentId: resettingAgent.id,
+          password: String(formData.get("password") ?? ""),
+        }),
+      })
+      const payload = (await response.json()) as { error?: string }
+      if (!response.ok)
+        throw new Error(payload.error ?? "Unable to reset agent password.")
+      setResettingAgent(null)
+      setError("Password reset. The agent must change it at the next sign-in.")
+    } catch (resetError) {
+      setError(
+        resetError instanceof Error
+          ? resetError.message
+          : "Unable to reset agent password.",
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const deleteAgent = async (agent: AgentRecord) => {
     if (!window.confirm(`Delete agent "${agent.name}"?`)) return
     setError("")
     try {
-      const response = await fetch(`/api/workspace/users/${encodeURIComponent(agent.id)}`, { method: "DELETE" })
-      const payload = await response.json() as { error?: string }
-      if (!response.ok) throw new Error(payload.error ?? "Unable to delete agent.")
+      const response = await fetch("/api/workspace/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", agentId: agent.id }),
+      })
+      const payload = (await response.json()) as { error?: string }
+      if (!response.ok)
+        throw new Error(payload.error ?? "Unable to delete agent.")
       setAgents((current) => current.filter((item) => item.id !== agent.id))
+      if (selectedAgentId === agent.id) setSelectedAgentId(null)
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete agent.")
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Unable to delete agent.",
+      )
     }
   }
 
@@ -317,6 +469,15 @@ export default function Agents() {
               >
                 {selectedAgent.name}
               </h1>
+              <p
+                className="mt-1 text-xs"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                @{selectedAgent.username} ·{" "}
+                {selectedAgent.hasAccount
+                  ? "Linked account"
+                  : "No login account"}
+              </p>
             </div>
           </div>
           <span
@@ -370,6 +531,11 @@ export default function Agents() {
               >
                 {[
                   ["Full name", selectedAgent.name],
+                  ["Username", selectedAgent.username],
+                  [
+                    "Account",
+                    selectedAgent.hasAccount ? "Linked" : "No login account",
+                  ],
                   ["Phone number", selectedAgent.phone || "Not provided"],
                   ["Email address", selectedAgent.email || "Not provided"],
                   ["Registered branch", selectedAgent.branch || "Not provided"],
@@ -710,6 +876,23 @@ export default function Agents() {
               : `${agents.length} agents in this company`}
           </p>
         </div>
+        {canManageAgents && (
+          <button
+            type="button"
+            onClick={() => {
+              setError("")
+              setCreatingAgent(true)
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-600"
+            style={{
+              background: "var(--primary)",
+              color: "var(--primary-foreground)",
+            }}
+          >
+            <UserPlus size={16} aria-hidden="true" />
+            Add agent
+          </button>
+        )}
       </header>
 
       <div
@@ -850,7 +1033,7 @@ export default function Agents() {
                     >
                       {agents.length
                         ? "No agents match this search."
-                        : "No Recruitment Agent accounts found for this company."}
+                        : "No Recruitment Agents found for this company."}
                     </td>
                   </tr>
                 )}
@@ -866,7 +1049,7 @@ export default function Agents() {
                       >
                         <td className="px-4 py-3">
                           <div className="inline-flex gap-2">
-                            {canEditAgentDetails && (
+                            {canManageAgents && (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -883,19 +1066,67 @@ export default function Agents() {
                                 Edit
                               </button>
                             )}
-                            <button
-                              type="button"
-                              onClick={() => setSelectedAgentId(agent.id)}
-                              className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
-                              style={{
-                                borderColor: "var(--border)",
-                                color: "var(--foreground)",
-                              }}
-                            >
-                              <Eye size={14} aria-hidden="true" />
-                              View
-                            </button>
-                            {canDelete && (
+                            {canManageAgents && !agent.hasAccount && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setError("")
+                                  setLinkingAgent(agent)
+                                }}
+                                className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "var(--foreground)",
+                                }}
+                              >
+                                <UserPlus size={14} aria-hidden="true" />
+                                Link account
+                              </button>
+                            )}
+                            {canResetPasswords && agent.hasAccount && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setError("")
+                                  setResettingAgent(agent)
+                                }}
+                                className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "var(--foreground)",
+                                }}
+                              >
+                                Reset password
+                              </button>
+                            )}
+                            {canManageAgents && (
+                              <button
+                                type="button"
+                                onClick={() => void setAgentStatus(agent)}
+                                className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: isActive ? "#ef4444" : "#10b981",
+                                }}
+                              >
+                                {isActive ? "Deactivate" : "Activate"}
+                              </button>
+                            )}
+                            {canViewCandidates && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedAgentId(agent.id)}
+                                className="inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-600"
+                                style={{
+                                  borderColor: "var(--border)",
+                                  color: "var(--foreground)",
+                                }}
+                              >
+                                <Eye size={14} aria-hidden="true" />
+                                View
+                              </button>
+                            )}
+                            {canManageAgents && (
                               <button
                                 type="button"
                                 onClick={() => void deleteAgent(agent)}
@@ -934,7 +1165,14 @@ export default function Agents() {
                               className="font-600"
                               style={{ color: "var(--foreground)" }}
                             >
-                              {agent.name}
+                              <span className="block">{agent.name}</span>
+                              <span
+                                className="mt-0.5 block text-xs font-normal"
+                                style={{ color: "var(--muted-foreground)" }}
+                              >
+                                @{agent.username} ·{" "}
+                                {agent.hasAccount ? "Login linked" : "No login"}
+                              </span>
                             </span>
                           </div>
                         </td>
@@ -960,7 +1198,7 @@ export default function Agents() {
                           className="px-4 py-3 mono font-700"
                           style={{ color: "var(--primary)" }}
                         >
-                          {metrics.assigned.length}
+                          {canViewCandidates ? metrics.assigned.length : "—"}
                         </td>
                         <td className="px-4 py-3">
                           <span
@@ -1026,9 +1264,26 @@ export default function Agents() {
                 className="block text-xs font-700 uppercase tracking-wider"
                 style={{ color: "var(--muted-foreground)" }}
               >
+                Username
+                <input
+                  required
+                  minLength={3}
+                  maxLength={80}
+                  name="username"
+                  defaultValue={editingAgent.username}
+                  pattern="[A-Za-z0-9._-]{3,80}"
+                  className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={fieldStyle}
+                />
+              </label>
+              <label
+                className="block text-xs font-700 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 Phone number
                 <input
-                  maxLength={100}
+                  required
+                  maxLength={30}
                   name="phone"
                   type="tel"
                   defaultValue={editingAgent.phone}
@@ -1042,11 +1297,11 @@ export default function Agents() {
               >
                 Email address
                 <input
-                  required
                   maxLength={200}
                   name="email"
                   type="email"
                   defaultValue={editingAgent.email}
+                  disabled={editingAgent.hasAccount}
                   className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
                   style={fieldStyle}
                 />
@@ -1076,8 +1331,9 @@ export default function Agents() {
               className="mt-4 text-xs leading-5"
               style={{ color: "var(--muted-foreground)" }}
             >
-              Changing the email changes this user’s login address immediately
-              and applies to any company memberships on the same account.
+              Accountless agents do not have a login until you link an email
+              account. Linked account email changes are managed from Users &
+              Roles.
             </p>
             <div className="mt-6 flex gap-3">
               <button
@@ -1095,6 +1351,261 @@ export default function Agents() {
                 type="button"
                 disabled={saving}
                 onClick={() => setEditingAgent(null)}
+                className="flex-1 border py-2 text-sm disabled:opacity-50"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--muted-foreground)",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {creatingAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <form
+            onSubmit={createAgent}
+            className="max-h-[90dvh] w-full max-w-md overflow-y-auto border p-6"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <h2
+              className="mb-2 text-lg font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Add Recruitment Agent
+            </h2>
+            <p
+              className="mb-5 text-xs leading-5"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              This creates an agent roster entry without a login. You can link
+              an account and send an invitation later.
+            </p>
+            <div className="space-y-4">
+              <label
+                className="block text-xs font-700 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Full name
+                <input
+                  required
+                  maxLength={200}
+                  name="name"
+                  className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={fieldStyle}
+                />
+              </label>
+              <label
+                className="block text-xs font-700 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Username
+                <input
+                  required
+                  minLength={3}
+                  maxLength={80}
+                  name="username"
+                  pattern="[A-Za-z0-9._-]{3,80}"
+                  autoComplete="off"
+                  className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={fieldStyle}
+                />
+              </label>
+              <label
+                className="block text-xs font-700 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Phone number for agent messages
+                <input
+                  required
+                  maxLength={30}
+                  name="phone"
+                  type="tel"
+                  placeholder="07XXXXXXXX or 2567XXXXXXXX"
+                  className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={fieldStyle}
+                />
+              </label>
+              <label
+                className="block text-xs font-700 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Email address (optional until account linking)
+                <input
+                  maxLength={200}
+                  name="email"
+                  type="email"
+                  className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={fieldStyle}
+                />
+              </label>
+              <label
+                className="block text-xs font-700 uppercase tracking-wider"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                Registered branch
+                <select
+                  required
+                  name="branchId"
+                  defaultValue=""
+                  className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                  style={fieldStyle}
+                >
+                  <option value="">Select a branch</option>
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="mt-6 flex gap-3">
+              <button
+                type="submit"
+                disabled={saving || !branches.length}
+                className="flex-1 py-2 text-sm font-600 disabled:opacity-50"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                {saving ? "Adding agent…" : "Add agent"}
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setCreatingAgent(false)}
+                className="flex-1 border py-2 text-sm disabled:opacity-50"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--muted-foreground)",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {linkingAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <form
+            onSubmit={linkAgent}
+            className="w-full max-w-md border p-6"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <h2
+              className="mb-2 text-lg font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Link {linkingAgent.name}
+            </h2>
+            <p
+              className="mb-5 text-xs leading-5"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              An invitation will be sent to this email. The agent will choose a
+              password when accepting it and sign in with username{" "}
+              <strong>{linkingAgent.username}</strong>.
+            </p>
+            <label
+              className="block text-xs font-700 uppercase tracking-wider"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Login email
+              <input
+                required
+                maxLength={200}
+                name="email"
+                type="email"
+                defaultValue={linkingAgent.email}
+                className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                style={fieldStyle}
+              />
+            </label>
+            <div className="mt-6 flex gap-3">
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex-1 py-2 text-sm font-600 disabled:opacity-50"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                {saving ? "Sending invitation…" : "Send invitation"}
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setLinkingAgent(null)}
+                className="flex-1 border py-2 text-sm disabled:opacity-50"
+                style={{
+                  borderColor: "var(--border)",
+                  color: "var(--muted-foreground)",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {resettingAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <form
+            onSubmit={resetAgentPassword}
+            className="w-full max-w-md border p-6"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <h2
+              className="mb-2 text-lg font-700"
+              style={{ color: "var(--foreground)" }}
+            >
+              Reset {resettingAgent.name}’s password
+            </h2>
+            <p
+              className="mb-5 text-xs leading-5"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Only the Chairman can reset agent passwords. The agent will be
+              required to change this temporary password after signing in.
+            </p>
+            <label
+              className="block text-xs font-700 uppercase tracking-wider"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              Temporary password
+              <input
+                required
+                minLength={8}
+                maxLength={72}
+                name="password"
+                type="password"
+                autoComplete="new-password"
+                className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none"
+                style={fieldStyle}
+              />
+            </label>
+            <div className="mt-6 flex gap-3">
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex-1 py-2 text-sm font-600 disabled:opacity-50"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                }}
+              >
+                {saving ? "Resetting…" : "Reset password"}
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setResettingAgent(null)}
                 className="flex-1 border py-2 text-sm disabled:opacity-50"
                 style={{
                   borderColor: "var(--border)",

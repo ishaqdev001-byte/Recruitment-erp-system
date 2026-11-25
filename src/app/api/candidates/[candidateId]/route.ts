@@ -1,203 +1,531 @@
-import { createClient } from "@supabase/supabase-js";
-import { NextResponse } from "next/server";
-import { isUuid } from "@/lib/server/documents";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { isPassportNumberValid, normalizePassportNumber, passportNumberRule } from "@/lib/passport-number";
+import { createClient } from "@supabase/supabase-js"
 
-export const runtime = "nodejs";
+import { NextResponse } from "next/server"
+
+import { isUuid } from "@/lib/server/documents"
+
+import { createSupabaseServerClient } from "@/lib/supabase/server"
+
+import {
+  isPassportNumberValid,
+  normalizePassportNumber,
+  passportNumberRule,
+} from "@/lib/passport-number"
+
+export const runtime = "nodejs"
 
 const candidateFields = [
-  "first_name", "last_name", "phone", "date_of_birth",
-  "place_of_birth", "agent_name", "religion", "position", "nationality",
-  "father_name", "mother_name",
-] as const;
+  "first_name",
+  "last_name",
+  "phone",
+  "date_of_birth",
+
+  "place_of_birth",
+  "agent_name",
+  "religion",
+  "position",
+  "nationality",
+
+  "father_name",
+  "mother_name",
+] as const
 
 const candidateDetailFields = new Set([
-  "otherNames", "secondaryPhone", "otherPhone", "age", "gender", "maritalStatus", "abroadStatus", "abroadExperience", "source", "mediaChannel", "referralPartnerId", "referralPartnerName",
-  "nin", "passportNumber", "passportIssue", "passportExpiry", "passportStatus", "passportBranch", "passportStorageLocation", "height", "weight", "shirtSize", "shoeSize", "waistSize", "preferredCities",
-  "physicalAddress", "residenceCountry", "residenceState", "district", "county", "subCounty", "parish", "fatherPhone", "fatherStatus", "motherPhone", "motherStatus",
-  "kinFirstName", "kinLastName", "kinPhone", "kinRelationship", "emergencyFirstName", "emergencyLastName", "emergencyPhone", "emergencyRelationship",
-  "jobOfInterest", "preferredCountries", "assignedContracts", "stage", "travelStatus", "visaStatus", "acceptance", "contracts", "contractManager", "branch", "verification", "photo",
-  "educationQualification", "educationInstitution", "educationYearCompleted", "educationField", "lastEmployer", "previousJobTitle", "employmentFrom", "employmentTo", "employmentDuties", "keySkills", "languagesSpoken", "certifications", "recruiterNotes",
-]);
+  "otherNames",
+  "secondaryPhone",
+  "otherPhone",
+  "age",
+  "gender",
+  "maritalStatus",
+  "abroadStatus",
+  "abroadExperience",
+  "source",
+  "mediaChannel",
+  "referralPartnerId",
+  "referralPartnerName",
+
+  "nin",
+  "passportNumber",
+  "passportIssue",
+  "passportExpiry",
+  "passportStatus",
+  "passportBranch",
+  "passportStorageLocation",
+  "height",
+  "weight",
+  "shirtSize",
+  "shoeSize",
+  "waistSize",
+  "preferredCities",
+
+  "physicalAddress",
+  "residenceCountry",
+  "residenceState",
+  "district",
+  "county",
+  "subCounty",
+  "parish",
+  "fatherPhone",
+  "fatherStatus",
+  "motherPhone",
+  "motherStatus",
+
+  "kinFirstName",
+  "kinLastName",
+  "kinPhone",
+  "kinRelationship",
+  "emergencyFirstName",
+  "emergencyLastName",
+  "emergencyPhone",
+  "emergencyRelationship",
+
+  "jobOfInterest",
+  "preferredCountries",
+  "assignedContracts",
+  "stage",
+  "travelStatus",
+  "visaStatus",
+  "acceptance",
+  "contracts",
+  "contractManager",
+  "branch",
+  "verification",
+  "photo",
+
+  "educationQualification",
+  "educationInstitution",
+  "educationYearCompleted",
+  "educationField",
+  "lastEmployer",
+  "previousJobTitle",
+  "employmentFrom",
+  "employmentTo",
+  "employmentDuties",
+  "keySkills",
+  "languagesSpoken",
+  "certifications",
+  "recruiterNotes",
+])
 
 const candidateWorkflowDetailFields = [
   "stage",
+
   "assignedProjectId",
+
   "assignedContracts",
+
   "contracts",
+
   "offerLetter",
+
   "wakalaReceived",
+
   "molReceived",
+
   "enjaz",
+
   "visaStatus",
+
   "visaProjectId",
+
   "visaProjectName",
+
   "visaReceivedAt",
+
   "travelStatus",
+
   "ticketNumber",
+
   "bookingReference",
+
   "travelDate",
+
   "travelTime",
+
   "departureUtc",
+
   "connectingFlights",
 ]
 
 function readCandidateDetails(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const details: Record<string, string | number | string[]> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+
+  const details: Record<string, string | number | string[]> = {}
+
   for (const [key, fieldValue] of Object.entries(value)) {
-    if (!candidateDetailFields.has(key)) continue;
-    if ((key === "passportIssue" || key === "passportExpiry") && typeof fieldValue === "string" && fieldValue
-      && (!/^\d{4}-\d{2}-\d{2}$/.test(fieldValue) || Number.isNaN(Date.parse(`${fieldValue}T00:00:00Z`)))) return null;
-    if (typeof fieldValue === "string" && fieldValue.length <= 4000) details[key] = fieldValue;
-    else if (typeof fieldValue === "number" && key === "age" && Number.isFinite(fieldValue) && fieldValue >= 0 && fieldValue <= 120) details[key] = fieldValue;
-    else if (Array.isArray(fieldValue) && fieldValue.length <= 50 && fieldValue.every((item) => typeof item === "string" && item.length <= 200)) details[key] = fieldValue;
-    else return null;
+    if (!candidateDetailFields.has(key)) continue
+
+    if (
+      (key === "passportIssue" || key === "passportExpiry") &&
+      typeof fieldValue === "string" &&
+      fieldValue &&
+      (!/^\d{4}-\d{2}-\d{2}$/.test(fieldValue) ||
+        Number.isNaN(Date.parse(`${fieldValue}T00:00:00Z`)))
+    )
+      return null
+
+    if (typeof fieldValue === "string" && fieldValue.length <= 4000)
+      details[key] = fieldValue
+    else if (
+      typeof fieldValue === "number" &&
+      key === "age" &&
+      Number.isFinite(fieldValue) &&
+      fieldValue >= 0 &&
+      fieldValue <= 120
+    )
+      details[key] = fieldValue
+    else if (
+      Array.isArray(fieldValue) &&
+      fieldValue.length <= 50 &&
+      fieldValue.every((item) => typeof item === "string" && item.length <= 200)
+    )
+      details[key] = fieldValue
+    else return null
   }
-  return details;
+
+  return details
 }
 
-function passportSetupError(details: Record<string, string | number | string[]>, agentName: string) {
-  const passportNumber = typeof details.passportNumber === "string" ? normalizePassportNumber(details.passportNumber) : "";
-  if (!passportNumber) return "";
-  const nationality = typeof details.nationality === "string" ? details.nationality.trim() : "";
-  if (!nationality) return "Select the candidate nationality.";
-  if (!isPassportNumberValid(nationality, passportNumber)) return passportNumberRule(nationality);
-  if (details.passportStatus !== "Available" && details.passportStatus !== "With Agent") return "Choose whether the passport is available or with the assigned agent.";
-  if (details.passportStatus === "Available" && (
-    typeof details.passportBranch !== "string" || !details.passportBranch.trim()
-    || typeof details.passportStorageLocation !== "string" || !details.passportStorageLocation.trim()
-  )) return "Select a storage branch and location for an available passport.";
-  if (details.passportStatus === "With Agent" && !agentName.trim()) return "Assign an agent when the passport is with an agent.";
-  return "";
+function passportSetupError(
+  details: Record<string, string | number | string[]>,
+  agentName: string,
+) {
+  const passportNumber =
+    typeof details.passportNumber === "string"
+      ? normalizePassportNumber(details.passportNumber)
+      : ""
+
+  if (!passportNumber) return ""
+
+  const nationality =
+    typeof details.nationality === "string" ? details.nationality.trim() : ""
+
+  if (!nationality) return "Select the candidate nationality."
+
+  if (!isPassportNumberValid(nationality, passportNumber))
+    return passportNumberRule(nationality)
+
+  if (
+    details.passportStatus !== "Available" &&
+    details.passportStatus !== "With Agent"
+  )
+    return "Choose whether the passport is available or with the assigned agent."
+
+  if (
+    details.passportStatus === "Available" &&
+    (typeof details.passportBranch !== "string" ||
+      !details.passportBranch.trim() ||
+      typeof details.passportStorageLocation !== "string" ||
+      !details.passportStorageLocation.trim())
+  )
+    return "Select a storage branch and location for an available passport."
+
+  if (details.passportStatus === "With Agent" && !agentName.trim())
+    return "Assign an agent when the passport is with an agent."
+
+  return ""
 }
 
-export async function PATCH(request: Request, context: RouteContext<"/api/candidates/[candidateId]">) {
-  const headers = { "Cache-Control": "private, no-store" };
+export async function PATCH(
+  request: Request,
+  context: RouteContext<"/api/candidates/[candidateId]">,
+) {
+  const headers = { "Cache-Control": "private, no-store" }
 
   try {
-    const { candidateId } = await context.params;
-    if (!isUuid(candidateId)) return NextResponse.json({ error: "Candidate not found." }, { status: 404, headers });
+    const { candidateId } = await context.params
 
-    const supabase = await createSupabaseServerClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: "Authentication required." }, { status: 401, headers });
+    if (!isUuid(candidateId))
+      return NextResponse.json({ error: "Candidate not found." }, {
+        status: 404,
+        headers,
+      })
 
-    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
-    if (!body) return NextResponse.json({ error: "Invalid candidate update." }, { status: 400, headers });
+    const supabase = await createSupabaseServerClient()
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser()
+
+    if (authError || !user)
+      return NextResponse.json({ error: "Authentication required." }, {
+        status: 401,
+        headers,
+      })
+
+    const body = (await request
+      .json()
+      .catch(() => null)) as Record<string, unknown> | null
+
+    if (!body)
+      return NextResponse.json({ error: "Invalid candidate update." }, {
+        status: 400,
+        headers,
+      })
+
     if ("file_number" in body || "fileNumber" in body) {
-      return NextResponse.json({ error: "File numbers are assigned automatically and cannot be changed." }, { status: 400, headers });
+      return NextResponse.json(
+        {
+          error:
+            "File numbers are assigned automatically and cannot be changed.",
+        },
+        { status: 400, headers },
+      )
     }
 
-    const { data: currentCandidate, error: currentCandidateError } = await supabase
-      .from("candidates")
-      .select("company_id, details, agent_user_id")
-      .eq("id", candidateId)
-      .maybeSingle();
+    const { data: currentCandidate, error: currentCandidateError } =
+      await supabase
+
+        .from("candidates")
+
+        .select("company_id, details, agent_id, agent_user_id")
+
+        .eq("id", candidateId)
+
+        .maybeSingle()
+
     if (currentCandidateError || !currentCandidate) {
-      return NextResponse.json({ error: "Candidate not found." }, { status: 404, headers });
+      return NextResponse.json({ error: "Candidate not found." }, {
+        status: 404,
+        headers,
+      })
     }
 
-    const updates: Record<string, string | null | Record<string, unknown>> = {};
+    const updates: Record<string, string | null | Record<string, unknown>> = {}
+
     for (const field of candidateFields) {
-      if (!(field in body)) continue;
-      const value = body[field];
+      if (!(field in body)) continue
+
+      const value = body[field]
+
       if (field === "date_of_birth") {
-        if (value !== null && (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value)))) {
-          return NextResponse.json({ error: "Date of birth is invalid." }, { status: 400, headers });
+        if (
+          value !== null &&
+          (typeof value !== "string" ||
+            !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+            Number.isNaN(Date.parse(value)))
+        ) {
+          return NextResponse.json({ error: "Date of birth is invalid." }, {
+            status: 400,
+            headers,
+          })
         }
-        updates[field] = value as string | null;
-        continue;
+
+        updates[field] = (value as string | null)
+
+        continue
       }
+
       if (typeof value !== "string" || value.length > 200) {
-        return NextResponse.json({ error: `The ${field.replace(/_/g, " ")} value is invalid.` }, { status: 400, headers });
+        return NextResponse.json(
+          { error: `The ${field.replace(/_/g, " ")} value is invalid.` },
+          { status: 400, headers },
+        )
       }
-      updates[field] = value.trim();
+
+      updates[field] = value.trim()
     }
+
     if ("details" in body) {
-      const details = readCandidateDetails(body.details);
-      if (!details) return NextResponse.json({ error: "One or more extended candidate details are invalid." }, { status: 400, headers });
-      const assignedAgent = typeof updates.agent_name === "string" ? updates.agent_name : "";
-      const passportError = passportSetupError(details, assignedAgent);
-      if (passportError) return NextResponse.json({ error: passportError }, { status: 400, headers });
-      const source = typeof details.source === "string" ? details.source.trim() : "";
-      const sourceType = source.toLocaleLowerCase();
+      const details = readCandidateDetails(body.details)
+
+      if (!details)
+        return NextResponse.json(
+          { error: "One or more extended candidate details are invalid." },
+          { status: 400, headers },
+        )
+
+      const assignedAgent =
+        typeof updates.agent_name === "string" ? updates.agent_name : ""
+
+      const passportError = passportSetupError(details, assignedAgent)
+
+      if (passportError)
+        return NextResponse.json({ error: passportError }, {
+          status: 400,
+          headers,
+        })
+
+      const source =
+        typeof details.source === "string" ? details.source.trim() : ""
+
+      const sourceType = source.toLocaleLowerCase()
+
       if (source) {
         const { data: sourceOption, error: sourceError } = await supabase
+
           .from("candidate_source_options")
+
           .select("id")
+
           .eq("company_id", currentCandidate.company_id)
+
           .eq("source", source)
-          .maybeSingle();
+
+          .maybeSingle()
+
         if (sourceError) {
-          console.error("Candidate source validation failed", sourceError);
-          return NextResponse.json({ error: "Unable to verify the selected candidate source." }, { status: 503, headers });
+          console.error("Candidate source validation failed", sourceError)
+
+          return NextResponse.json(
+            { error: "Unable to verify the selected candidate source." },
+            { status: 503, headers },
+          )
         }
+
         if (!sourceOption) {
-          return NextResponse.json({ error: "Select a source configured for this company." }, { status: 400, headers });
+          return NextResponse.json(
+            { error: "Select a source configured for this company." },
+            { status: 400, headers },
+          )
         }
       }
 
-      const currentDetails = currentCandidate.details && typeof currentCandidate.details === "object" && !Array.isArray(currentCandidate.details)
-        ? currentCandidate.details as Record<string, unknown>
-        : {};
+      const currentDetails =
+        currentCandidate.details &&
+        typeof currentCandidate.details === "object" &&
+        !Array.isArray(currentCandidate.details)
+          ? currentCandidate.details as Record<string, unknown>
+          : {}
+
       if (sourceType === "partner") {
-        const referralPartnerId = typeof details.referralPartnerId === "string"
-          ? details.referralPartnerId.trim()
-          : "";
+        const referralPartnerId =
+          typeof details.referralPartnerId === "string"
+            ? details.referralPartnerId.trim()
+            : ""
+
         if (!isUuid(referralPartnerId)) {
-          return NextResponse.json({ error: "Select a registered partner for this referral." }, { status: 400, headers });
+          return NextResponse.json(
+            { error: "Select a registered partner for this referral." },
+            { status: 400, headers },
+          )
         }
-        const serviceUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+        const serviceUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
         if (!serviceUrl || !serviceRoleKey) {
-          return NextResponse.json({ error: "Partner verification is not configured on the server." }, { status: 503, headers });
+          return NextResponse.json(
+            { error: "Partner verification is not configured on the server." },
+            { status: 503, headers },
+          )
         }
-        const admin = createClient(serviceUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-        const { data: partner, error: partnerError } = await admin.from("suppliers")
+
+        const admin = createClient(serviceUrl, serviceRoleKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        })
+
+        const { data: partner, error: partnerError } = await admin
+          .from("suppliers")
+
           .select("id, supplier_name, status")
+
           .eq("id", referralPartnerId)
+
           .eq("company_id", currentCandidate.company_id)
-          .maybeSingle();
+
+          .maybeSingle()
+
         if (partnerError) {
-          console.error("Candidate referral partner validation failed", partnerError);
-          return NextResponse.json({ error: "Unable to verify the selected referral partner." }, { status: 503, headers });
+          console.error(
+            "Candidate referral partner validation failed",
+            partnerError,
+          )
+
+          return NextResponse.json(
+            { error: "Unable to verify the selected referral partner." },
+            { status: 503, headers },
+          )
         }
-        const existingPartnerId = typeof currentDetails.referralPartnerId === "string"
-          ? currentDetails.referralPartnerId
-          : "";
-        if (!partner || (partner.status !== "active" && referralPartnerId !== existingPartnerId)) {
-          return NextResponse.json({ error: "Select an active partner registered by this company." }, { status: 400, headers });
+
+        const existingPartnerId =
+          typeof currentDetails.referralPartnerId === "string"
+            ? currentDetails.referralPartnerId
+            : ""
+
+        if (
+          !partner ||
+          (partner.status !== "active" &&
+            referralPartnerId !== existingPartnerId)
+        ) {
+          return NextResponse.json(
+            { error: "Select an active partner registered by this company." },
+            { status: 400, headers },
+          )
         }
-        details.referralPartnerId = partner.id;
-        details.referralPartnerName = partner.supplier_name;
+
+        details.referralPartnerId = partner.id
+
+        details.referralPartnerName = partner.supplier_name
       } else {
-        details.referralPartnerId = "";
-        details.referralPartnerName = "";
+        details.referralPartnerId = ""
+
+        details.referralPartnerName = ""
       }
+
       if (sourceType === "recruitment agent") {
-        const assignedAgentUserId = Object.prototype.hasOwnProperty.call(updates, "agent_user_id")
-          ? updates.agent_user_id
-          : currentCandidate.agent_user_id;
-        if (typeof assignedAgentUserId !== "string" || !assignedAgentUserId) {
-          return NextResponse.json({ error: "Select an active company Recruitment Agent for this referral." }, { status: 400, headers });
+        const assignedAgentId =
+          typeof body.agentId === "string" && body.agentId
+            ? body.agentId
+            : typeof body.agentUserId === "string" && body.agentUserId
+              ? body.agentUserId
+              : (currentCandidate.agent_id ?? currentCandidate.agent_user_id)
+
+        if (typeof assignedAgentId !== "string" || !assignedAgentId) {
+          return NextResponse.json(
+            {
+              error:
+                "Select an active company Recruitment Agent for this referral.",
+            },
+            { status: 400, headers },
+          )
         }
-        const { data: agentMembership, error: agentMembershipError } = await supabase
-          .from("company_memberships")
-          .select("user_id, role:company_roles!company_memberships_role_id_fkey(name)")
-          .eq("user_id", assignedAgentUserId)
+
+        const serviceUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+        if (!serviceUrl || !serviceRoleKey) {
+          return NextResponse.json(
+            { error: "Agent verification is not configured on the server." },
+            { status: 503, headers },
+          )
+        }
+
+        const admin = createClient(serviceUrl, serviceRoleKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        })
+
+        const { data: rosterAgent, error: rosterAgentError } = await admin
+          .from("company_recruitment_agents")
+
+          .select("id, name, linked_user_id")
+
           .eq("company_id", currentCandidate.company_id)
+
           .eq("status", "active")
+
+          .or(`id.eq.${assignedAgentId},linked_user_id.eq.${assignedAgentId}`)
+
           .limit(1)
-          .maybeSingle();
-        const agentRole = agentMembership?.role as { name: string } | { name: string }[] | null;
-        const agentRoleName = Array.isArray(agentRole) ? agentRole[0]?.name : agentRole?.name;
-        if (agentMembershipError || !agentMembership || !agentRoleName?.toLocaleLowerCase().includes("agent")) {
-          return NextResponse.json({ error: "Select an active company Recruitment Agent for this referral." }, { status: 400, headers });
+
+          .maybeSingle()
+
+        if (rosterAgentError || !rosterAgent) {
+          return NextResponse.json(
+            {
+              error:
+                "Select an active company Recruitment Agent for this referral.",
+            },
+            { status: 400, headers },
+          )
         }
       }
+
       const mergedDetails: Record<string, unknown> = { ...details }
+
       for (const field of candidateWorkflowDetailFields) {
         if (Object.prototype.hasOwnProperty.call(currentDetails, field)) {
           mergedDetails[field] = currentDetails[field]
@@ -205,159 +533,368 @@ export async function PATCH(request: Request, context: RouteContext<"/api/candid
           delete mergedDetails[field]
         }
       }
-      updates.details = mergedDetails;
+
+      updates.details = mergedDetails
     }
+
     if ("branchId" in body) {
-      const branchId = typeof body.branchId === "string" && isUuid(body.branchId) ? body.branchId : "";
-      if (!branchId) return NextResponse.json({ error: "Select an active company branch." }, { status: 400, headers });
-      const serviceUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const branchId =
+        typeof body.branchId === "string" && isUuid(body.branchId)
+          ? body.branchId
+          : ""
+
+      if (!branchId)
+        return NextResponse.json(
+          { error: "Select an active company branch." },
+          { status: 400, headers },
+        )
+
+      const serviceUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
       if (!serviceUrl || !serviceRoleKey) {
-        return NextResponse.json({ error: "Candidate branch verification is not configured on the server." }, { status: 503, headers });
+        return NextResponse.json(
+          {
+            error:
+              "Candidate branch verification is not configured on the server.",
+          },
+          { status: 503, headers },
+        )
       }
-      const admin = createClient(serviceUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-      const { data: branch, error: branchError } = await admin.from("company_branches")
+
+      const admin = createClient(serviceUrl, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      })
+
+      const { data: branch, error: branchError } = await admin
+        .from("company_branches")
+
         .select("id, name")
+
         .eq("id", branchId)
+
         .eq("company_id", currentCandidate.company_id)
+
         .eq("status", "active")
-        .maybeSingle();
+
+        .maybeSingle()
+
       if (branchError || !branch) {
-        if (branchError) console.error("Candidate branch validation failed", branchError);
-        return NextResponse.json({ error: "Select an active branch registered by this company." }, { status: 400, headers });
+        if (branchError)
+          console.error("Candidate branch validation failed", branchError)
+
+        return NextResponse.json(
+          { error: "Select an active branch registered by this company." },
+          { status: 400, headers },
+        )
       }
-      updates.branch_id = branchId;
-      if (updates.details && typeof updates.details === "object") updates.details.branch = branch.name;
+
+      updates.branch_id = branchId
+
+      if (updates.details && typeof updates.details === "object")
+        updates.details.branch = branch.name
     }
-    if ("agentUserId" in body) {
-      const requestedAgentUserId = body.agentUserId === "" ? null : body.agentUserId;
-      if (requestedAgentUserId !== null && (typeof requestedAgentUserId !== "string" || !isUuid(requestedAgentUserId))) {
-        return NextResponse.json({ error: "The assigned agent is invalid." }, { status: 400, headers });
+
+    if ("agentId" in body || "agentUserId" in body) {
+      const requestedAgentUserId =
+        body.agentId === "" || body.agentUserId === ""
+          ? null
+          : typeof body.agentId === "string"
+            ? body.agentId
+            : body.agentUserId
+
+      if (
+        requestedAgentUserId !== null &&
+        (typeof requestedAgentUserId !== "string" ||
+          !isUuid(requestedAgentUserId))
+      ) {
+        return NextResponse.json({ error: "The assigned agent is invalid." }, {
+          status: 400,
+          headers,
+        })
       }
+
       if (typeof requestedAgentUserId === "string") {
-        const { data: membership, error: membershipError } = await supabase
-          .from("company_memberships")
-          .select("user_id, role:company_roles!company_memberships_role_id_fkey(name)")
-          .eq("user_id", requestedAgentUserId)
-          .eq("company_id", currentCandidate.company_id)
-          .eq("status", "active")
-          .limit(1)
-          .maybeSingle();
-        const role = membership?.role as { name: string } | { name: string }[] | null;
-        const roleName = Array.isArray(role) ? role[0]?.name : role?.name;
-        if (membershipError || !membership || !roleName?.toLocaleLowerCase().includes("agent")) {
-          return NextResponse.json({ error: "Select an active agent in this company." }, { status: 400, headers });
+        const serviceUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+        if (!serviceUrl || !serviceRoleKey) {
+          return NextResponse.json(
+            { error: "Agent verification is not configured on the server." },
+            { status: 503, headers },
+          )
         }
-        updates.agent_user_id = requestedAgentUserId;
+
+        const admin = createClient(serviceUrl, serviceRoleKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        })
+
+        const { data: agent, error: agentError } = await admin
+          .from("company_recruitment_agents")
+
+          .select("id, name, linked_user_id")
+
+          .eq("company_id", currentCandidate.company_id)
+
+          .eq("status", "active")
+
+          .or(
+            `id.eq.${requestedAgentUserId},linked_user_id.eq.${requestedAgentUserId}`,
+          )
+
+          .limit(1)
+
+          .maybeSingle()
+
+        if (agentError || !agent) {
+          return NextResponse.json(
+            { error: "Select an active agent in this company." },
+            { status: 400, headers },
+          )
+        }
+
+        updates.agent_id = agent.id
+
+        updates.agent_user_id = agent.linked_user_id
+
+        if (!("agent_name" in updates)) updates.agent_name = agent.name
       } else {
-        updates.agent_user_id = null;
+        updates.agent_id = null
+
+        updates.agent_user_id = null
       }
     }
-    if (!Object.keys(updates).length) return NextResponse.json({ error: "Provide at least one candidate field to update." }, { status: 400, headers });
+
+    if (!Object.keys(updates).length)
+      return NextResponse.json(
+        { error: "Provide at least one candidate field to update." },
+        { status: 400, headers },
+      )
 
     const { data: people, error: peopleError } = await supabase.rpc(
       "list_candidate_inquiry_people",
+
       { requested_company_id: currentCandidate.company_id },
-    );
+    )
+
     if (peopleError) {
-      console.error("Candidate attribution lookup failed", peopleError);
-      return NextResponse.json({ error: "Unable to verify candidate editors." }, { status: 503, headers });
+      console.error("Candidate attribution lookup failed", peopleError)
+
+      return NextResponse.json(
+        { error: "Unable to verify candidate editors." },
+        { status: 503, headers },
+      )
     }
 
     const { data, error } = await supabase
+
       .from("candidates")
+
       .update(updates as never)
+
       .eq("id", candidateId)
-      .select("id, source_row_number, branch_id, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by")
-      .maybeSingle();
+
+      .select(
+        "id, source_row_number, branch_id, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_id, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by",
+      )
+
+      .maybeSingle()
+
     if (error || !data) {
-      console.error("Candidate update failed", error);
+      console.error("Candidate update failed", error)
+
       if (error?.message.includes("Visa invoice could not be created:")) {
-        return NextResponse.json({ error: error.message }, { status: 400, headers });
+        return NextResponse.json({ error: error.message }, {
+          status: 400,
+          headers,
+        })
       }
-      const duplicateError = `${error?.message ?? ""} ${error?.details ?? ""}`.toLocaleLowerCase();
+
+      const duplicateError =
+        `${error?.message ?? ""} ${error?.details ?? ""}`.toLocaleLowerCase()
+
       if (error?.code === "23505" && duplicateError.includes("file_number")) {
-        return NextResponse.json({ error: "That file number is already assigned to another candidate." }, { status: 409, headers });
+        return NextResponse.json(
+          {
+            error: "That file number is already assigned to another candidate.",
+          },
+          { status: 409, headers },
+        )
       }
-      if (error?.code === "23505" && (
-        duplicateError.includes("passport")
-      )) {
-        return NextResponse.json({ error: "That passport number is already registered to a candidate." }, { status: 409, headers });
+
+      if (error?.code === "23505" && duplicateError.includes("passport")) {
+        return NextResponse.json(
+          {
+            error: "That passport number is already registered to a candidate.",
+          },
+          { status: 409, headers },
+        )
       }
-      return NextResponse.json({ error: "Unable to update this candidate. Check your edit permission." }, { status: 403, headers });
+
+      return NextResponse.json(
+        {
+          error: "Unable to update this candidate. Check your edit permission.",
+        },
+        { status: 403, headers },
+      )
     }
 
-    const names = new Map((people ?? []).map((person: { user_id: string; display_name: string }) => [person.user_id, person.display_name]));
-    return NextResponse.json({
-      candidate: {
-        ...data,
-        created_by_name: data.created_by ? names.get(data.created_by) ?? "Former team member" : null,
-        updated_by_name: data.updated_by ? names.get(data.updated_by) ?? "Former team member" : null,
+    const names = new Map(
+      (people ?? []).map((person: { user_id: string; display_name: string }) => [
+        person.user_id,
+        person.display_name,
+      ]),
+    )
+
+    return NextResponse.json(
+      {
+        candidate: {
+          ...data,
+
+          created_by_name: data.created_by
+            ? (names.get(data.created_by) ?? "Former team member")
+            : null,
+
+          updated_by_name: data.updated_by
+            ? (names.get(data.updated_by) ?? "Former team member")
+            : null,
+        },
       },
-    }, { headers });
+      { headers },
+    )
   } catch (error) {
-    console.error("Candidate update request failed", error);
-    return NextResponse.json({ error: "Candidate update is unavailable." }, { status: 503, headers });
+    console.error("Candidate update request failed", error)
+
+    return NextResponse.json({ error: "Candidate update is unavailable." }, {
+      status: 503,
+      headers,
+    })
   }
 }
 
-export async function DELETE(_request: Request, context: RouteContext<"/api/candidates/[candidateId]">) {
-  const headers = { "Cache-Control": "private, no-store" };
+export async function DELETE(
+  _request: Request,
+  context: RouteContext<"/api/candidates/[candidateId]">,
+) {
+  const headers = { "Cache-Control": "private, no-store" }
 
   try {
-    const { candidateId } = await context.params;
-    if (!isUuid(candidateId)) return NextResponse.json({ error: "Candidate not found." }, { status: 404, headers });
+    const { candidateId } = await context.params
 
-    const supabase = await createSupabaseServerClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: "Authentication required." }, { status: 401, headers });
+    if (!isUuid(candidateId))
+      return NextResponse.json({ error: "Candidate not found." }, {
+        status: 404,
+        headers,
+      })
+
+    const supabase = await createSupabaseServerClient()
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser()
+
+    if (authError || !user)
+      return NextResponse.json({ error: "Authentication required." }, {
+        status: 401,
+        headers,
+      })
 
     const { data: membership, error: membershipError } = await supabase
+
       .from("company_memberships")
+
       .select("company_id")
+
       .eq("user_id", user.id)
+
       .eq("status", "active")
+
       .limit(1)
-      .maybeSingle();
+
+      .maybeSingle()
+
     if (membershipError || !membership) {
-      return NextResponse.json({ error: "Active company membership not found." }, { status: 403, headers });
+      return NextResponse.json(
+        { error: "Active company membership not found." },
+        { status: 403, headers },
+      )
     }
 
     const { data: canDelete, error: permissionError } = await supabase.rpc(
       "current_user_has_company_permission",
+
       {
         requested_company_id: membership.company_id,
+
         requested_permission: "candidates.delete",
       },
-    );
+    )
+
     if (permissionError) {
-      console.error("Candidate delete permission lookup failed", permissionError);
-      return NextResponse.json({ error: "Unable to verify candidate delete permission." }, { status: 503, headers });
+      console.error(
+        "Candidate delete permission lookup failed",
+        permissionError,
+      )
+
+      return NextResponse.json(
+        { error: "Unable to verify candidate delete permission." },
+        { status: 503, headers },
+      )
     }
+
     if (!canDelete) {
-      return NextResponse.json({ error: "You do not have permission to delete candidates." }, { status: 403, headers });
+      return NextResponse.json(
+        { error: "You do not have permission to delete candidates." },
+        { status: 403, headers },
+      )
     }
 
     const { data, error } = await supabase
+
       .from("candidates")
+
       .delete()
+
       .eq("id", candidateId)
+
       .eq("company_id", membership.company_id)
+
       .select("id")
-      .maybeSingle();
+
+      .maybeSingle()
 
     if (error) {
-      console.error("Candidate deletion failed", error);
-      if (error.code === "23503") {
-        return NextResponse.json({ error: "This candidate has linked records and cannot be deleted." }, { status: 409, headers });
-      }
-      return NextResponse.json({ error: "Unable to delete this candidate." }, { status: 503, headers });
-    }
-    if (!data) return NextResponse.json({ error: "Candidate not found or not available for deletion." }, { status: 404, headers });
+      console.error("Candidate deletion failed", error)
 
-    return new Response(null, { status: 204, headers });
+      if (error.code === "23503") {
+        return NextResponse.json(
+          { error: "This candidate has linked records and cannot be deleted." },
+          { status: 409, headers },
+        )
+      }
+
+      return NextResponse.json({ error: "Unable to delete this candidate." }, {
+        status: 503,
+        headers,
+      })
+    }
+
+    if (!data)
+      return NextResponse.json(
+        { error: "Candidate not found or not available for deletion." },
+        { status: 404, headers },
+      )
+
+    return new Response(null, { status: 204, headers })
   } catch (error) {
-    console.error("Candidate deletion request failed", error);
-    return NextResponse.json({ error: "Candidate deletion is unavailable." }, { status: 503, headers });
+    console.error("Candidate deletion request failed", error)
+
+    return NextResponse.json({ error: "Candidate deletion is unavailable." }, {
+      status: 503,
+      headers,
+    })
   }
 }

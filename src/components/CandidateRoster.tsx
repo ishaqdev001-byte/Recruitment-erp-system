@@ -48,6 +48,8 @@ interface CandidateRecord {
 
   agent_name: string
 
+  agent_id?: string | null
+
   agent_user_id?: string | null
 
   created_at?: string | null
@@ -95,6 +97,8 @@ type InquiryPerson = {
   display_name: string
 
   role_name: string
+
+  linked_user_id?: string | null
 }
 
 interface InquiryRecord {
@@ -111,6 +115,8 @@ interface InquiryRecord {
   passport_number: string
 
   discovery_source: InquirySource
+
+  agent_id?: string | null
 
   agent_user_id: string | null
 
@@ -336,7 +342,7 @@ function candidateFromRecord(record: CandidateRecord): Candidate {
 
     agent: record.agent_name,
 
-    agentUserId: record.agent_user_id ?? undefined,
+    agentUserId: record.agent_id ?? record.agent_user_id ?? undefined,
 
     createdByName: record.created_by_name ?? undefined,
 
@@ -589,6 +595,8 @@ function candidateFromInquiry(inquiry: InquiryRecord): Candidate {
 
     agent_name: inquiry.agent_name,
 
+    agent_id: inquiry.agent_id ?? null,
+
     agent_user_id: inquiry.agent_user_id,
 
     religion: "",
@@ -699,9 +707,7 @@ export default function CandidateRoster({
 
   const financeReadOnly = canViewFinance && !permissions.canEditCandidates
 
-  const canUpdateCandidateStages = Boolean(
-    permissions.canUpdateCandidateStages,
-  )
+  const canUpdateCandidateStages = Boolean(permissions.canUpdateCandidateStages)
 
   const canSubmitCandidatesToProjects = Boolean(
     permissions.canSubmitCandidatesToProjects,
@@ -713,6 +719,8 @@ export default function CandidateRoster({
   const [inquiries, setInquiries] = useState<InquiryRecord[]>([])
 
   const [inquiryPeople, setInquiryPeople] = useState<InquiryPerson[]>([])
+
+  const [inquiryAgents, setInquiryAgents] = useState<InquiryPerson[]>([])
 
   const [inquiriesLoading, setInquiriesLoading] = useState(false)
 
@@ -1009,6 +1017,8 @@ export default function CandidateRoster({
         setInquiries(payload.inquiries ?? [])
 
         setInquiryPeople(payload.handlers ?? [])
+
+        setInquiryAgents(payload.agents ?? [])
       } catch (loadError) {
         if (!cancelled)
           setInquiryError(
@@ -1117,9 +1127,7 @@ export default function CandidateRoster({
 
   const stageOptions = filterOptions(candidates.map(candidateStage))
 
-  const createdByOptions = filterOptions(
-    candidates.map(candidateCreatorName),
-  )
+  const createdByOptions = filterOptions(candidates.map(candidateCreatorName))
 
   const candidateMatchesFilters = (
     candidate: CandidateRecord,
@@ -1542,9 +1550,7 @@ export default function CandidateRoster({
       if (transitionStep === "project" && payload.updated?.length) {
         setTransitionIds(payload.updated.map((c) => c.id))
 
-        setTransitionStep(
-          canUpdateCandidateStages ? "details" : "complete",
-        )
+        setTransitionStep(canUpdateCandidateStages ? "details" : "complete")
 
         setTransitionNotice(
           `${
@@ -1936,11 +1942,10 @@ export default function CandidateRoster({
 
     const selectedAgentUserId =
       agentUserId ||
-      (inquiryPeople.find(
+      (inquiryAgents.find(
         (person) =>
-          person.role_name.toLocaleLowerCase().includes("agent") &&
           person.display_name.trim().toLocaleLowerCase() ===
-            agent.trim().toLocaleLowerCase(),
+          agent.trim().toLocaleLowerCase(),
       )?.user_id ??
         "")
 
@@ -1957,7 +1962,7 @@ export default function CandidateRoster({
 
       agent,
 
-      agentUserId: selectedAgentUserId,
+      agentId: selectedAgentUserId,
 
       religion,
 
@@ -2053,19 +2058,13 @@ export default function CandidateRoster({
         inquiryId={registrationInquiryId}
         isAgent={permissions?.isAgent}
         onSave={saveCandidate}
-        agentOptions={inquiryPeople
+        agentOptions={inquiryAgents.map(
+          (person): CandidateAgentOption => ({
+            userId: person.user_id,
 
-          .filter((person) =>
-            person.role_name.toLocaleLowerCase().includes("agent"),
-          )
-
-          .map(
-            (person): CandidateAgentOption => ({
-              userId: person.user_id,
-
-              displayName: person.display_name,
-            }),
-          )}
+            displayName: person.display_name,
+          }),
+        )}
         canViewFinance={canViewFinance}
         canManagePassportStatus={permissions?.canManagePassportStatus}
         canViewActivityLogs={canViewActivityLogs}
@@ -3216,21 +3215,11 @@ export default function CandidateRoster({
                       }}
                     >
                       <option value="">Select a registered agent</option>
-                      {inquiryPeople
-
-                        .filter((person) =>
-                          person.role_name
-
-                            .toLocaleLowerCase()
-
-                            .includes("agent"),
-                        )
-
-                        .map((person) => (
-                          <option key={person.user_id} value={person.user_id}>
-                            {person.display_name}
-                          </option>
-                        ))}
+                      {inquiryAgents.map((person) => (
+                        <option key={person.user_id} value={person.user_id}>
+                          {person.display_name}
+                        </option>
+                      ))}
                     </select>
                   </label>
                 )}

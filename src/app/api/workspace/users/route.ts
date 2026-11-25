@@ -5,6 +5,7 @@ import nodemailer from "nodemailer"
 import { NextResponse } from "next/server"
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+
 import { parseStaffInput, type StaffInput } from "@/lib/server/staff-input"
 
 import {
@@ -33,32 +34,45 @@ function createAdminClient() {
 
 type UserTypeSelection = {
   userType: "member"
+
   staffInput: null
 } | {
   userType: "staff"
+
   staffInput: StaffInput | null
 }
 
 type ExistingStaffRecord = {
   id: string
+
   name: string
+
   phone: string | null
+
   branch_id: string
+
   status: string
+
   linked_user_id: string | null
 }
 
 function parseUserTypeSelection(
   body: Record<string, unknown>,
+
   name: string,
+
   branchId: string,
+
   existingStaffId = "",
 ): UserTypeSelection | null {
   const requestedType = body.userType ?? "member"
+
   if (requestedType === "member")
     return { userType: "member", staffInput: null }
+
   if (requestedType === "staff" && existingStaffId)
     return { userType: "staff", staffInput: null }
+
   if (
     requestedType !== "staff" ||
     !body.staff ||
@@ -67,168 +81,277 @@ function parseUserTypeSelection(
   ) {
     return null
   }
+
   const staffInput = parseStaffInput({
     ...body.staff as Record<string, unknown>,
+
     name,
+
     status: "Active",
+
     branchId,
+
     linkedUserId: null,
   })
+
   return staffInput ? { userType: "staff", staffInput } : null
 }
 
 async function validateStaffInvitation(
   admin: NonNullable<ReturnType<typeof createAdminClient>>,
+
   companyId: string,
+
   staffInput: StaffInput,
+
   canChooseAnyAccount: boolean,
+
   currentBranchId: string | null,
 ) {
   const { data: position, error: positionError } = await admin
+
     .from("company_positions")
+
     .select("id, name")
+
     .eq("id", staffInput.positionId)
+
     .eq("company_id", companyId)
+
     .eq("is_active", true)
+
     .maybeSingle()
+
   if (positionError) throw positionError
+
   if (!position)
     return "Choose an active position from Settings before inviting staff."
 
   if (staffInput.lineManagerStaffId) {
     let managerQuery = admin
+
       .from("company_staff_members")
+
       .select("id")
+
       .eq("id", staffInput.lineManagerStaffId)
+
       .eq("company_id", companyId)
+
       .eq("status", "Active")
+
     if (!canChooseAnyAccount && currentBranchId)
       managerQuery = managerQuery.eq("branch_id", currentBranchId)
+
     const { data: manager, error } = await managerQuery.maybeSingle()
+
     if (error) throw error
+
     if (!manager)
       return "Choose an active line manager from your authorized staff list."
   }
 
   if (staffInput.transportAccountId) {
     let accountQuery = admin
+
       .from("company_accounts")
+
       .select("id")
+
       .eq("id", staffInput.transportAccountId)
+
       .eq("company_id", companyId)
+
       .eq("status", "active")
+
     if (!canChooseAnyAccount && currentBranchId)
       accountQuery = accountQuery.eq("branch_id", currentBranchId)
+
     const { data: account, error } = await accountQuery.maybeSingle()
+
     if (error) throw error
+
     if (!account)
       return "Choose an active funding account from your company branch."
   }
+
   return null
 }
 
 async function getCompanyPosition(
   admin: NonNullable<ReturnType<typeof createAdminClient>>,
+
   companyId: string,
+
   positionId: string,
+
   allowInactivePositionId: string | null = null,
 ) {
   const { data: position, error } = await admin
+
     .from("company_positions")
+
     .select("id, name, is_active")
+
     .eq("id", positionId)
+
     .eq("company_id", companyId)
+
     .maybeSingle()
+
   if (error) throw error
-  if (!position || (!position.is_active && position.id !== allowInactivePositionId))
+
+  if (
+    !position ||
+    (!position.is_active && position.id !== allowInactivePositionId)
+  )
     return null
+
   return position
 }
 
 async function insertInvitedStaffRecord(
   admin: NonNullable<ReturnType<typeof createAdminClient>>,
+
   companyId: string,
+
   createdBy: string,
+
   userId: string,
+
   staffInput: StaffInput,
+
   phone = "",
 ) {
   const { data: allocation, error: allocationError } = await admin.rpc(
     "allocate_company_staff_sequence",
+
     { requested_company_id: companyId },
   )
+
   if (allocationError) throw allocationError
+
   const sequence = (Array.isArray(allocation) ? allocation[0] : allocation) as {
     staff_id_prefix: string
+
     sequence_number: number | string
   } | null
+
   if (!sequence) throw new Error("Staff ID sequence is not configured.")
 
   const position = await getCompanyPosition(
     admin,
+
     companyId,
+
     staffInput.positionId,
   )
+
   if (!position) throw new Error("Choose an active position from Settings.")
 
   const { data: staff, error } = await admin
+
     .from("company_staff_members")
+
     .insert({
       company_id: companyId,
+
       branch_id: staffInput.branchId,
+
       staff_id: `${sequence.staff_id_prefix}-${String(sequence.sequence_number).padStart(4, "0")}`,
+
       linked_user_id: userId,
+
       line_manager_staff_id: staffInput.lineManagerStaffId,
+
       name: staffInput.name,
+
       phone,
+
       position_id: position.id,
+
       position: position.name,
+
       status: staffInput.status,
+
       date_joined: staffInput.dateJoined,
+
       pay_type: staffInput.payType,
+
       base_salary: staffInput.baseSalary,
+
       weekly_transport_allowance: staffInput.weeklyTransportAllowance,
+
       transport_account_mode: staffInput.transportAccountMode,
+
       transport_account_id: staffInput.transportAccountId,
+
       created_by: createdBy,
     })
+
     .select("id")
+
     .single()
+
   if (error) throw error
+
   return staff.id
 }
 
 async function getUnlinkedStaffRecord(
   admin: NonNullable<ReturnType<typeof createAdminClient>>,
+
   companyId: string,
+
   staffId: string,
 ) {
   const { data, error } = await admin
+
     .from("company_staff_members")
+
     .select("id, name, phone, branch_id, status, linked_user_id")
+
     .eq("company_id", companyId)
+
     .eq("id", staffId)
+
     .ilike("status", "active")
+
     .maybeSingle()
+
   if (error) throw error
+
   if (!data) return null
 
   if (data.linked_user_id) {
     const { data: membership, error: membershipError } = await admin
+
       .from("company_memberships")
+
       .select("user_id")
+
       .eq("company_id", companyId)
+
       .eq("user_id", data.linked_user_id)
+
       .maybeSingle()
+
     if (membershipError) throw membershipError
+
     if (membership) return null
 
     const { error: unlinkError } = await admin
+
       .from("company_staff_members")
+
       .update({ linked_user_id: null })
+
       .eq("company_id", companyId)
+
       .eq("id", staffId)
+
       .eq("linked_user_id", data.linked_user_id)
+
     if (unlinkError) throw unlinkError
   }
 
@@ -237,26 +360,43 @@ async function getUnlinkedStaffRecord(
 
 async function linkInvitedStaffRecord(
   admin: NonNullable<ReturnType<typeof createAdminClient>>,
+
   companyId: string,
+
   staffId: string,
+
   userId: string,
+
   updatedBy: string,
+
   phone: string,
 ) {
   const { data, error } = await admin
+
     .from("company_staff_members")
+
     .update({
       linked_user_id: userId,
+
       updated_by: updatedBy,
+
       ...(phone ? { phone } : {}),
     })
+
     .eq("company_id", companyId)
+
     .eq("id", staffId)
+
     .ilike("status", "active")
+
     .is("linked_user_id", null)
+
     .select("id")
+
     .maybeSingle()
+
   if (error) throw error
+
   if (!data) {
     throw new Error(
       "This staff record was already linked or is no longer active. Refresh the staff list and try again.",
@@ -266,58 +406,93 @@ async function linkInvitedStaffRecord(
 
 async function createOrLinkInvitedStaffRecord(
   admin: NonNullable<ReturnType<typeof createAdminClient>>,
+
   companyId: string,
+
   createdBy: string,
+
   userId: string,
+
   staffInput: StaffInput | null,
+
   existingStaffId: string,
+
   phone: string,
 ): Promise<string | null> {
   if (existingStaffId) {
     await linkInvitedStaffRecord(
       admin,
+
       companyId,
+
       existingStaffId,
+
       userId,
+
       createdBy,
+
       phone,
     )
+
     return existingStaffId
   }
+
   if (staffInput) {
     return insertInvitedStaffRecord(
       admin,
+
       companyId,
+
       createdBy,
+
       userId,
+
       staffInput,
+
       phone,
     )
   }
+
   return null
 }
 
 async function removeInvitedStaffRecord(
   admin: NonNullable<ReturnType<typeof createAdminClient>>,
+
   companyId: string,
+
   userId: string,
+
   existingStaffId: string,
 ) {
   if (existingStaffId) {
     const { error } = await admin
+
       .from("company_staff_members")
+
       .update({ linked_user_id: null })
+
       .eq("company_id", companyId)
+
       .eq("id", existingStaffId)
+
       .eq("linked_user_id", userId)
+
     if (error) throw error
+
     return
   }
+
   const { error } = await admin
+
     .from("company_staff_members")
+
     .update({ linked_user_id: null })
+
     .eq("company_id", companyId)
+
     .eq("linked_user_id", userId)
+
   if (error) throw error
 }
 
@@ -325,28 +500,41 @@ function escapeEmailHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => {
     const entities: Record<string, string> = {
       "&": "&amp;",
+
       "<": "&lt;",
+
       ">": "&gt;",
+
       '"': "&quot;",
+
       "'": "&#39;",
     }
+
     return entities[character] ?? character
   })
 }
 
 type SystemSmtpConfiguration = {
   host: string
+
   port: number
+
   user: string
+
   pass: string
+
   from: string
 }
 
 function getSystemSmtpConfiguration(): SystemSmtpConfiguration | null {
   const host = process.env.SYSTEM_SMTP_HOST?.trim()
+
   const port = Number(process.env.SYSTEM_SMTP_PORT ?? "587")
+
   const user = process.env.SYSTEM_SMTP_USER?.trim()
+
   const pass = process.env.SYSTEM_SMTP_PASS?.trim()
+
   const from = process.env.SYSTEM_SMTP_FROM?.trim() || user || ""
 
   if (
@@ -366,41 +554,64 @@ function getSystemSmtpConfiguration(): SystemSmtpConfiguration | null {
 
 async function sendWorkspaceInvitationEmail(options: {
   smtp: SystemSmtpConfiguration
+
   to: string
+
   fullName: string
+
   companyName: string
+
   roleName: string
+
   actionLink: string
 }) {
   const transport = nodemailer.createTransport({
     host: options.smtp.host,
+
     port: options.smtp.port,
+
     secure: options.smtp.port === 465,
+
     auth: {
       user: options.smtp.user,
+
       pass: options.smtp.pass,
     },
+
     requireTLS: options.smtp.port !== 465,
+
     connectionTimeout: 10000,
+
     greetingTimeout: 10000,
+
     socketTimeout: 20000,
   })
 
   const fullName = escapeEmailHtml(options.fullName)
+
   const companyName = escapeEmailHtml(options.companyName)
+
   const roleName = escapeEmailHtml(options.roleName)
+
   const actionLink = escapeEmailHtml(options.actionLink)
+
   try {
     const delivery = await transport.sendMail({
       from: `"Kilax Smart Recruit" <${options.smtp.from}>`,
+
       to: options.to,
+
       subject: `You are invited to join ${options.companyName}`,
+
       text: `Hello ${options.fullName},\n\nYou have been invited to join ${options.companyName} as ${options.roleName}.\n\nAccept the invitation and set up your password: ${options.actionLink}\n\nIf you were not expecting this invitation, you can ignore this message.`,
+
       html: `<h2>You have been invited to join ${companyName}</h2><p>Hello ${fullName},</p><p>You have been invited to join <strong>${companyName}</strong> as <strong>${roleName}</strong>.</p><p>Accept the invitation and set up your password:</p><p><a href="${actionLink}">Accept invitation</a></p><p>If you were not expecting this invitation, you can ignore this message.</p>`,
     })
 
     if (delivery.accepted.length === 0 || delivery.rejected.length > 0) {
-      throw new Error("The SMTP server did not accept the invitation recipient.")
+      throw new Error(
+        "The SMTP server did not accept the invitation recipient.",
+      )
     }
   } finally {
     transport.close()
@@ -418,7 +629,9 @@ function parseRequestedPermissions(value: unknown): string[] | null {
   return [...new Set(value)]
 }
 
-async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
+async function getAuthorizedCompany(
+  permission: "users.view" | "users.edit" | "agents.manage",
+) {
   const supabase = await createSupabaseServerClient()
 
   const {
@@ -452,6 +665,7 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
     }
 
   const admin = createAdminClient()
+
   if (!admin)
     return {
       error:
@@ -461,9 +675,13 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
     }
 
   const { data: company, error: companyError } = await admin
+
     .from("companies")
+
     .select("primary_admin_user_id")
+
     .eq("id", membership.company_id)
+
     .maybeSingle()
 
   if (companyError || !company)
@@ -476,16 +694,21 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
   const isPrimaryAdmin = company.primary_admin_user_id === user.id
 
   let isMainBranch = isPrimaryAdmin
+
   if (!isPrimaryAdmin) {
     const { data, error: branchError } = await supabase.rpc(
       "current_user_is_main_branch_user",
+
       { requested_company_id: membership.company_id },
     )
+
     if (branchError)
       return {
         error: "Unable to verify your company branch.",
+
         status: 503 as const,
       }
+
     isMainBranch = Boolean(data)
   }
 
@@ -497,19 +720,25 @@ async function getAuthorizedCompany(permission: "users.view" | "users.edit") {
     }
 
   let allowed = isPrimaryAdmin
+
   if (!allowed) {
     const { data, error: permissionError } = await supabase.rpc(
       "current_user_has_company_permission",
+
       {
         requested_company_id: membership.company_id,
+
         requested_permission: permission,
       },
     )
+
     if (permissionError)
       return {
         error: "You do not have permission to manage company users.",
+
         status: 403 as const,
       }
+
     allowed = Boolean(data)
   }
 
@@ -668,21 +897,30 @@ export async function GET() {
     }
 
     const { data: staffLinks, error: staffLinksError } = await admin
+
       .from("company_staff_members")
+
       .select("linked_user_id")
+
       .eq("company_id", access.companyId)
+
       .not("linked_user_id", "is", null)
+
     if (staffLinksError) {
       console.error("Workspace staff links query failed", staffLinksError)
+
       return NextResponse.json(
         { error: "Unable to load company user types." },
+
         { status: 500, headers: responseHeaders },
       )
     }
 
     const staffUserIds = new Set(
       (staffLinks ?? [])
+
         .map((staff) => staff.linked_user_id)
+
         .filter((userId): userId is string => Boolean(userId)),
     )
 
@@ -775,6 +1013,7 @@ export async function GET() {
     const branchNameById = new Map(
       (branchesResult.data ?? []).map((branch) => [branch.id, branch.name]),
     )
+
     const mainBranch = (branchesResult.data ?? []).find(
       (branch) => branch.is_main_branch,
     )
@@ -795,7 +1034,9 @@ export async function GET() {
       const role = Array.isArray(joinedRole)
         ? joinedRole[0]?.name
         : joinedRole?.name
+
       const branchId = membership.branch_id ?? mainBranch?.id ?? null
+
       const isPendingInvite = Boolean(
         authUser &&
           (authUser.app_metadata?.workspace_invite_pending === true ||
@@ -883,7 +1124,20 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const access = await getAuthorizedCompany("users.edit")
+    const body = (await request
+      .json()
+      .catch(() => null)) as Record<string, unknown> | null
+
+    if (!body)
+      return NextResponse.json(
+        { error: "A valid user-management request is required." },
+
+        { status: 400, headers: responseHeaders },
+      )
+
+    const access = await getAuthorizedCompany(
+      body.action === "link-agent-account" ? "agents.manage" : "users.edit",
+    )
 
     if ("error" in access)
       return NextResponse.json({ error: access.error }, {
@@ -904,18 +1158,387 @@ export async function POST(request: Request) {
         { status: 503, headers: responseHeaders },
       )
 
-    const body = (await request.json()) as Record<string, unknown>
+    if (body.action === "link-agent-account") {
+      const agentId = typeof body.agentId === "string" ? body.agentId : ""
+
+      const email =
+        typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
+
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          agentId,
+        ) ||
+        !/^\S+@\S+\.\S+$/.test(email) ||
+        email.length > 200
+      ) {
+        return NextResponse.json(
+          { error: "Choose an agent and enter a valid login email." },
+
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const { data: agent, error: agentError } = await admin
+
+        .from("company_recruitment_agents")
+
+        .select("id, name, phone, branch_id, linked_user_id, status")
+
+        .eq("id", agentId)
+
+        .eq("company_id", access.companyId)
+
+        .maybeSingle()
+
+      if (agentError) throw agentError
+
+      if (!agent || agent.status !== "active" || agent.linked_user_id) {
+        return NextResponse.json(
+          {
+            error:
+              "Choose an active agent who does not already have an account.",
+          },
+
+          { status: 409, headers: responseHeaders },
+        )
+      }
+
+      if (
+        !access.isMainBranch &&
+        !access.isPrimaryAdmin &&
+        agent.branch_id !== access.branchId
+      ) {
+        return NextResponse.json(
+          { error: "You can only link agents in your assigned branch." },
+
+          { status: 403, headers: responseHeaders },
+        )
+      }
+
+      const [companyResult, branchResult, roleResult] = await Promise.all([
+        admin
+
+          .from("companies")
+
+          .select("name, slug")
+
+          .eq("id", access.companyId)
+
+          .maybeSingle(),
+
+        admin
+
+          .from("company_branches")
+
+          .select("id, name")
+
+          .eq("id", agent.branch_id)
+
+          .eq("company_id", access.companyId)
+
+          .eq("status", "active")
+
+          .maybeSingle(),
+
+        admin
+
+          .from("company_roles")
+
+          .select("id, name")
+
+          .eq("company_id", access.companyId)
+
+          .ilike("name", "Recruitment Agent")
+
+          .limit(1)
+
+          .maybeSingle(),
+      ])
+
+      if (
+        companyResult.error ||
+        branchResult.error ||
+        roleResult.error ||
+        !companyResult.data ||
+        !branchResult.data ||
+        !roleResult.data
+      ) {
+        console.error(
+          "Agent invitation setup lookup failed",
+
+          companyResult.error ?? branchResult.error ?? roleResult.error,
+        )
+
+        return NextResponse.json(
+          { error: "Unable to prepare the Recruitment Agent invitation." },
+
+          { status: 503, headers: responseHeaders },
+        )
+      }
+
+      const smtp = getSystemSmtpConfiguration()
+
+      if (!smtp) {
+        return NextResponse.json(
+          {
+            error:
+              "Invitation email delivery is not configured. Set SYSTEM_SMTP_HOST, SYSTEM_SMTP_PORT, SYSTEM_SMTP_USER, and SYSTEM_SMTP_PASS on the server.",
+          },
+
+          { status: 503, headers: responseHeaders },
+        )
+      }
+
+      const invitationId = crypto.randomUUID()
+
+      const siteUrl =
+        process.env.NEXT_PUBLIC_SITE_URL?.trim() || new URL(request.url).origin
+
+      const redirectUrl = new URL(
+        `/${encodeURIComponent(companyResult.data.slug)}`,
+
+        siteUrl,
+      )
+
+      redirectUrl.searchParams.set("invite", "1")
+
+      redirectUrl.searchParams.set("invitation_id", invitationId)
+
+      const { data: inviteData, error: inviteError } =
+        await admin.auth.admin.generateLink({
+          type: "invite",
+
+          email,
+
+          options: {
+            data: {
+              full_name: agent.name,
+
+              company_name: companyResult.data.name,
+
+              role_name: roleResult.data.name,
+            },
+
+            redirectTo: redirectUrl.toString(),
+          },
+        })
+
+      const actionLink = inviteData?.properties?.action_link
+
+      if (inviteError || !inviteData.user || !actionLink) {
+        return NextResponse.json(
+          {
+            error: inviteError?.message.toLowerCase().includes("already")
+              ? "An account with this email already exists. Link it through Users & Roles instead."
+              : "Unable to generate an invitation link.",
+          },
+
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const invitedUserId = inviteData.user.id
+
+      const cleanupInvitation = async () => {
+        await admin
+
+          .from("workspace_invitations")
+
+          .delete()
+
+          .eq("id", invitationId)
+
+        await admin.auth.admin.deleteUser(invitedUserId)
+      }
+
+      const { error: metadataError } = await admin.auth.admin.updateUserById(
+        invitedUserId,
+
+        {
+          app_metadata: {
+            ...inviteData.user.app_metadata,
+
+            invitation_company_id: access.companyId,
+
+            workspace_invite_pending: true,
+
+            workspace_user_type: "member",
+          },
+        },
+      )
+
+      if (metadataError) {
+        await cleanupInvitation()
+
+        return NextResponse.json(
+          { error: "The agent account could not be assigned to this company." },
+
+          { status: 500, headers: responseHeaders },
+        )
+      }
+
+      const { error: profileError } = await admin.from("profiles").upsert({
+        id: invitedUserId,
+
+        display_name: agent.name,
+
+        phone: agent.phone,
+
+        branch: branchResult.data.name,
+      })
+
+      if (profileError) {
+        await cleanupInvitation()
+
+        return NextResponse.json(
+          { error: "The agent profile could not be saved." },
+
+          { status: 500, headers: responseHeaders },
+        )
+      }
+
+      const { error: membershipError } = await admin
+
+        .from("company_memberships")
+
+        .insert({
+          company_id: access.companyId,
+
+          user_id: invitedUserId,
+
+          role_id: roleResult.data.id,
+
+          branch_id: agent.branch_id,
+
+          status: "active",
+        })
+
+      if (membershipError) {
+        await cleanupInvitation()
+
+        return NextResponse.json(
+          { error: "The agent account could not be assigned to the company." },
+
+          { status: 500, headers: responseHeaders },
+        )
+      }
+
+      const { error: invitationError } = await admin
+
+        .from("workspace_invitations")
+
+        .insert({
+          id: invitationId,
+
+          company_id: access.companyId,
+
+          user_id: invitedUserId,
+
+          role_id: roleResult.data.id,
+        })
+
+      if (invitationError) {
+        await cleanupInvitation()
+
+        return NextResponse.json(
+          { error: "The invitation could not be recorded." },
+
+          { status: 500, headers: responseHeaders },
+        )
+      }
+
+      const { error: linkError } = await admin
+
+        .from("company_recruitment_agents")
+
+        .update({
+          linked_user_id: invitedUserId,
+
+          email,
+
+          updated_at: new Date().toISOString(),
+        })
+
+        .eq("id", agentId)
+
+        .eq("company_id", access.companyId)
+
+        .is("linked_user_id", null)
+
+      if (linkError) {
+        await cleanupInvitation()
+
+        await admin
+
+          .from("company_memberships")
+
+          .delete()
+
+          .eq("company_id", access.companyId)
+
+          .eq("user_id", invitedUserId)
+
+        return NextResponse.json(
+          { error: "The agent account could not be linked to the roster." },
+
+          { status: 409, headers: responseHeaders },
+        )
+      }
+
+      let invitationEmailWarning: string | undefined
+
+      try {
+        await sendWorkspaceInvitationEmail({
+          smtp,
+
+          to: email,
+
+          fullName: agent.name,
+
+          companyName: companyResult.data.name,
+
+          roleName: roleResult.data.name,
+
+          actionLink,
+        })
+      } catch (emailError) {
+        console.error("Agent invitation email delivery failed", emailError)
+
+        invitationEmailWarning =
+          "The account was linked, but the invitation email could not be delivered. Resend the invitation from Users & Roles."
+      }
+
+      return NextResponse.json(
+        {
+          linked: true,
+
+          invitationEmailSent: !invitationEmailWarning,
+
+          ...(invitationEmailWarning ? { invitationEmailWarning } : {}),
+        },
+
+        { status: 201, headers: responseHeaders },
+      )
+    }
 
     if (body.action === "edit-user-details") {
       const userId = typeof body.userId === "string" ? body.userId : ""
+
       const name = typeof body.name === "string" ? body.name.trim() : ""
+
       const phone = typeof body.phone === "string" ? body.phone.trim() : ""
+
       const email =
         typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
+
       const roleId = typeof body.roleId === "string" ? body.roleId : ""
+
       const branchId = typeof body.branchId === "string" ? body.branchId : ""
+
       const userType = body.userType
+
       const requestedStatus = body.status
+
       const staffBody =
         body.staff &&
         typeof body.staff === "object" &&
@@ -943,45 +1566,65 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "Enter valid account, access, and staff details." },
+
           { status: 400, headers: responseHeaders },
         )
       }
 
       const { data: company, error: companyError } = await admin
+
         .from("companies")
+
         .select("name, slug, primary_admin_user_id")
+
         .eq("id", access.companyId)
+
         .maybeSingle()
+
       if (companyError || !company) {
         console.error("User edit company lookup failed", companyError)
+
         return NextResponse.json(
           { error: "Unable to verify company ownership." },
+
           { status: 500, headers: responseHeaders },
         )
       }
+
       if (company.primary_admin_user_id !== access.userId) {
         return NextResponse.json(
           { error: "Only the Chairman can edit all user details." },
+
           { status: 403, headers: responseHeaders },
         )
       }
+
       if (userId === access.userId) {
         return NextResponse.json(
           { error: "You cannot edit your own account from this screen." },
+
           { status: 400, headers: responseHeaders },
         )
       }
 
       const { data: membership, error: membershipError } = await admin
+
         .from("company_memberships")
+
         .select("user_id, role_id, branch_id, status, role:company_roles(name)")
+
         .eq("company_id", access.companyId)
+
         .eq("user_id", userId)
+
         .maybeSingle()
+
       if (membershipError) throw membershipError
+
       if (!membership) {
         return NextResponse.json(
           { error: "Selected user is not a member of this company." },
+
           { status: 404, headers: responseHeaders },
         )
       }
@@ -989,52 +1632,83 @@ export async function POST(request: Request) {
       const joinedRole = membership.role as { name: string } | {
         name: string
       }[] | null
+
       const currentRoleName = Array.isArray(joinedRole)
         ? joinedRole[0]?.name
         : joinedRole?.name
+
       if (
         userId === company.primary_admin_user_id ||
         isPrimaryAdministratorRole(currentRoleName ?? "")
       ) {
         return NextResponse.json(
           { error: "Protected administrator accounts cannot be edited." },
+
           { status: 403, headers: responseHeaders },
         )
       }
 
       const [
         { data: targetRole, error: roleError },
+
         { data: branch, error: branchError },
+
         { data: authResult, error: authError },
+
         { data: profile, error: profileError },
+
         { data: linkedStaff, error: staffError },
       ] = await Promise.all([
         admin
+
           .from("company_roles")
+
           .select("id, name")
+
           .eq("id", roleId)
+
           .eq("company_id", access.companyId)
+
           .maybeSingle(),
+
         admin
+
           .from("company_branches")
+
           .select("id, name")
+
           .eq("id", branchId)
+
           .eq("company_id", access.companyId)
+
           .eq("status", "active")
+
           .maybeSingle(),
+
         admin.auth.admin.getUserById(userId),
+
         admin
+
           .from("profiles")
+
           .select("id, display_name, phone")
+
           .eq("id", userId)
+
           .maybeSingle(),
+
         admin
+
           .from("company_staff_members")
+
           .select(
             "id, staff_id, name, phone, position_id, position, status, date_joined, branch_id, linked_user_id, line_manager_staff_id, pay_type, base_salary, weekly_transport_allowance, transport_account_mode, transport_account_id, updated_by",
           )
+
           .eq("company_id", access.companyId)
+
           .eq("linked_user_id", userId)
+
           .limit(2),
       ])
 
@@ -1043,80 +1717,109 @@ export async function POST(request: Request) {
           roleError ?? branchError ?? authError ?? profileError ?? staffError
         )
       }
+
       if (!targetRole || isPrimaryAdministratorRole(targetRole.name)) {
         return NextResponse.json(
           { error: "Choose an eligible role from this company." },
+
           { status: 400, headers: responseHeaders },
         )
       }
+
       if (!branch) {
         return NextResponse.json(
           { error: "Choose an active branch from this company." },
+
           { status: 400, headers: responseHeaders },
         )
       }
+
       if (!authResult.user?.email) {
         return NextResponse.json(
           { error: "Unable to retrieve the user's login email." },
+
           { status: 404, headers: responseHeaders },
         )
       }
+
       if ((linkedStaff ?? []).length > 1) {
         return NextResponse.json(
           {
             error:
               "This user has multiple linked staff records. Contact support.",
           },
+
           { status: 409, headers: responseHeaders },
         )
       }
 
       const currentStaff = linkedStaff?.[0] ?? null
+
       const staffInput =
         userType === "staff" && staffBody
           ? parseStaffInput({
               ...staffBody,
+
               name,
+
               branchId,
+
               linkedUserId: userId,
             })
           : null
+
       if (userType === "staff" && !staffInput) {
         return NextResponse.json(
           {
             error:
               "Enter a position and joining date, and provide valid pay details for the selected arrangement.",
           },
+
           { status: 400, headers: responseHeaders },
         )
       }
+
       const staffPosition = staffInput
         ? await getCompanyPosition(
             admin,
+
             access.companyId,
+
             staffInput.positionId,
+
             currentStaff?.position_id ?? null,
           )
         : null
+
       if (staffInput && !staffPosition)
         return NextResponse.json(
           { error: "Choose an active position from Settings." },
+
           { status: 400, headers: responseHeaders },
         )
+
       if (userType === "member" && currentStaff) {
         const { count, error: reportsError } = await admin
+
           .from("company_staff_members")
+
           .select("id", { count: "exact", head: true })
+
           .eq("company_id", access.companyId)
+
           .eq("line_manager_staff_id", currentStaff.id)
+
           .neq("status", "Inactive")
+
         if (reportsError) throw reportsError
+
         if (count) {
           return NextResponse.json(
             {
               error:
                 "Reassign this staff member's direct reports before changing their type.",
             },
+
             { status: 409, headers: responseHeaders },
           )
         }
@@ -1124,18 +1827,28 @@ export async function POST(request: Request) {
 
       if (staffInput?.lineManagerStaffId) {
         let managerQuery = admin
+
           .from("company_staff_members")
+
           .select("id")
+
           .eq("id", staffInput.lineManagerStaffId)
+
           .eq("company_id", access.companyId)
+
           .eq("status", "Active")
+
         if (currentStaff) managerQuery = managerQuery.neq("id", currentStaff.id)
+
         const { data: manager, error: managerError } =
           await managerQuery.maybeSingle()
+
         if (managerError) throw managerError
+
         if (!manager) {
           return NextResponse.json(
             { error: "Choose an active line manager from this company." },
+
             { status: 400, headers: responseHeaders },
           )
         }
@@ -1143,38 +1856,61 @@ export async function POST(request: Request) {
 
       if (staffInput?.transportAccountId) {
         const { data: account, error: accountError } = await admin
+
           .from("company_accounts")
+
           .select("id")
+
           .eq("id", staffInput.transportAccountId)
+
           .eq("company_id", access.companyId)
+
           .eq("status", "active")
+
           .maybeSingle()
+
         if (accountError) throw accountError
+
         if (!account) {
           return NextResponse.json(
             { error: "Choose an active funding account from this company." },
+
             { status: 400, headers: responseHeaders },
           )
         }
       }
 
       const currentEmail = authResult.user.email
+
       const emailChanged = currentEmail.toLowerCase() !== email
+
       let currentEmailChangeLink = ""
+
       let newEmailChangeLink = ""
+
       let emailSmtpConfig: {
         host: string
+
         port: number
+
         user: string
+
         pass: string
       } | null = null
+
       let emailFrom = ""
+
       if (emailChanged) {
         const smtpHost = process.env.SYSTEM_SMTP_HOST?.trim()
+
         const smtpPort = Number(process.env.SYSTEM_SMTP_PORT ?? "587")
+
         const smtpUser = process.env.SYSTEM_SMTP_USER?.trim()
+
         const smtpPass = process.env.SYSTEM_SMTP_PASS?.trim()
+
         emailFrom = process.env.SYSTEM_SMTP_FROM?.trim() || smtpUser || ""
+
         if (
           !smtpHost ||
           !smtpUser ||
@@ -1189,42 +1925,61 @@ export async function POST(request: Request) {
               error:
                 "Login email changes require SYSTEM_SMTP_HOST, SYSTEM_SMTP_PORT, SYSTEM_SMTP_USER, and SYSTEM_SMTP_PASS on the server.",
             },
+
             { status: 503, headers: responseHeaders },
           )
         }
+
         emailSmtpConfig = {
           host: smtpHost,
+
           port: smtpPort,
+
           user: smtpUser,
+
           pass: smtpPass,
         }
 
         const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim()
+
         const redirectTo =
           siteUrl && company.slug
             ? new URL(`/${company.slug}/login`, siteUrl).toString()
             : undefined
+
         const options = redirectTo ? { redirectTo } : undefined
+
         const [currentLinkResult, newLinkResult] = await Promise.all([
           admin.auth.admin.generateLink({
             type: "email_change_current",
+
             email: currentEmail,
+
             newEmail: email,
+
             ...(options ? { options } : {}),
           }),
+
           admin.auth.admin.generateLink({
             type: "email_change_new",
+
             email: currentEmail,
+
             newEmail: email,
+
             ...(options ? { options } : {}),
           }),
         ])
+
         if (currentLinkResult.error || newLinkResult.error) {
           const linkError = currentLinkResult.error ?? newLinkResult.error
+
           console.error(
             "Email-change verification link generation failed",
+
             linkError,
           )
+
           return NextResponse.json(
             {
               error:
@@ -1232,29 +1987,41 @@ export async function POST(request: Request) {
                   ? "That login email is already used by another account."
                   : "Unable to prepare the login email verification links.",
             },
+
             {
               status: linkError?.code === "email_exists" ? 409 : 400,
+
               headers: responseHeaders,
             },
           )
         }
 
         currentEmailChangeLink = currentLinkResult.data.properties.action_link
+
         newEmailChangeLink = newLinkResult.data.properties.action_link
       }
 
       const originalRoleId = membership.role_id
+
       const originalBranchId = membership.branch_id
+
       const originalMembershipStatus = membership.status
+
       const originalProfile = profile
+
       const originalMetadata = authResult.user.user_metadata ?? {}
+
       let profileUpdated = false
+
       let membershipUpdated = false
+
       let staffUpdated = false
+
       let createdStaffId = ""
 
       const rollback = async () => {
         const failures: string[] = []
+
         const actions: Array<[string, () => Promise<{ error: unknown } | {
           error: null
         }>]> = []
@@ -1262,67 +2029,103 @@ export async function POST(request: Request) {
         if (staffUpdated && createdStaffId) {
           actions.push([
             "new staff record",
+
             async () =>
               await admin
+
                 .from("company_staff_members")
+
                 .delete()
+
                 .eq("company_id", access.companyId)
+
                 .eq("id", createdStaffId),
           ])
         } else if (staffUpdated && currentStaff) {
           actions.push([
             "staff record",
+
             async () =>
               await admin
+
                 .from("company_staff_members")
+
                 .update({
                   branch_id: currentStaff.branch_id,
+
                   linked_user_id: currentStaff.linked_user_id,
+
                   line_manager_staff_id: currentStaff.line_manager_staff_id,
+
                   name: currentStaff.name,
+
                   phone: currentStaff.phone,
+
                   position: currentStaff.position,
+
                   status: currentStaff.status,
+
                   date_joined: currentStaff.date_joined,
+
                   pay_type: currentStaff.pay_type,
+
                   base_salary: currentStaff.base_salary,
+
                   weekly_transport_allowance:
                     currentStaff.weekly_transport_allowance,
-                  transport_account_mode:
-                    currentStaff.transport_account_mode,
+
+                  transport_account_mode: currentStaff.transport_account_mode,
+
                   transport_account_id: currentStaff.transport_account_id,
+
                   updated_by: currentStaff.updated_by,
                 })
+
                 .eq("company_id", access.companyId)
+
                 .eq("id", currentStaff.id),
           ])
         }
+
         if (membershipUpdated) {
           actions.push([
             "company membership",
+
             async () =>
               await admin
+
                 .from("company_memberships")
+
                 .update({
                   role_id: originalRoleId,
+
                   branch_id: originalBranchId,
+
                   status: originalMembershipStatus,
                 })
+
                 .eq("company_id", access.companyId)
+
                 .eq("user_id", userId),
           ])
         }
+
         if (profileUpdated) {
           actions.push([
             "user profile",
+
             async () =>
               originalProfile
                 ? await admin
+
                     .from("profiles")
+
                     .update({
                       display_name: originalProfile.display_name,
+
                       phone: originalProfile.phone,
                     })
+
                     .eq("id", userId)
                 : await admin.from("profiles").delete().eq("id", userId),
           ])
@@ -1332,166 +2135,250 @@ export async function POST(request: Request) {
           actions.map(async ([label, action]) => {
             try {
               const { error } = await action()
+
               if (error) {
                 failures.push(label)
+
                 console.error(`User edit rollback failed for ${label}`, error)
               }
             } catch (rollbackError) {
               failures.push(label)
+
               console.error(
                 `User edit rollback failed for ${label}`,
+
                 rollbackError,
               )
             }
           }),
         )
+
         return failures
       }
 
       try {
         const { error: profileUpdateError } = await admin
+
           .from("profiles")
+
           .upsert({ id: userId, display_name: name, phone }, {
             onConflict: "id",
           })
+
         if (profileUpdateError) throw profileUpdateError
+
         profileUpdated = true
 
         if (userType === "staff" && staffInput && staffPosition) {
           if (currentStaff) {
             const { data: updatedStaff, error: staffUpdateError } = await admin
+
               .from("company_staff_members")
+
               .update({
                 branch_id: branchId,
+
                 line_manager_staff_id: staffInput.lineManagerStaffId,
+
                 name,
+
                 phone,
+
                 position_id: staffPosition.id,
+
                 position: staffPosition.name,
+
                 status: staffInput.status,
+
                 date_joined: staffInput.dateJoined,
+
                 linked_user_id: userId,
+
                 pay_type: staffInput.payType,
+
                 base_salary: staffInput.baseSalary,
+
                 weekly_transport_allowance: staffInput.weeklyTransportAllowance,
+
                 transport_account_mode: staffInput.transportAccountMode,
+
                 transport_account_id: staffInput.transportAccountId,
+
                 updated_by: access.userId,
               })
+
               .eq("company_id", access.companyId)
+
               .eq("id", currentStaff.id)
+
               .select("id")
+
               .maybeSingle()
+
             if (staffUpdateError) throw staffUpdateError
+
             if (!updatedStaff)
               throw new Error("The linked staff record was not found.")
           } else {
             createdStaffId = await insertInvitedStaffRecord(
               admin,
+
               access.companyId,
+
               access.userId,
+
               userId,
+
               staffInput,
+
               phone,
             )
           }
+
           staffUpdated = true
         } else if (userType === "member" && currentStaff) {
           const { data: updatedStaff, error: staffUpdateError } = await admin
+
             .from("company_staff_members")
+
             .update({
               linked_user_id: null,
+
               status: "Inactive",
+
               updated_by: access.userId,
             })
+
             .eq("company_id", access.companyId)
+
             .eq("id", currentStaff.id)
+
             .select("id")
+
             .maybeSingle()
+
           if (staffUpdateError) throw staffUpdateError
+
           if (!updatedStaff)
             throw new Error("The linked staff record was not found.")
+
           staffUpdated = true
         }
 
         const nextMembershipStatus =
           requestedStatus === "invited" ? membership.status : requestedStatus
+
         const { data: updatedMembership, error: membershipUpdateError } =
           await admin
+
             .from("company_memberships")
+
             .update({
               role_id: roleId,
+
               branch_id: branchId,
+
               status: nextMembershipStatus,
             })
+
             .eq("company_id", access.companyId)
+
             .eq("user_id", userId)
+
             .select("user_id")
+
             .maybeSingle()
+
         if (membershipUpdateError) throw membershipUpdateError
+
         if (!updatedMembership)
           throw new Error("The company membership was not found.")
+
         membershipUpdated = true
 
         const { error: metadataError } = await admin.auth.admin.updateUserById(
           userId,
+
           {
             user_metadata: {
               ...originalMetadata,
+
               full_name: name,
             },
           },
         )
+
         if (metadataError) throw metadataError
       } catch (updateError) {
         console.error("Company user details update failed", updateError)
+
         const rollbackFailures = await rollback()
+
         if (rollbackFailures.length) {
           return NextResponse.json(
             {
               error:
                 "The user update failed and some changes could not be restored. Contact support before retrying.",
             },
+
             { status: 500, headers: responseHeaders },
           )
         }
+
         return NextResponse.json(
           {
             error:
               "Unable to update user details. No profile, staff, or access changes were retained.",
           },
+
           { status: 500, headers: responseHeaders },
         )
       }
 
       let emailChangeWarning = ""
+
       if (emailChanged && emailSmtpConfig) {
         const emailTransport = nodemailer.createTransport({
           host: emailSmtpConfig.host,
+
           port: emailSmtpConfig.port,
+
           secure: emailSmtpConfig.port === 465,
+
           auth: {
             user: emailSmtpConfig.user,
+
             pass: emailSmtpConfig.pass,
           },
         })
+
         const displayName = escapeEmailHtml(name)
+
         const companyName = escapeEmailHtml(company.name ?? "your company")
+
         const escapedEmail = escapeEmailHtml(email)
+
         const emailMessage = (link: string, recipient: string) => ({
           from: emailFrom,
+
           to: recipient,
+
           subject: "Confirm your login email change",
+
           text: `A Chairman requested a login email change for your ${company.name ?? "company"} account. Confirm the change using this link: ${link}`,
+
           html: `<p>Hello ${displayName},</p><p>A Chairman requested changing the login email for your ${companyName} account to <strong>${escapedEmail}</strong>.</p><p><a href="${escapeEmailHtml(link)}">Confirm email change</a></p><p>If you did not expect this request, you can ignore this message. The login email will not change until the verification steps are completed.</p>`,
         })
+
         try {
           const deliveries = await Promise.allSettled([
             emailTransport.sendMail(
               emailMessage(currentEmailChangeLink, currentEmail),
             ),
+
             emailTransport.sendMail(emailMessage(newEmailChangeLink, email)),
           ])
+
           if (deliveries.some((delivery) => delivery.status === "rejected"))
             throw new Error(
               "One or more verification messages were not delivered.",
@@ -1499,8 +2386,10 @@ export async function POST(request: Request) {
         } catch (emailError) {
           console.error(
             "Company user email-change verification delivery failed",
+
             emailError,
           )
+
           emailChangeWarning =
             "The account was updated, but email verification could not be fully delivered. The login email remains unchanged; retry the email change."
         } finally {
@@ -1511,9 +2400,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           success: true,
+
           emailChangePending: emailChanged && !emailChangeWarning,
+
           emailChangeWarning: emailChangeWarning || undefined,
         },
+
         { headers: responseHeaders },
       )
     }
@@ -1667,6 +2559,7 @@ export async function POST(request: Request) {
 
             {
               status: emailError.code === "email_exists" ? 409 : 400,
+
               headers: responseHeaders,
             },
           )
@@ -1747,7 +2640,9 @@ export async function POST(request: Request) {
 
     if (body.action === "change-user-type") {
       const userId = typeof body.userId === "string" ? body.userId : ""
+
       const userType = body.userType
+
       if (
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
           userId,
@@ -1756,42 +2651,61 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "Select a valid company user and user type." },
+
           { status: 400, headers: responseHeaders },
         )
       }
 
       const { data: company, error: companyError } = await admin
+
         .from("companies")
+
         .select("primary_admin_user_id")
+
         .eq("id", access.companyId)
+
         .maybeSingle()
+
       if (companyError || !company) {
         console.error("User type edit company lookup failed", companyError)
+
         return NextResponse.json(
           { error: "Unable to verify company ownership." },
+
           { status: 500, headers: responseHeaders },
         )
       }
+
       if (company.primary_admin_user_id !== access.userId)
         return NextResponse.json(
           { error: "Only the Chairman can change a user's type." },
+
           { status: 403, headers: responseHeaders },
         )
+
       if (userId === access.userId)
         return NextResponse.json(
           { error: "You cannot change your own user type." },
+
           { status: 400, headers: responseHeaders },
         )
 
       const { data: membership, error: membershipError } = await admin
+
         .from("company_memberships")
+
         .select("user_id, branch_id, role:company_roles(name)")
+
         .eq("company_id", access.companyId)
+
         .eq("user_id", userId)
+
         .maybeSingle()
+
       if (membershipError || !membership) {
         return NextResponse.json(
           { error: "Selected user is not a member of this company." },
+
           { status: 404, headers: responseHeaders },
         )
       }
@@ -1799,36 +2713,48 @@ export async function POST(request: Request) {
       const joinedRole = membership.role as { name: string } | {
         name: string
       }[] | null
+
       const roleName = Array.isArray(joinedRole)
         ? joinedRole[0]?.name
         : joinedRole?.name
+
       if (
         userId === company.primary_admin_user_id ||
         isPrimaryAdministratorRole(roleName ?? "")
       ) {
         return NextResponse.json(
           { error: "Protected administrator accounts cannot be changed." },
+
           { status: 403, headers: responseHeaders },
         )
       }
 
       const { data: linkedStaff, error: linkedStaffError } = await admin
+
         .from("company_staff_members")
+
         .select("id")
+
         .eq("company_id", access.companyId)
+
         .eq("linked_user_id", userId)
+
         .limit(2)
+
       if (linkedStaffError) throw linkedStaffError
+
       if ((linkedStaff ?? []).length > 1)
         return NextResponse.json(
           {
             error:
               "This user has multiple linked staff records. Contact support.",
           },
+
           { status: 409, headers: responseHeaders },
         )
 
       const currentlyStaff = Boolean(linkedStaff?.length)
+
       if ((userType === "staff") === currentlyStaff)
         return NextResponse.json({ success: true }, {
           headers: responseHeaders,
@@ -1836,40 +2762,58 @@ export async function POST(request: Request) {
 
       if (userType === "member") {
         const staffId = linkedStaff?.[0]?.id
+
         if (!staffId)
           return NextResponse.json({ success: true }, {
             headers: responseHeaders,
           })
 
         const { count, error: reportsError } = await admin
+
           .from("company_staff_members")
+
           .select("id", { count: "exact", head: true })
+
           .eq("company_id", access.companyId)
+
           .eq("line_manager_staff_id", staffId)
+
           .neq("status", "Inactive")
+
         if (reportsError) throw reportsError
+
         if (count)
           return NextResponse.json(
             {
               error:
                 "Reassign this staff member's direct reports before changing their type.",
             },
+
             { status: 409, headers: responseHeaders },
           )
 
         const { error: unlinkError } = await admin
+
           .from("company_staff_members")
+
           .update({ linked_user_id: null, status: "Inactive" })
+
           .eq("id", staffId)
+
           .eq("company_id", access.companyId)
+
           .eq("linked_user_id", userId)
+
         if (unlinkError) {
           console.error("Staff user-type change failed", unlinkError)
+
           return NextResponse.json(
             { error: "Unable to change this user to Member." },
+
             { status: 500, headers: responseHeaders },
           )
         }
+
         return NextResponse.json({ success: true }, {
           headers: responseHeaders,
         })
@@ -1881,78 +2825,117 @@ export async function POST(request: Request) {
         !Array.isArray(body.staff)
           ? body.staff as Record<string, unknown>
           : null
+
       if (!staffBody)
         return NextResponse.json(
           { error: "Enter the required staff details." },
+
           { status: 400, headers: responseHeaders },
         )
 
       const { data: profile, error: profileError } = await admin
+
         .from("profiles")
+
         .select("display_name")
+
         .eq("id", userId)
+
         .maybeSingle()
+
       if (profileError) throw profileError
+
       const name = profile?.display_name?.trim() ?? ""
+
       if (!name)
         return NextResponse.json(
           { error: "This user needs a profile name before becoming Staff." },
+
           { status: 400, headers: responseHeaders },
         )
 
       let branchQuery = admin
+
         .from("company_branches")
+
         .select("id")
+
         .eq("company_id", access.companyId)
+
         .eq("status", "active")
+
       branchQuery = membership.branch_id
         ? branchQuery.eq("id", membership.branch_id)
         : branchQuery.eq("is_main_branch", true)
+
       const { data: branch, error: branchError } =
         await branchQuery.maybeSingle()
+
       if (branchError || !branch) {
         console.error("Staff type branch lookup failed", branchError)
+
         return NextResponse.json(
           { error: "The user's assigned active branch could not be found." },
+
           { status: 400, headers: responseHeaders },
         )
       }
 
       const staffInput = parseStaffInput({
         name,
+
         positionId: staffBody.positionId,
+
         status: "Active",
+
         dateJoined: staffBody.dateJoined,
+
         branchId: branch.id,
+
         linkedUserId: null,
+
         payType: "no_payroll",
+
         baseSalary: 0,
+
         weeklyTransportAllowance: 0,
+
         transportAccountMode: "fixed",
+
         transportAccountId: null,
+
         lineManagerStaffId: null,
       })
+
       if (!staffInput)
         return NextResponse.json(
           { error: "Enter a valid staff position and joining date." },
+
           { status: 400, headers: responseHeaders },
         )
 
       try {
         await insertInvitedStaffRecord(
           admin,
+
           access.companyId,
+
           access.userId,
+
           userId,
+
           staffInput,
         )
       } catch (insertError) {
         console.error("Staff user-type record creation failed", insertError)
+
         return NextResponse.json(
           { error: "Unable to create the staff record." },
+
           { status: 500, headers: responseHeaders },
         )
       }
+
       return NextResponse.json({ success: true }, { headers: responseHeaders })
     }
 
@@ -2059,337 +3042,523 @@ export async function POST(request: Request) {
         if (membership.status !== "active")
           return NextResponse.json(
             { error: "Only an active company account can be unlinked." },
+
             { status: 409, headers: responseHeaders },
           )
 
         const { data: authUser, error: authUserError } =
           await admin.auth.admin.getUserById(userId)
+
         if (authUserError || !authUser.user) {
-          console.error("Staff account unlink auth lookup failed", authUserError)
+          console.error(
+            "Staff account unlink auth lookup failed",
+            authUserError,
+          )
+
           return NextResponse.json(
             { error: "Unable to verify this company account." },
+
             { status: 404, headers: responseHeaders },
           )
         }
+
         if (authUser.user.app_metadata?.workspace_invite_pending === true)
           return NextResponse.json(
-            { error: "Revoke the pending invitation before unlinking this account." },
+            {
+              error:
+                "Revoke the pending invitation before unlinking this account.",
+            },
+
             { status: 409, headers: responseHeaders },
           )
 
         const { data: linkedStaff, error: linkedStaffError } = await admin
+
           .from("company_staff_members")
+
           .select("id, status")
+
           .eq("company_id", access.companyId)
+
           .eq("linked_user_id", userId)
+
           .limit(2)
+
         if (linkedStaffError) throw linkedStaffError
+
         if (linkedStaff?.length !== 1)
           return NextResponse.json(
             {
               error:
                 "This account must be linked to exactly one staff record before it can be unlinked.",
             },
+
             { status: 409, headers: responseHeaders },
           )
+
         if (linkedStaff[0].status.trim().toLocaleLowerCase() !== "active")
           return NextResponse.json(
             { error: "Only an active staff record can be unlinked." },
+
             { status: 409, headers: responseHeaders },
           )
 
         const { count: directReportCount, error: directReportsError } =
           await admin
+
             .from("company_staff_members")
+
             .select("id", { count: "exact", head: true })
+
             .eq("company_id", access.companyId)
+
             .eq("line_manager_staff_id", linkedStaff[0].id)
+
             .neq("status", "Inactive")
+
         if (directReportsError) throw directReportsError
+
         if (directReportCount)
           return NextResponse.json(
             {
               error:
                 "Reassign this staff member's direct reports before unlinking their account.",
             },
+
             { status: 409, headers: responseHeaders },
           )
 
         const { error: pendingInviteError } = await admin
+
           .from("workspace_invitations")
+
           .delete()
+
           .eq("company_id", access.companyId)
+
           .eq("user_id", userId)
+
           .is("accepted_at", null)
+
         if (pendingInviteError) {
           console.error(
             "Pending invitation cleanup before staff account unlink failed",
+
             pendingInviteError,
           )
+
           return NextResponse.json(
             { error: "Unable to revoke existing invitation links." },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
         const staffId = linkedStaff[0].id
+
         const { data: unlinkedStaff, error: staffUpdateError } = await admin
+
           .from("company_staff_members")
+
           .update({
             linked_user_id: null,
+
             status: "Inactive",
+
             updated_by: access.userId,
           })
+
           .eq("company_id", access.companyId)
+
           .eq("id", staffId)
+
           .eq("linked_user_id", userId)
+
           .select("id")
+
           .maybeSingle()
+
         if (staffUpdateError || !unlinkedStaff) {
           console.error("Staff record unlink failed", staffUpdateError)
+
           return NextResponse.json(
             { error: "Unable to unlink the staff record." },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
         const { data: disabledMembership, error: disableError } = await admin
+
           .from("company_memberships")
+
           .update({ status: "disabled" })
+
           .eq("company_id", access.companyId)
+
           .eq("user_id", userId)
+
           .eq("status", "active")
+
           .select("user_id")
+
           .maybeSingle()
+
         if (disableError || !disabledMembership) {
           const { error: rollbackError } = await admin
+
             .from("company_staff_members")
+
             .update({
               linked_user_id: userId,
+
               status: linkedStaff[0].status,
+
               updated_by: access.userId,
             })
+
             .eq("company_id", access.companyId)
+
             .eq("id", staffId)
+
             .is("linked_user_id", null)
+
           if (rollbackError)
             console.error("Staff record unlink rollback failed", rollbackError)
+
           console.error("Staff company membership disable failed", disableError)
+
           return NextResponse.json(
             { error: "Unable to disable this company's access." },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
         const { error: metadataError } = await admin.auth.admin.updateUserById(
           userId,
+
           {
             app_metadata: {
               ...authUser.user.app_metadata,
+
               workspace_invite_pending: false,
+
               workspace_invite_revoked: false,
+
               workspace_account_unlinked: true,
+
               workspace_staff_member_id: staffId,
+
               workspace_user_type: "staff",
             },
           },
         )
+
         if (metadataError) {
           const [staffRollback, membershipRollback] = await Promise.all([
             admin
+
               .from("company_staff_members")
+
               .update({
                 linked_user_id: userId,
+
                 status: linkedStaff[0].status,
+
                 updated_by: access.userId,
               })
+
               .eq("company_id", access.companyId)
+
               .eq("id", staffId)
+
               .is("linked_user_id", null),
+
             admin
+
               .from("company_memberships")
+
               .update({ status: membership.status })
+
               .eq("company_id", access.companyId)
+
               .eq("user_id", userId)
+
               .eq("status", "disabled"),
           ])
+
           if (staffRollback.error)
             console.error(
               "Staff record metadata rollback failed",
+
               staffRollback.error,
             )
+
           if (membershipRollback.error)
             console.error(
               "Membership metadata rollback failed",
+
               membershipRollback.error,
             )
-          console.error("Staff account unlink metadata update failed", metadataError)
+
+          console.error(
+            "Staff account unlink metadata update failed",
+            metadataError,
+          )
+
           return NextResponse.json(
             { error: "Unable to finish unlinking this staff account." },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
-        return NextResponse.json({ success: true }, { headers: responseHeaders })
+        return NextResponse.json({ success: true }, {
+          headers: responseHeaders,
+        })
       }
 
       if (body.action === "relink-account") {
         const email =
           typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
+
         if (!/^\S+@\S+\.\S+$/.test(email) || email.length > 200)
           return NextResponse.json(
             { error: "Enter a valid new login email address." },
+
             { status: 400, headers: responseHeaders },
           )
 
-        if (
-          membership.status !== "disabled"
-        )
+        if (membership.status !== "disabled")
           return NextResponse.json(
-            { error: "Only an unlinked, disabled staff account can be relinked." },
+            {
+              error:
+                "Only an unlinked, disabled staff account can be relinked.",
+            },
+
             { status: 409, headers: responseHeaders },
           )
 
         const { data: authUser, error: authUserError } =
           await admin.auth.admin.getUserById(userId)
+
         if (authUserError || !authUser.user?.email) {
-          console.error("Staff account relink auth lookup failed", authUserError)
+          console.error(
+            "Staff account relink auth lookup failed",
+            authUserError,
+          )
+
           return NextResponse.json(
             { error: "Unable to verify the existing staff account." },
+
             { status: 404, headers: responseHeaders },
           )
         }
 
         const appMetadata = authUser.user.app_metadata ?? {}
+
         const staffId =
           typeof appMetadata.workspace_staff_member_id === "string"
             ? appMetadata.workspace_staff_member_id
             : ""
+
         if (appMetadata.workspace_account_unlinked !== true || !staffId)
           return NextResponse.json(
             { error: "This account does not have an unlinked staff profile." },
+
             { status: 409, headers: responseHeaders },
           )
 
         const { data: staff, error: staffError } = await admin
+
           .from("company_staff_members")
+
           .select("id, name, status, linked_user_id")
+
           .eq("company_id", access.companyId)
+
           .eq("id", staffId)
+
           .maybeSingle()
+
         if (staffError) throw staffError
+
         if (
           !staff ||
           staff.linked_user_id !== null ||
           staff.status.trim().toLocaleLowerCase() !== "inactive"
         )
           return NextResponse.json(
-            { error: "This staff profile is no longer available for relinking." },
+            {
+              error: "This staff profile is no longer available for relinking.",
+            },
+
             { status: 409, headers: responseHeaders },
           )
 
-        const isPendingRelink =
-          appMetadata.workspace_invite_pending === true
+        const isPendingRelink = appMetadata.workspace_invite_pending === true
+
         if (
           email === authUser.user.email.toLocaleLowerCase() &&
           !isPendingRelink
         )
           return NextResponse.json(
             { error: "Enter the new email address for this staff account." },
+
             { status: 400, headers: responseHeaders },
           )
 
         const smtp = getSystemSmtpConfiguration()
+
         if (!smtp)
           return NextResponse.json(
             {
               error:
                 "Invitation email delivery is not configured. Set SYSTEM_SMTP_HOST, SYSTEM_SMTP_PORT, SYSTEM_SMTP_USER, and SYSTEM_SMTP_PASS on the server.",
             },
+
             { status: 503, headers: responseHeaders },
           )
 
         const { data: companyDetails, error: companyDetailsError } = await admin
+
           .from("companies")
+
           .select("name, slug")
+
           .eq("id", access.companyId)
+
           .maybeSingle()
+
         if (companyDetailsError || !companyDetails?.slug) {
-          console.error("Staff relink company lookup failed", companyDetailsError)
+          console.error(
+            "Staff relink company lookup failed",
+            companyDetailsError,
+          )
+
           return NextResponse.json(
             { error: "Unable to load the inviting company." },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
         const { error: previousInvitationDeleteError } = await admin
+
           .from("workspace_invitations")
+
           .delete()
+
           .eq("company_id", access.companyId)
+
           .eq("user_id", userId)
+
           .is("accepted_at", null)
+
         if (previousInvitationDeleteError) {
           console.error(
             "Previous staff relink invitations could not be revoked",
+
             previousInvitationDeleteError,
           )
+
           return NextResponse.json(
             { error: "Unable to revoke previous invitation links." },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
         const invitationId = crypto.randomUUID()
+
         const { error: invitationInsertError } = await admin
+
           .from("workspace_invitations")
+
           .insert({
             id: invitationId,
+
             company_id: access.companyId,
+
             user_id: userId,
+
             role_id: membership.role_id,
           })
+
         if (invitationInsertError) {
-          console.error("Staff relink invitation record creation failed", invitationInsertError)
+          console.error(
+            "Staff relink invitation record creation failed",
+            invitationInsertError,
+          )
+
           return NextResponse.json(
             { error: "Unable to create a fresh invitation link." },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
         const siteUrl =
-          process.env.NEXT_PUBLIC_SITE_URL?.trim() || new URL(request.url).origin
+          process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+          new URL(request.url).origin
+
         const redirectUrl = new URL(
           `/${encodeURIComponent(companyDetails.slug)}`,
+
           siteUrl,
         )
+
         redirectUrl.searchParams.set("invite", "1")
+
         redirectUrl.searchParams.set("invitation_id", invitationId)
 
         const originalEmail = authUser.user.email
+
         const originalAppMetadata = authUser.user.app_metadata ?? {}
-        const { error: updateAuthError } = await admin.auth.admin.updateUserById(
-          userId,
-          {
-            email,
-            email_confirm: true,
-            app_metadata: {
-              ...originalAppMetadata,
-              workspace_invite_pending: true,
-              workspace_invite_revoked: false,
-              workspace_account_unlinked: true,
-              workspace_relink_requested_by: access.userId,
-              workspace_relink_company_id: access.companyId,
+
+        const { error: updateAuthError } =
+          await admin.auth.admin.updateUserById(
+            userId,
+
+            {
+              email,
+
+              email_confirm: true,
+
+              app_metadata: {
+                ...originalAppMetadata,
+
+                workspace_invite_pending: true,
+
+                workspace_invite_revoked: false,
+
+                workspace_account_unlinked: true,
+
+                workspace_relink_requested_by: access.userId,
+
+                workspace_relink_company_id: access.companyId,
+              },
             },
-          },
-        )
+          )
+
         if (updateAuthError) {
           const { error: cleanupError } = await admin
+
             .from("workspace_invitations")
+
             .delete()
+
             .eq("id", invitationId)
+
           if (cleanupError)
-            console.error("Failed to clean up failed staff relink invitation", cleanupError)
+            console.error(
+              "Failed to clean up failed staff relink invitation",
+              cleanupError,
+            )
+
           console.error("Staff login email update failed", updateAuthError)
+
           return NextResponse.json(
             {
               error:
@@ -2397,8 +3566,10 @@ export async function POST(request: Request) {
                   ? "That login email is already used by another account."
                   : "Unable to update the staff account's login email.",
             },
+
             {
               status: updateAuthError.code === "email_exists" ? 409 : 400,
+
               headers: responseHeaders,
             },
           )
@@ -2406,42 +3577,67 @@ export async function POST(request: Request) {
 
         const rollbackRelink = async () => {
           const { error: deleteError } = await admin
+
             .from("workspace_invitations")
+
             .delete()
+
             .eq("id", invitationId)
+
           if (deleteError)
-            console.error("Failed to remove unsuccessful staff relink invitation", deleteError)
-          const { error: rollbackError } = await admin.auth.admin.updateUserById(
-            userId,
-            {
-              email: originalEmail,
-              email_confirm: true,
-              app_metadata: originalAppMetadata,
-            },
-          )
+            console.error(
+              "Failed to remove unsuccessful staff relink invitation",
+              deleteError,
+            )
+
+          const { error: rollbackError } =
+            await admin.auth.admin.updateUserById(
+              userId,
+
+              {
+                email: originalEmail,
+
+                email_confirm: true,
+
+                app_metadata: originalAppMetadata,
+              },
+            )
+
           if (rollbackError) {
             console.error("Staff login email rollback failed", rollbackError)
+
             return false
           }
+
           return true
         }
 
         const { data: linkData, error: linkError } =
           await admin.auth.admin.generateLink({
             type: "magiclink",
+
             email,
+
             options: { redirectTo: redirectUrl.toString() },
           })
+
         const actionLink = linkData?.properties?.action_link
+
         if (linkError || !actionLink) {
           const rollbackSucceeded = await rollbackRelink()
-          console.error("Staff relink invitation link generation failed", linkError)
+
+          console.error(
+            "Staff relink invitation link generation failed",
+            linkError,
+          )
+
           return NextResponse.json(
             {
               error: rollbackSucceeded
                 ? "Unable to generate an invitation link. Please try again."
                 : "Invitation setup failed and the previous account email could not be restored. Contact support.",
             },
+
             { status: 502, headers: responseHeaders },
           )
         }
@@ -2449,29 +3645,42 @@ export async function POST(request: Request) {
         try {
           await sendWorkspaceInvitationEmail({
             smtp,
+
             to: email,
+
             fullName:
               typeof authUser.user.user_metadata?.full_name === "string"
                 ? authUser.user.user_metadata.full_name
                 : staff.name,
+
             companyName: companyDetails.name,
+
             roleName: targetRoleName ?? "team member",
+
             actionLink,
           })
         } catch (emailError) {
           const rollbackSucceeded = await rollbackRelink()
-          console.error("Staff relink invitation email delivery failed", emailError)
+
+          console.error(
+            "Staff relink invitation email delivery failed",
+            emailError,
+          )
+
           return NextResponse.json(
             {
               error: rollbackSucceeded
                 ? "Unable to deliver the invitation email. Check server SMTP settings and try again."
                 : "Invitation delivery failed and the previous account email could not be restored. Contact support.",
             },
+
             { status: 502, headers: responseHeaders },
           )
         }
 
-        return NextResponse.json({ success: true }, { headers: responseHeaders })
+        return NextResponse.json({ success: true }, {
+          headers: responseHeaders,
+        })
       }
 
       if (body.action === "resend-invite") {
@@ -2487,17 +3696,25 @@ export async function POST(request: Request) {
 
         const { data: latestInvitation, error: latestInvitationError } =
           await admin
+
             .from("workspace_invitations")
+
             .select("accepted_at")
+
             .eq("company_id", access.companyId)
+
             .eq("user_id", userId)
+
             .order("created_at", { ascending: false })
+
             .limit(1)
+
             .maybeSingle()
 
         if (latestInvitationError)
           return NextResponse.json(
             { error: "Unable to verify this invitation." },
+
             { status: 500, headers: responseHeaders },
           )
 
@@ -2510,15 +3727,14 @@ export async function POST(request: Request) {
         if (latestInvitation?.accepted_at || !invitationIsPending)
           return NextResponse.json(
             { error: "This user has already accepted the invitation." },
+
             { status: 409, headers: responseHeaders },
           )
 
-        if (
-          membership.status !== "active" &&
-          membership.status !== "disabled"
-        )
+        if (membership.status !== "active" && membership.status !== "disabled")
           return NextResponse.json(
             { error: "This company membership cannot be reactivated." },
+
             { status: 409, headers: responseHeaders },
           )
 
@@ -2530,12 +3746,14 @@ export async function POST(request: Request) {
           )
 
         const smtp = getSystemSmtpConfiguration()
+
         if (!smtp)
           return NextResponse.json(
             {
               error:
                 "Invitation email delivery is not configured. Set SYSTEM_SMTP_HOST, SYSTEM_SMTP_PORT, SYSTEM_SMTP_USER, and SYSTEM_SMTP_PASS on the server.",
             },
+
             { status: 503, headers: responseHeaders },
           )
 
@@ -2557,19 +3775,27 @@ export async function POST(request: Request) {
           )
 
         const { error: previousInvitationDeleteError } = await admin
+
           .from("workspace_invitations")
+
           .delete()
+
           .eq("company_id", access.companyId)
+
           .eq("user_id", userId)
+
           .is("accepted_at", null)
 
         if (previousInvitationDeleteError) {
           console.error(
             "Previous workspace invitation links could not be revoked",
+
             previousInvitationDeleteError,
           )
+
           return NextResponse.json(
             { error: "Unable to revoke the previous invitation link." },
+
             { status: 500, headers: responseHeaders },
           )
         }
@@ -2593,6 +3819,7 @@ export async function POST(request: Request) {
         if (invitationInsertError) {
           console.error(
             "Workspace invitation renewal record creation failed",
+
             invitationInsertError,
           )
 
@@ -2620,60 +3847,91 @@ export async function POST(request: Request) {
         const { data: linkData, error: linkError } =
           await admin.auth.admin.generateLink({
             type: "magiclink",
+
             email: authUser.user.email,
+
             options: { redirectTo: redirectUrl.toString() },
           })
 
         const actionLink = linkData?.properties?.action_link
+
         if (linkError || !actionLink) {
           const { error: cleanupError } = await admin
+
             .from("workspace_invitations")
+
             .delete()
+
             .eq("id", invitationId)
 
           if (cleanupError)
             console.error(
               "Failed to remove invitation record after link generation failed",
+
               cleanupError,
             )
 
-          console.error("Workspace invitation link generation failed", linkError)
+          console.error(
+            "Workspace invitation link generation failed",
+            linkError,
+          )
+
           return NextResponse.json(
-            { error: "Unable to generate an invitation link. Please try again." },
+            {
+              error: "Unable to generate an invitation link. Please try again.",
+            },
+
             { status: 502, headers: responseHeaders },
           )
         }
 
         const wasDisabled = membership.status === "disabled"
+
         let relinkedStaffId = ""
 
         if (wasDisabled) {
           const { data: reactivatedMembership, error: reactivateError } =
             await admin
+
               .from("company_memberships")
+
               .update({ status: "active" })
+
               .eq("company_id", access.companyId)
+
               .eq("user_id", userId)
+
               .eq("status", "disabled")
+
               .select("user_id")
+
               .maybeSingle()
 
           if (reactivateError || !reactivatedMembership) {
             const { error: cleanupError } = await admin
+
               .from("workspace_invitations")
+
               .delete()
+
               .eq("id", invitationId)
+
             if (cleanupError)
               console.error(
                 "Failed to clean up invitation after membership reactivation failed",
+
                 cleanupError,
               )
+
             console.error(
               "Workspace membership reactivation failed",
+
               reactivateError,
             )
+
             return NextResponse.json(
               { error: "Unable to restore this user's company membership." },
+
               { status: 500, headers: responseHeaders },
             )
           }
@@ -2688,42 +3946,64 @@ export async function POST(request: Request) {
             try {
               await linkInvitedStaffRecord(
                 admin,
+
                 access.companyId,
+
                 staffMemberId,
+
                 userId,
+
                 access.userId,
+
                 "",
               )
+
               relinkedStaffId = staffMemberId
             } catch (staffLinkError) {
               const { error: disableError } = await admin
+
                 .from("company_memberships")
+
                 .update({ status: "disabled" })
+
                 .eq("company_id", access.companyId)
+
                 .eq("user_id", userId)
+
               if (disableError)
                 console.error(
                   "Membership rollback after staff relinking failed",
+
                   disableError,
                 )
+
               const { error: cleanupError } = await admin
+
                 .from("workspace_invitations")
+
                 .delete()
+
                 .eq("id", invitationId)
+
               if (cleanupError)
                 console.error(
                   "Failed to clean up invitation after staff relinking failed",
+
                   cleanupError,
                 )
+
               console.error(
                 "Revoked staff record relinking failed",
+
                 staffLinkError,
               )
+
               return NextResponse.json(
                 {
                   error:
                     "The retained staff record could not be linked. Refresh the staff roster before resending.",
                 },
+
                 { status: 409, headers: responseHeaders },
               )
             }
@@ -2733,58 +4013,84 @@ export async function POST(request: Request) {
         try {
           await sendWorkspaceInvitationEmail({
             smtp,
+
             to: authUser.user.email,
+
             fullName:
               typeof authUser.user.user_metadata?.full_name === "string"
                 ? authUser.user.user_metadata.full_name
                 : authUser.user.email,
+
             companyName: companyDetails.name,
+
             roleName: targetRoleName ?? "team member",
+
             actionLink,
           })
         } catch (emailError) {
           if (relinkedStaffId) {
             const { error: unlinkError } = await admin
+
               .from("company_staff_members")
+
               .update({ linked_user_id: null })
+
               .eq("company_id", access.companyId)
+
               .eq("id", relinkedStaffId)
+
               .eq("linked_user_id", userId)
+
             if (unlinkError)
               console.error(
                 "Staff record rollback after invitation email failure failed",
+
                 unlinkError,
               )
           }
+
           if (wasDisabled) {
             const { error: disableError } = await admin
+
               .from("company_memberships")
+
               .update({ status: "disabled" })
+
               .eq("company_id", access.companyId)
+
               .eq("user_id", userId)
+
             if (disableError)
               console.error(
                 "Membership rollback after invitation email failure failed",
+
                 disableError,
               )
           }
+
           const { error: cleanupError } = await admin
+
             .from("workspace_invitations")
+
             .delete()
+
             .eq("id", invitationId)
 
           if (cleanupError)
             console.error(
               "Failed to remove invitation record after email delivery failed",
+
               cleanupError,
             )
 
           console.error("Workspace invitation email resend failed", emailError)
+
           return NextResponse.json(
             {
               error:
                 "Unable to deliver the invitation email. Check the server SMTP settings and try again.",
             },
+
             { status: 502, headers: responseHeaders },
           )
         }
@@ -2870,16 +4176,21 @@ export async function POST(request: Request) {
         if (status === "active") {
           const { data: authUser, error: authUserError } =
             await admin.auth.admin.getUserById(userId)
+
           if (authUserError || !authUser.user) {
             console.error("User activation auth lookup failed", authUserError)
+
             return NextResponse.json(
               { error: "Unable to verify this company account." },
+
               { status: 404, headers: responseHeaders },
             )
           }
+
           if (authUser.user.app_metadata?.workspace_account_unlinked === true)
             return NextResponse.json(
               { error: "Use Relink account to restore this staff account." },
+
               { status: 409, headers: responseHeaders },
             )
         }
@@ -2937,17 +4248,25 @@ export async function POST(request: Request) {
 
         const { data: latestInvitation, error: latestInvitationError } =
           await admin
+
             .from("workspace_invitations")
+
             .select("accepted_at")
+
             .eq("company_id", access.companyId)
+
             .eq("user_id", userId)
+
             .order("created_at", { ascending: false })
+
             .limit(1)
+
             .maybeSingle()
 
         if (latestInvitationError)
           return NextResponse.json(
             { error: "Unable to verify this invitation." },
+
             { status: 500, headers: responseHeaders },
           )
 
@@ -2960,18 +4279,24 @@ export async function POST(request: Request) {
         if (latestInvitation?.accepted_at || !invitationIsPending)
           return NextResponse.json(
             { error: "This user has already accepted the invitation." },
+
             { status: 409, headers: responseHeaders },
           )
 
         const { data: linkedStaff, error: linkedStaffError } = await admin
+
           .from("company_staff_members")
+
           .select("id")
+
           .eq("company_id", access.companyId)
+
           .eq("linked_user_id", userId)
 
         if (linkedStaffError)
           return NextResponse.json(
             { error: "Unable to preserve the linked staff record." },
+
             { status: 500, headers: responseHeaders },
           )
 
@@ -2981,6 +4306,7 @@ export async function POST(request: Request) {
               error:
                 "This user has multiple linked staff records. Contact support before revoking the invitation.",
             },
+
             { status: 409, headers: responseHeaders },
           )
 
@@ -2992,33 +4318,45 @@ export async function POST(request: Request) {
             : null)
 
         const { error: disableError } = await admin
+
           .from("company_memberships")
+
           .update({ status: "disabled" })
+
           .eq("company_id", access.companyId)
+
           .eq("user_id", userId)
 
         if (disableError) {
           console.error("Invited membership disable failed", disableError)
+
           return NextResponse.json(
             { error: "Unable to revoke this user's invitation." },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
         if (linkedStaff?.length) {
           const { error: unlinkError } = await admin
+
             .from("company_staff_members")
+
             .update({ linked_user_id: null, updated_by: access.userId })
+
             .eq("company_id", access.companyId)
+
             .eq("linked_user_id", userId)
 
           if (unlinkError) {
             console.error("Invited staff record unlink failed", unlinkError)
+
             return NextResponse.json(
               {
                 error:
                   "The invitation was revoked, but the staff record could not be made available for reassignment.",
               },
+
               { status: 500, headers: responseHeaders },
             )
           }
@@ -3026,14 +4364,19 @@ export async function POST(request: Request) {
 
         const { error: metadataError } = await admin.auth.admin.updateUserById(
           userId,
+
           {
             app_metadata: {
               ...authUser.user.app_metadata,
+
               workspace_invite_pending: true,
+
               workspace_invite_revoked: true,
+
               ...(staffMemberId
                 ? {
                     workspace_staff_member_id: staffMemberId,
+
                     workspace_user_type: "staff",
                   }
                 : {}),
@@ -3042,50 +4385,77 @@ export async function POST(request: Request) {
         )
 
         if (metadataError) {
-          console.error("Revoked invitation metadata update failed", metadataError)
+          console.error(
+            "Revoked invitation metadata update failed",
+            metadataError,
+          )
+
           return NextResponse.json(
             {
               error:
                 "The invitation was revoked, but its user details could not be retained.",
             },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
         const { error: invitationDeleteError } = await admin
+
           .from("workspace_invitations")
+
           .delete()
+
           .eq("company_id", access.companyId)
+
           .eq("user_id", userId)
+
           .is("accepted_at", null)
 
         if (invitationDeleteError) {
           console.error(
             "Revoked invitation token record removal failed",
+
             invitationDeleteError,
           )
+
           return NextResponse.json(
-            { error: "The invitation was disabled, but its link could not be revoked." },
+            {
+              error:
+                "The invitation was disabled, but its link could not be revoked.",
+            },
+
             { status: 500, headers: responseHeaders },
           )
         }
 
-        return NextResponse.json({ success: true }, { headers: responseHeaders })
+        return NextResponse.json({ success: true }, {
+          headers: responseHeaders,
+        })
       }
 
       const { error: unlinkStaffError } = await admin
+
         .from("company_staff_members")
+
         .update({ linked_user_id: null, updated_by: access.userId })
+
         .eq("company_id", access.companyId)
+
         .eq("linked_user_id", userId)
 
       if (unlinkStaffError) {
-        console.error("Staff record unlink before user deletion failed", unlinkStaffError)
+        console.error(
+          "Staff record unlink before user deletion failed",
+          unlinkStaffError,
+        )
+
         return NextResponse.json(
           {
             error:
               "The user's staff record could not be preserved. No user or membership data was deleted.",
           },
+
           { status: 500, headers: responseHeaders },
         )
       }
@@ -3322,20 +4692,28 @@ export async function POST(request: Request) {
       const permissionSave = access.isPrimaryAdmin
         ? await admin.rpc(
             "replace_company_role_permissions_for_primary_admin",
+
             {
               requested_role_id: role.id,
+
               requested_company_id: access.companyId,
+
               requested_permissions: requestedPermissions,
+
               requested_actor_id: access.userId,
             },
           )
         : await admin.rpc("replace_company_role_permissions", {
             requested_role_id: role.id,
+
             requested_company_id: access.companyId,
+
             requested_permissions: requestedPermissions,
           })
+
       const {
         data: savedPermissions,
+
         error: savePermissionsError,
       } = permissionSave
 
@@ -3370,12 +4748,14 @@ export async function POST(request: Request) {
 
             access_settings: roleAccessSettings(
               role.access_settings,
+
               role.name,
             ),
           },
 
           permissions: savedPermissions,
         },
+
         {
           status: 201,
 
@@ -3579,15 +4959,20 @@ export async function POST(request: Request) {
       const permissionSave = access.isPrimaryAdmin
         ? await admin.rpc(
             "replace_company_role_permissions_for_primary_admin",
+
             {
               requested_role_id: roleId,
+
               requested_company_id: access.companyId,
+
               requested_permissions: requestedPermissions,
+
               requested_actor_id: access.userId,
             },
           )
         : await admin.rpc(
             "replace_company_role_permissions",
+
             {
               requested_role_id: roleId,
 
@@ -3599,6 +4984,7 @@ export async function POST(request: Request) {
 
       const {
         data: savedPermissions,
+
         error: savePermissionsError,
       } = permissionSave
 
@@ -3753,12 +5139,17 @@ export async function POST(request: Request) {
       const roleId = typeof body.roleId === "string" ? body.roleId : ""
 
       const branchId = typeof body.branchId === "string" ? body.branchId : ""
+
       const existingStaffId =
         typeof body.existingStaffId === "string" ? body.existingStaffId : ""
+
       const userTypeSelection = parseUserTypeSelection(
         body,
+
         name,
+
         branchId,
+
         existingStaffId,
       )
 
@@ -3792,6 +5183,7 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "Select a valid staff record for a Staff account." },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -3799,6 +5191,7 @@ export async function POST(request: Request) {
       const existingStaff = existingStaffId
         ? await getUnlinkedStaffRecord(admin, access.companyId, existingStaffId)
         : null
+
       if (
         existingStaffId &&
         (!existingStaff ||
@@ -3811,10 +5204,13 @@ export async function POST(request: Request) {
             error:
               "That staff record is no longer available or its details changed. Refresh the staff list and try again.",
           },
+
           { status: 409, headers: responseHeaders },
         )
       }
+
       const accountName = existingStaff?.name ?? name
+
       const accountPhone = phone || existingStaff?.phone || ""
 
       const { data: targetBranch, error: targetBranchError } = await admin
@@ -3849,6 +5245,7 @@ export async function POST(request: Request) {
           { status: 403, headers: responseHeaders },
         )
       }
+
       const branchName = targetBranch.name
 
       const { data: role, error: roleError } = await admin
@@ -3884,14 +5281,20 @@ export async function POST(request: Request) {
       if (userTypeSelection.staffInput && !existingStaff) {
         const staffValidationError = await validateStaffInvitation(
           admin,
+
           access.companyId,
+
           userTypeSelection.staffInput,
+
           access.isMainBranch || access.isPrimaryAdmin,
+
           access.branchId,
         )
+
         if (staffValidationError)
           return NextResponse.json({ error: staffValidationError }, {
             status: 400,
+
             headers: responseHeaders,
           })
       }
@@ -3920,6 +5323,7 @@ export async function POST(request: Request) {
 
       const redirectUrl = new URL(
         `/${encodeURIComponent(company.slug)}`,
+
         siteUrl,
       )
 
@@ -3928,51 +5332,61 @@ export async function POST(request: Request) {
       redirectUrl.searchParams.set("invitation_id", invitationId)
 
       const smtp = getSystemSmtpConfiguration()
+
       if (!smtp)
         return NextResponse.json(
           {
             error:
               "Invitation email delivery is not configured. Set SYSTEM_SMTP_HOST, SYSTEM_SMTP_PORT, SYSTEM_SMTP_USER, and SYSTEM_SMTP_PASS on the server.",
           },
+
           { status: 503, headers: responseHeaders },
         )
 
       const { data: inviteData, error: inviteError } =
         await admin.auth.admin.generateLink({
           type: "invite",
+
           email,
+
           options: {
             data: {
               full_name: accountName,
+
               company_name: company.name,
+
               role_name: role.name,
             },
+
             redirectTo: redirectUrl.toString(),
           },
         })
 
       const inviteActionLink = inviteData?.properties?.action_link
+
       if (inviteError || !inviteData.user || !inviteActionLink) {
         if (inviteData?.user?.id) {
           const { error: cleanupError } = await admin.auth.admin.deleteUser(
             inviteData.user.id,
           )
+
           if (cleanupError)
             console.error(
               "Failed to remove account after invitation link generation failed",
+
               cleanupError,
             )
         }
 
         const duplicateAccountError =
-            inviteError?.message.toLowerCase().includes("already") ?? false
+          inviteError?.message.toLowerCase().includes("already") ?? false
 
         return NextResponse.json(
           {
             error:
-                (duplicateAccountError
-                  ? "An account with this email already exists. If it is listed in Users & Roles, use Resend invite to send a fresh link."
-                  : inviteError?.message) ??
+              (duplicateAccountError
+                ? "An account with this email already exists. If it is listed in Users & Roles, use Resend invite to send a fresh link."
+                : inviteError?.message) ??
               "Unable to generate the invitation link.",
           },
 
@@ -3988,7 +5402,9 @@ export async function POST(request: Request) {
             ...inviteData.user.app_metadata,
 
             invitation_company_id: access.companyId,
+
             workspace_invite_pending: true,
+
             workspace_user_type: userTypeSelection.userType,
           },
         })
@@ -4012,14 +5428,18 @@ export async function POST(request: Request) {
 
         .upsert({
           id: userId,
+
           display_name: accountName,
+
           phone: accountPhone,
+
           branch: branchName,
         })
 
       if (profileError) {
         console.error(
           "Workspace invitation profile creation failed",
+
           profileError,
         )
 
@@ -4063,6 +5483,7 @@ export async function POST(request: Request) {
       if (membershipError) {
         console.error(
           "Workspace invitation membership assignment failed",
+
           membershipError,
         )
 
@@ -4091,27 +5512,38 @@ export async function POST(request: Request) {
         try {
           await createOrLinkInvitedStaffRecord(
             admin,
+
             access.companyId,
+
             access.userId,
+
             userId,
+
             userTypeSelection.staffInput,
+
             existingStaffId,
+
             accountPhone,
           )
         } catch (staffError) {
           console.error("Invited staff record creation failed", staffError)
+
           const { error: cleanupError } =
             await admin.auth.admin.deleteUser(userId)
+
           if (cleanupError)
             console.error(
               "Failed to remove account after staff setup failed",
+
               cleanupError,
             )
+
           return NextResponse.json(
             {
               error:
                 "The invitation could not be completed because the staff record was not created. The invitation account was removed; please try again.",
             },
+
             { status: 500, headers: responseHeaders },
           )
         }
@@ -4136,19 +5568,25 @@ export async function POST(request: Request) {
           try {
             await removeInvitedStaffRecord(
               admin,
+
               access.companyId,
+
               userId,
+
               existingStaffId,
             )
           } catch (staffCleanupError) {
             console.error(
               "Invited staff record cleanup failed",
+
               staffCleanupError,
             )
           }
         }
+
         const { error: cleanupError } =
           await admin.auth.admin.deleteUser(userId)
+
         if (cleanupError)
           console.error("Invited account cleanup failed", cleanupError)
 
@@ -4163,17 +5601,24 @@ export async function POST(request: Request) {
       }
 
       let invitationEmailWarning: string | undefined
+
       try {
         await sendWorkspaceInvitationEmail({
           smtp,
+
           to: email,
+
           fullName: accountName,
+
           companyName: company.name,
+
           roleName: role.name,
+
           actionLink: inviteActionLink,
         })
       } catch (emailError) {
         console.error("Workspace invitation email delivery failed", emailError)
+
         invitationEmailWarning =
           "The account was created, but the invitation email could not be delivered. Check the server SMTP settings, then use Resend invite in Users & Roles."
       }
@@ -4197,7 +5642,9 @@ export async function POST(request: Request) {
 
             userType: userTypeSelection.userType,
           },
+
           invitationEmailSent: !invitationEmailWarning,
+
           ...(invitationEmailWarning ? { invitationEmailWarning } : {}),
         },
 
@@ -4224,12 +5671,17 @@ export async function POST(request: Request) {
       const roleId = typeof body.roleId === "string" ? body.roleId : ""
 
       const branchId = typeof body.branchId === "string" ? body.branchId : ""
+
       const existingStaffId =
         typeof body.existingStaffId === "string" ? body.existingStaffId : ""
+
       const userTypeSelection = parseUserTypeSelection(
         body,
+
         name,
+
         branchId,
+
         existingStaffId,
       )
 
@@ -4261,6 +5713,7 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "Select a valid staff record for a Staff account." },
+
           { status: 400, headers: responseHeaders },
         )
       }
@@ -4268,6 +5721,7 @@ export async function POST(request: Request) {
       const existingStaff = existingStaffId
         ? await getUnlinkedStaffRecord(admin, access.companyId, existingStaffId)
         : null
+
       if (
         existingStaffId &&
         (!existingStaff ||
@@ -4280,10 +5734,13 @@ export async function POST(request: Request) {
             error:
               "That staff record is no longer available or its details changed. Refresh the staff list and try again.",
           },
+
           { status: 409, headers: responseHeaders },
         )
       }
+
       const accountName = existingStaff?.name ?? name
+
       const accountPhone = phone || existingStaff?.phone || ""
 
       const { data: targetBranch, error: targetBranchError } = await admin
@@ -4318,6 +5775,7 @@ export async function POST(request: Request) {
           { status: 403, headers: responseHeaders },
         )
       }
+
       const branchName = targetBranch.name
 
       if (password.length < 8) {
@@ -4361,14 +5819,20 @@ export async function POST(request: Request) {
       if (userTypeSelection.staffInput && !existingStaff) {
         const staffValidationError = await validateStaffInvitation(
           admin,
+
           access.companyId,
+
           userTypeSelection.staffInput,
+
           access.isMainBranch || access.isPrimaryAdmin,
+
           access.branchId,
         )
+
         if (staffValidationError)
           return NextResponse.json({ error: staffValidationError }, {
             status: 400,
+
             headers: responseHeaders,
           })
       }
@@ -4475,27 +5939,38 @@ export async function POST(request: Request) {
         try {
           await createOrLinkInvitedStaffRecord(
             admin,
+
             access.companyId,
+
             access.userId,
+
             userId,
+
             userTypeSelection.staffInput,
+
             existingStaffId,
+
             accountPhone,
           )
         } catch (staffError) {
           console.error("New staff account record creation failed", staffError)
+
           const { error: cleanupError } =
             await admin.auth.admin.deleteUser(userId)
+
           if (cleanupError)
             console.error(
               "Failed to remove account after staff setup failed",
+
               cleanupError,
             )
+
           return NextResponse.json(
             {
               error:
                 "The user account was created but the staff record could not be saved. The account was removed; please try again.",
             },
+
             { status: 500, headers: responseHeaders },
           )
         }

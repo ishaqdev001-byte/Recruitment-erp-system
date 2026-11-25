@@ -1,3 +1,4 @@
+import { createClient } from "@supabase/supabase-js"
 import { NextResponse } from "next/server"
 
 import { normalizeUgandanPhone, sendSmsUg } from "@/lib/server/smsug"
@@ -12,6 +13,15 @@ const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 const smsTitle = "Candidate Update"
+
+function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) return null
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+}
 
 export async function POST(request: Request) {
   let smsSent = false
@@ -151,7 +161,7 @@ export async function POST(request: Request) {
 
       .from("candidates")
 
-      .select("id, first_name, last_name, phone, agent_user_id")
+      .select("id, first_name, last_name, phone, agent_id, agent_user_id")
 
       .eq("company_id", membership.company_id)
 
@@ -378,139 +388,339 @@ export async function POST(request: Request) {
       smsReceiptRecorded = true
     }
 
+    const assignedRosterIds = [
+      ...new Set(
+        candidates
+          .map((candidate) => candidate.agent_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ]
+    const assignedUserIds = [
+      ...new Set(
+        candidates
+          .map((candidate) => candidate.agent_user_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ]
+    const admin = createAdminClient()
+    if (!admin) {
+      return NextResponse.json(
+        {
+          error:
+            "Agent message delivery requires SUPABASE_SERVICE_ROLE_KEY on the server.",
+          smsSent: true,
+          retryable: false,
+        },
+        { status: 503, headers },
+      )
+    }
+
+    const [rosterById, rosterByUser] = await Promise.all([
+      assignedRosterIds.length
+        ? admin
+            .from("company_recruitment_agents")
+            .select("id, name, phone, linked_user_id")
+            .eq("company_id", membership.company_id)
+            .eq("status", "active")
+            .in("id", assignedRosterIds)
+        : Promise.resolve({ data: [], error: null }),
+      assignedUserIds.length
+        ? admin
+            .from("company_recruitment_agents")
+            .select("id, name, phone, linked_user_id")
+            .eq("company_id", membership.company_id)
+            .eq("status", "active")
+            .in("linked_user_id", assignedUserIds)
+        : Promise.resolve({ data: [], error: null }),
+    ])
+    if (rosterById.error || rosterByUser.error)
+      throw rosterById.error ?? rosterByUser.error
+    const agents = [
+      ...new Map(
+        [...(rosterById.data ?? []), ...(rosterByUser.data ?? [])].map(
+          (agent) => [agent.id, agent],
+        ),
+      ).values(),
+    ]
+    const agentByIdentity = new Map<string, typeof agents[number]>()
+    for (const agent of agents) {
+      agentByIdentity.set(agent.id, agent)
+      if (agent.linked_user_id) agentByIdentity.set(agent.linked_user_id, agent)
+    }
+
     const candidateNamesByAgent = new Map<string, string[]>()
-
     const candidateIdsByAgent = new Map<string, string[]>()
-
     for (const candidate of candidates) {
-      if (!candidate.agent_user_id) continue
-
-      const names = candidateNamesByAgent.get(candidate.agent_user_id) ?? []
-
-      names.push(`${candidate.first_name} ${candidate.last_name}`.trim())
-
-      candidateNamesByAgent.set(candidate.agent_user_id, names)
-
-      const assignedIds = candidateIdsByAgent.get(candidate.agent_user_id) ?? []
-
-      assignedIds.push(candidate.id)
-
-      candidateIdsByAgent.set(candidate.agent_user_id, assignedIds)
+      const identity = candidate.agent_id ?? candidate.agent_user_id
+      const agent = identity ? agentByIdentity.get(identity) : undefined
+      if (!agent) continue
+      candidateNamesByAgent.set(agent.id, [
+        ...(candidateNamesByAgent.get(agent.id) ?? []),
+        `${candidate.first_name} ${candidate.last_name}`.trim(),
+      ])
+      candidateIdsByAgent.set(agent.id, [
+        ...(candidateIdsByAgent.get(agent.id) ?? []),
+        candidate.id,
+      ])
     }
 
     let notesSent = 0
-
-    if (candidateNamesByAgent.size) {
-      const agentIds = [...candidateNamesByAgent.keys()]
-
+    const linkedUserIds = agents
+      .map((agent) => agent.linked_user_id)
+      .filter((id): id is string => Boolean(id))
+    if (linkedUserIds.length) {
       const { data: agentMemberships, error: agentMembershipError } =
         await supabase
-
           .from("company_memberships")
-
           .select("user_id, role_id")
-
           .eq("company_id", membership.company_id)
-
           .eq("status", "active")
-
-          .in("user_id", agentIds)
-
+          .in("user_id", linkedUserIds)
       if (agentMembershipError) throw agentMembershipError
-
       const roleIds = [
         ...new Set((agentMemberships ?? []).map((item) => item.role_id)),
       ]
-
       const { data: roles, error: rolesError } = roleIds.length
         ? await supabase
-
             .from("company_roles")
-
             .select("id, name")
-
             .eq("company_id", membership.company_id)
-
             .in("id", roleIds)
         : { data: [], error: null }
-
       if (rolesError) throw rolesError
-
       const agentRoleIds = new Set(
         (roles ?? [])
-
           .filter(
-            (role) =>
-              role.name.trim().toLocaleLowerCase() === "recruitment agent",
+            (role) => role.name.trim().toLowerCase() === "recruitment agent",
           )
-
           .map((role) => role.id),
       )
-
       const activeAgentIds = (agentMemberships ?? [])
-
         .filter((item) => agentRoleIds.has(item.role_id))
-
         .map((item) => item.user_id)
-
-      const noteRows = activeAgentIds.map((recipientId) => {
-        const candidateNames = candidateNamesByAgent.get(recipientId) ?? []
-
-        return {
-          company_id: membership.company_id,
-
-          request_id: body.requestId as string,
-
-          sender_id: user.id,
-
-          recipient_id: recipientId,
-
-          subject: `Update for ${candidateNames.length} candidate${
-            candidateNames.length === 1 ? "" : "s"
-          }`,
-
-          body: message,
-
-          candidate_ids: candidateIdsByAgent.get(recipientId) ?? [],
-
-          candidate_names: candidateNames,
-        }
+      const noteRows = activeAgentIds.flatMap((recipientId) => {
+        const agent = agents.find((item) => item.linked_user_id === recipientId)
+        if (!agent) return []
+        const candidateNames = candidateNamesByAgent.get(agent.id) ?? []
+        return [
+          {
+            company_id: membership.company_id,
+            request_id: body.requestId as string,
+            sender_id: user.id,
+            recipient_id: recipientId,
+            subject: `Update for ${candidateNames.length} candidate${
+              candidateNames.length === 1 ? "" : "s"
+            }`,
+            body: message,
+            candidate_ids: candidateIdsByAgent.get(agent.id) ?? [],
+            candidate_names: candidateNames,
+          },
+        ]
       })
-
       if (noteRows.length) {
         const { error: noteError } = await supabase
-
           .from("candidate_agent_notes")
-
           .upsert(noteRows, {
             onConflict: "company_id,request_id,recipient_id",
-
             ignoreDuplicates: true,
           })
-
         if (noteError) {
           console.error(
             "SMS sent but candidate agent notes could not be delivered",
-
             noteError,
           )
-
           return NextResponse.json(
             {
               error:
-                "The SMS was sent, but agent notes could not be delivered. Retry this request to complete note delivery without resending the SMS.",
-
+                "The SMS was sent, but linked-agent notes could not be delivered. Retry to finish delivery without resending the candidate SMS.",
               smsSent: true,
-
               retryable: true,
             },
-
             { status: 503, headers },
           )
         }
-
         notesSent = noteRows.length
       }
+    }
+
+    let agentSmsSent = 0
+    const agentMessageFailures: string[] = []
+    for (const agent of agents.filter(
+      (item) => !item.linked_user_id && candidateNamesByAgent.has(item.id),
+    )) {
+      const phone = normalizeUgandanPhone(agent.phone ?? "")
+      const names = candidateNamesByAgent.get(agent.id) ?? []
+      if (!phone) {
+        agentMessageFailures.push(
+          `${agent.name}: a valid phone number is required for SMS messages.`,
+        )
+        continue
+      }
+      let noteBody = `Company update for ${agent.name}: ${names.slice(0, 8).join(", ")}`
+      if (names.length > 8) noteBody += ` and ${names.length - 8} more`
+      noteBody += `. Candidate SMS: ${message}`
+      noteBody = noteBody.slice(0, 480)
+
+      const { data: existing, error: existingError } = await admin
+        .from("company_agent_messages")
+        .select("id, provider_status, sms_request_id")
+        .eq("company_id", membership.company_id)
+        .eq("request_id", body.requestId as string)
+        .eq("agent_id", agent.id)
+        .maybeSingle()
+      if (existingError) throw existingError
+      if (existing?.provider_status === "sent") {
+        agentSmsSent += 1
+        continue
+      }
+      if (
+        existing &&
+        (existing.provider_status === "sending" ||
+          existing.provider_status === "unknown")
+      ) {
+        agentMessageFailures.push(
+          `${agent.name}: SMS delivery is uncertain; check Sent Messages before retrying.`,
+        )
+        continue
+      }
+
+      const messageRow = {
+        company_id: membership.company_id,
+        agent_id: agent.id,
+        request_id: body.requestId as string,
+        sender_id: user.id,
+        recipient_name: agent.name,
+        recipient_phone: phone,
+        subject: "Candidate Update",
+        body: noteBody,
+        candidate_ids: candidateIdsByAgent.get(agent.id) ?? [],
+        candidate_names: names,
+        provider_status: "sending",
+        provider_error: null,
+      }
+      const claim = existing
+        ? await admin
+            .from("company_agent_messages")
+            .update(messageRow)
+            .eq("id", existing.id)
+            .eq("provider_status", "failed")
+            .select("id, sms_request_id")
+            .maybeSingle()
+        : await admin
+            .from("company_agent_messages")
+            .insert(messageRow)
+            .select("id, sms_request_id")
+            .maybeSingle()
+      if (claim.error || !claim.data) {
+        agentMessageFailures.push(
+          `${agent.name}: unable to claim the message for delivery.`,
+        )
+        continue
+      }
+
+      const { error: smsLogError } = await admin
+        .from("sms_message_logs")
+        .upsert(
+          {
+            company_id: membership.company_id,
+            request_id: claim.data.sms_request_id,
+            created_by: user.id,
+            title: "Agent Update",
+            message: noteBody,
+            contacts: [phone],
+            contact_name: agent.name,
+            contact_type: "Other",
+            candidate_ids: candidateIdsByAgent.get(agent.id) ?? [],
+            provider_status: "sending",
+            provider_error: null,
+            provider_token: null,
+            recipients: null,
+            cost: null,
+            balance: null,
+          },
+          { onConflict: "company_id,request_id" },
+        )
+      if (smsLogError) {
+        await admin
+          .from("company_agent_messages")
+          .update({
+            provider_status: "failed",
+            provider_error: "Unable to record the agent SMS before delivery.",
+          })
+          .eq("id", claim.data.id)
+        agentMessageFailures.push(
+          `${agent.name}: unable to record the SMS before delivery.`,
+        )
+        continue
+      }
+
+      const smsResult = await sendSmsUg("Agent Update", noteBody, [phone])
+      const providerStatus = smsResult.ok
+        ? "sent"
+        : smsResult.code === "sms_network_error" ||
+            smsResult.code === "sms_not_configured"
+          ? "unknown"
+          : "failed"
+      const { error: messageUpdateError } = await admin
+        .from("company_agent_messages")
+        .update({
+          provider_status: providerStatus,
+          provider_error: smsResult.ok ? null : smsResult.message,
+          provider_token: smsResult.ok ? smsResult.token : null,
+          cost: smsResult.ok ? smsResult.cost : null,
+          balance: smsResult.ok ? smsResult.balance : null,
+        })
+        .eq("id", claim.data.id)
+        .eq("company_id", membership.company_id)
+      const { error: smsReceiptError } = await admin
+        .from("sms_message_logs")
+        .update({
+          provider_status: providerStatus,
+          provider_error: smsResult.ok ? null : smsResult.message,
+          provider_token: smsResult.ok ? smsResult.token : null,
+          recipients: smsResult.ok ? smsResult.recipients : null,
+          cost: smsResult.ok ? smsResult.cost : null,
+          balance: smsResult.ok ? smsResult.balance : null,
+        })
+        .eq("company_id", membership.company_id)
+        .eq("request_id", claim.data.sms_request_id)
+      if (messageUpdateError) {
+        console.error(
+          "Agent SMS was sent but its receipt could not be saved",
+          messageUpdateError,
+        )
+        agentMessageFailures.push(
+          `${agent.name}: SMS was sent but its receipt could not be saved.`,
+        )
+        continue
+      }
+      if (smsReceiptError) {
+        console.error(
+          "Agent SMS history receipt could not be saved",
+          smsReceiptError,
+        )
+        agentMessageFailures.push(
+          `${agent.name}: SMS result could not be saved to Sent Messages.`,
+        )
+        continue
+      }
+      if (!smsResult.ok) {
+        agentMessageFailures.push(`${agent.name}: ${smsResult.message}`)
+        continue
+      }
+      agentSmsSent += 1
+    }
+
+    if (agentMessageFailures.length) {
+      return NextResponse.json(
+        {
+          error: `The candidate SMS was sent, but some accountless agent messages need attention: ${agentMessageFailures.join(" ")}`,
+          smsSent: true,
+          retryable: true,
+          agentsNotified: notesSent + agentSmsSent,
+        },
+        { status: 503, headers },
+      )
     }
 
     return NextResponse.json(
@@ -519,7 +729,9 @@ export async function POST(request: Request) {
 
         recipients: contacts.length,
 
-        agentsNotified: notesSent,
+        agentsNotified: notesSent + agentSmsSent,
+
+        agentsNotifiedBySms: agentSmsSent,
 
         alreadySent,
       },

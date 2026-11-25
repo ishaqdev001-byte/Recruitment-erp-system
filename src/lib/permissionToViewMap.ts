@@ -103,6 +103,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "users.view": new Set(["users"]),
   "users.invite": new Set(["users"]),
   "users.edit": new Set(["users"]),
+  "agents.manage": new Set(["agents"]),
 
   // Tasks permissions
   "tasks.view": new Set(["tasks"]),
@@ -224,8 +225,9 @@ export function canAccessView(view: View, permissions: string[]): boolean {
 
   if (view === "agents") {
     return (
-      permissions.includes("users.view") &&
-      permissions.includes("candidates.view")
+      (permissions.includes("users.view") &&
+        permissions.includes("candidates.view")) ||
+      permissions.includes("agents.manage")
     )
   }
 

@@ -1,21 +1,29 @@
 export type RoleAccessSettings = {
   candidate_scope: "company" | "assigned"
+
   inquiry_scope: "company" | "created"
+
   candidate_registration: boolean
+
   agent_visa_finance: boolean
 }
 
 export const DEFAULT_ROLE_ACCESS_SETTINGS: RoleAccessSettings = {
   candidate_scope: "company",
+
   inquiry_scope: "company",
+
   candidate_registration: true,
+
   agent_visa_finance: false,
 }
 
 export function isPrimaryAdministratorRole(roleName: string): boolean {
   return [
     "chairman",
+
     "company owner / primary administrator",
+
     "primary administrator",
   ].includes(roleName.trim().toLowerCase())
 }
@@ -28,17 +36,26 @@ export function isRecruitmentAgentRestrictedPermission(
   permissionCode: string,
 ): boolean {
   if (permissionCode === "communications.agent_notes.view") return false
+
   return (
+    permissionCode === "agents.manage" ||
     permissionCode === "staff.positions.manage" ||
     permissionCode === "human_resources.view" ||
     [
       "attendance.",
+
       "approvals.",
+
       "communications.",
+
       "drive.",
+
       "finance.",
+
       "leave.",
+
       "requisitions.",
+
       "tasks.",
     ].some((prefix) => permissionCode.startsWith(prefix))
   )
@@ -46,12 +63,14 @@ export function isRecruitmentAgentRestrictedPermission(
 
 export function roleAccessSettings(
   value: unknown,
+
   roleName = "",
 ): RoleAccessSettings {
   const settings =
     value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
+      ? value as Record<string, unknown>
       : {}
+
   const isAgentRole = isRecruitmentAgentRole(roleName)
 
   return {
@@ -62,6 +81,7 @@ export function roleAccessSettings(
         : settings.candidate_scope === "company"
           ? "company"
           : DEFAULT_ROLE_ACCESS_SETTINGS.candidate_scope,
+
     inquiry_scope:
       settings.inquiry_scope === "created"
         ? "created"
@@ -70,12 +90,14 @@ export function roleAccessSettings(
           : isAgentRole
             ? "created"
             : DEFAULT_ROLE_ACCESS_SETTINGS.inquiry_scope,
+
     candidate_registration:
       typeof settings.candidate_registration === "boolean"
         ? settings.candidate_registration
         : isAgentRole
           ? false
           : DEFAULT_ROLE_ACCESS_SETTINGS.candidate_registration,
+
     agent_visa_finance: isAgentRole
       ? typeof settings.agent_visa_finance === "boolean"
         ? settings.agent_visa_finance
@@ -84,9 +106,13 @@ export function roleAccessSettings(
   }
 }
 
-export function isRoleAccessSettings(value: unknown): value is RoleAccessSettings {
+export function isRoleAccessSettings(
+  value: unknown,
+): value is RoleAccessSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
+
   const settings = value as Record<string, unknown>
+
   return (
     (settings.candidate_scope === "company" ||
       settings.candidate_scope === "assigned") &&

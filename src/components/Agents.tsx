@@ -3,6 +3,9 @@ import {
   ArrowLeft,
   Edit2,
   Eye,
+  FileSpreadsheet,
+  FileText,
+  Loader2,
   Search,
   Trash2,
   UserRound,
@@ -65,6 +68,16 @@ type AgentPayload = {
   error?: string
 }
 
+type CompanyExportDetails = {
+  registrationNumber?: string
+  country?: string
+  city?: string
+  officeAddress?: string
+  phone?: string
+  email?: string
+  website?: string
+}
+
 const fieldStyle = {
   background: "var(--secondary)",
   borderColor: "var(--border)",
@@ -121,7 +134,15 @@ function candidateMetrics(
   return { assigned, deployed, withdrawn, cancelled, stages }
 }
 
-export default function Agents() {
+export default function Agents({
+  companyName,
+  currentUserName,
+  companyDetails,
+}: {
+  companyName: string
+  currentUserName: string
+  companyDetails?: CompanyExportDetails
+}) {
   const [agents, setAgents] = useState<AgentRecord[]>([])
   const [branches, setBranches] = useState<BranchRecord[]>([])
   const [candidates, setCandidates] = useState<CandidateRecord[]>([])
@@ -141,6 +162,8 @@ export default function Agents() {
   const [agentCandidatesLoading, setAgentCandidatesLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const [exportError, setExportError] = useState("")
+  const [exporting, setExporting] = useState<"excel" | "pdf" | null>(null)
   const [statusMessage, setStatusMessage] = useState("")
   const [reloadKey, setReloadKey] = useState(0)
 
@@ -251,6 +274,303 @@ export default function Agents() {
   const selectedMetrics = selectedAgent
     ? candidateMetrics(selectedAgent, candidates, agents)
     : null
+
+  const exportAgents = async (format: "excel" | "pdf") => {
+    setExporting(format)
+    setExportError("")
+
+    try {
+      const headers = [
+        "Agent",
+        "Agent code",
+        "Username",
+        "Phone",
+        "Email address",
+        "Registered branch",
+        "Candidates",
+        "Status",
+      ]
+      const rows = filtered.map((agent) => [
+        agent.name,
+        agent.agentCode,
+        agent.username,
+        agent.phone || "—",
+        agent.email || "—",
+        agent.branch || "—",
+        canViewCandidates
+          ? candidateMetrics(agent, candidates, agents).assigned.length
+          : "—",
+        agent.status === "active"
+          ? "Active"
+          : agent.status === "disabled"
+            ? "Inactive"
+            : "Invited",
+      ])
+      const exportDate = new Date()
+      const fileDate = exportDate.toISOString().slice(0, 10)
+      const exportedAt = exportDate.toLocaleString()
+      const exportActorName = currentUserName.trim() || "Workspace user"
+      const companyExportDetails = [
+        companyName,
+        companyDetails?.registrationNumber
+          ? `Registration: ${companyDetails.registrationNumber}`
+          : "",
+        [companyDetails?.city, companyDetails?.country]
+          .filter(Boolean)
+          .join(", "),
+        companyDetails?.officeAddress,
+        companyDetails?.phone ? `Phone: ${companyDetails.phone}` : "",
+        companyDetails?.email ? `Email: ${companyDetails.email}` : "",
+        companyDetails?.website ? `Website: ${companyDetails.website}` : "",
+      ]
+        .filter(Boolean)
+        .join(" | ")
+      const filterSummary = search.trim()
+        ? `Search: ${search.trim()}`
+        : "No filters"
+      const footerText = `Exported by: ${exportActorName} | Exported: ${exportedAt}`
+
+      if (format === "excel") {
+        const { default: ExcelJS } = await import("exceljs")
+        const workbook = new ExcelJS.Workbook()
+        workbook.creator = exportActorName
+        workbook.created = exportDate
+        const worksheet = workbook.addWorksheet("Agents")
+        worksheet.headerFooter.oddHeader = "&C&B&14COMPANY CONFIDENTIAL"
+        worksheet.headerFooter.oddFooter = `&L${footerText.replace(/&/g, "&&")}&C${companyName.replace(/&/g, "&&")}&RPage &P of &N`
+        worksheet.addRow(["Recruitment Agents"])
+        worksheet.addRow([companyExportDetails])
+        worksheet.addRow([`Table: Agents | Filters: ${filterSummary}`])
+        worksheet.addRow([footerText])
+        worksheet.addRow(["COMPANY CONFIDENTIAL"])
+        worksheet.addRow(headers)
+        worksheet.getRow(1).font = { bold: true, size: 16 }
+        worksheet.getRow(5).font = { bold: true, color: { argb: "FF9A3412" } }
+        worksheet.getRow(6).font = { bold: true }
+        worksheet.columns = [24, 16, 20, 20, 30, 24, 14, 16].map((width) => ({
+          width,
+        }))
+        worksheet.getRow(6).eachCell((cell) => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFE9EEF5" },
+          }
+        })
+        worksheet.autoFilter = {
+          from: { row: 6, column: 1 },
+          to: { row: 6, column: headers.length },
+        }
+        worksheet.views = [{ state: "frozen", ySplit: 6 }]
+        rows.forEach((row) => worksheet.addRow(row))
+        worksheet.addRow([])
+        worksheet.addRow([footerText])
+        worksheet.addRow([companyExportDetails])
+
+        const bytes = new Uint8Array(await workbook.xlsx.writeBuffer())
+        const blob = new Blob([bytes.buffer as ArrayBuffer], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement("a")
+        anchor.href = url
+        anchor.download = `agents-${fileDate}.xlsx`
+        anchor.click()
+        window.setTimeout(() => URL.revokeObjectURL(url), 0)
+        return
+      }
+
+      const { PDFDocument, StandardFonts, degrees, rgb } = await import(
+        "pdf-lib"
+      )
+      const pdf = await PDFDocument.create()
+      pdf.setTitle("Recruitment Agents")
+      pdf.setAuthor(exportActorName)
+      const regular = await pdf.embedFont(StandardFonts.Helvetica)
+      const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
+      const pdfSafeText = (value: string) =>
+        value.replace(/\s+/g, " ").replace(/[^\x20-\x7e]/g, "?")
+      const wrapText = (value: string, maxWidth: number, size: number) => {
+        const lines: string[] = []
+        let line = ""
+        for (const word of pdfSafeText(value).split(" ")) {
+          const nextLine = line ? `${line} ${word}` : word
+          if (line && regular.widthOfTextAtSize(nextLine, size) > maxWidth) {
+            lines.push(line)
+            line = word
+          } else {
+            line = nextLine
+          }
+        }
+        if (line) lines.push(line)
+        return lines
+      }
+      const pageWidth = 842
+      const pageHeight = 595
+      const margin = 24
+      const columnWidths = [132, 68, 85, 90, 145, 115, 74, 85]
+      const columns = headers.map((title, index) => ({
+        title,
+        x:
+          margin +
+          columnWidths.slice(0, index).reduce((sum, width) => sum + width, 0),
+        width: columnWidths[index],
+      }))
+      const companyLines = wrapText(
+        companyExportDetails,
+        pageWidth - margin * 2,
+        7,
+      )
+      const filterLines = wrapText(
+        `Table: Agents | Filters: ${filterSummary}`,
+        pageWidth - margin * 2,
+        7,
+      )
+      const metaLines = wrapText(footerText, pageWidth - margin * 2, 7)
+      const companyStartY = 540
+      const filterStartY = companyStartY - companyLines.length * 9 - 5
+      const metaStartY = filterStartY - filterLines.length * 9 - 5
+      const headerY = metaStartY - metaLines.length * 9 - 12
+      const firstRowY = headerY - 20
+      const rowHeight = 20
+      const rowsPerPage = Math.max(1, Math.floor((firstRowY - 52) / rowHeight))
+      const pageCount = Math.max(1, Math.ceil(rows.length / rowsPerPage))
+
+      for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+        const page = pdf.addPage([pageWidth, pageHeight])
+        page.drawText("COMPANY CONFIDENTIAL", {
+          x: 180,
+          y: 245,
+          size: 36,
+          font: bold,
+          color: rgb(0.88, 0.9, 0.92),
+          opacity: 0.3,
+          rotate: degrees(35),
+          maxWidth: 500,
+        })
+        page.drawText("Recruitment Agents", {
+          x: margin,
+          y: 558,
+          size: 16,
+          font: bold,
+          color: rgb(0.12, 0.16, 0.19),
+        })
+        page.drawText(`Page ${pageIndex + 1} of ${pageCount}`, {
+          x: 760,
+          y: 558,
+          size: 8,
+          font: regular,
+          color: rgb(0.38, 0.43, 0.47),
+        })
+        companyLines.forEach((line, index) => {
+          page.drawText(line, {
+            x: margin,
+            y: companyStartY - index * 9,
+            size: 7,
+            font: regular,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+        filterLines.forEach((line, index) => {
+          page.drawText(line, {
+            x: margin,
+            y: filterStartY - index * 9,
+            size: 7,
+            font: regular,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+        metaLines.forEach((line, index) => {
+          page.drawText(line, {
+            x: margin,
+            y: metaStartY - index * 9,
+            size: 7,
+            font: regular,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+        page.drawLine({
+          start: { x: margin, y: headerY - 12 },
+          end: { x: pageWidth - margin, y: headerY - 12 },
+          thickness: 0.8,
+          color: rgb(0.82, 0.85, 0.87),
+        })
+        columns.forEach((column) => {
+          page.drawText(column.title.toLocaleUpperCase(), {
+            x: column.x + 2,
+            y: headerY,
+            size: 6,
+            font: bold,
+            color: rgb(0.38, 0.43, 0.47),
+          })
+        })
+
+        rows
+          .slice(pageIndex * rowsPerPage, (pageIndex + 1) * rowsPerPage)
+          .forEach((row, rowIndex) => {
+            const y = firstRowY - rowIndex * rowHeight
+            row.forEach((value, columnIndex) => {
+              const column = columns[columnIndex]
+              let text = pdfSafeText(String(value))
+              while (
+                text.length > 3 &&
+                regular.widthOfTextAtSize(text, 6) > column.width - 4
+              ) {
+                text = `${text.slice(0, -4)}...`
+              }
+              page.drawText(text, {
+                x: column.x + 2,
+                y,
+                size: 6,
+                font: regular,
+                color: rgb(0.12, 0.16, 0.19),
+              })
+            })
+            page.drawLine({
+              start: { x: margin, y: y - 6 },
+              end: { x: pageWidth - margin, y: y - 6 },
+              thickness: 0.35,
+              color: rgb(0.9, 0.91, 0.92),
+            })
+          })
+
+        page.drawLine({
+          start: { x: margin, y: 42 },
+          end: { x: pageWidth - margin, y: 42 },
+          thickness: 0.6,
+          color: rgb(0.82, 0.85, 0.87),
+        })
+        page.drawText(pdfSafeText(`${footerText} | ${companyExportDetails}`), {
+          x: margin,
+          y: 28,
+          size: 6,
+          font: regular,
+          color: rgb(0.38, 0.43, 0.47),
+          maxWidth: pageWidth - margin * 2,
+        })
+      }
+
+      const bytes = new Uint8Array(await pdf.save())
+      const blob = new Blob([bytes.buffer as ArrayBuffer], {
+        type: "application/pdf",
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = `agents-${fileDate}.pdf`
+      anchor.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    } catch (exportError) {
+      console.error("Agents export failed", exportError)
+      setExportError(
+        exportError instanceof Error
+          ? exportError.message
+          : "Unable to export the current agent view.",
+      )
+    } finally {
+      setExporting(null)
+    }
+  }
 
   const saveAgentDetails = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -995,11 +1315,52 @@ export default function Agents() {
             style={{ color: "var(--foreground)" }}
           />
         </label>
-        <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>
-          {filtered.length} shown
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="mr-1 text-xs"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            {filtered.length} shown
+          </span>
+          <button
+            type="button"
+            onClick={() => void exportAgents("excel")}
+            disabled={loading || filtered.length === 0 || Boolean(exporting)}
+            className="inline-flex items-center gap-2 border px-3 py-2 text-sm font-600 disabled:opacity-50"
+            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+          >
+            {exporting === "excel" ? (
+              <Loader2 className="animate-spin" size={15} aria-hidden="true" />
+            ) : (
+              <FileSpreadsheet size={15} aria-hidden="true" />
+            )}
+            {exporting === "excel" ? "Preparing Excel…" : "Export Excel"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void exportAgents("pdf")}
+            disabled={loading || filtered.length === 0 || Boolean(exporting)}
+            className="inline-flex items-center gap-2 border px-3 py-2 text-sm font-600 disabled:opacity-50"
+            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+          >
+            {exporting === "pdf" ? (
+              <Loader2 className="animate-spin" size={15} aria-hidden="true" />
+            ) : (
+              <FileText size={15} aria-hidden="true" />
+            )}
+            {exporting === "pdf" ? "Preparing PDF…" : "Export PDF"}
+          </button>
+        </div>
       </div>
 
+      {exportError && (
+        <div
+          role="alert"
+          className="mx-6 mt-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400"
+        >
+          {exportError}
+        </div>
+      )}
       {error && (
         <div
           role="alert"

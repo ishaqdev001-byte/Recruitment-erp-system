@@ -19,6 +19,8 @@ type StaffActivity = {
 
   candidatesRegistered: number
 
+  candidatesHandled: number
+
   inquiriesReceived: number
 
   inquiryReminders: number
@@ -157,7 +159,7 @@ export async function GET(request: Request) {
 
       .from("company_memberships")
 
-      .select("company_id, branch_id")
+      .select("company_id, branch_id, role_id")
 
       .eq("user_id", user.id)
 
@@ -215,6 +217,8 @@ export async function GET(request: Request) {
       { data: canViewEmployers, error: employersPermissionError },
 
       { data: canViewProjects, error: projectsPermissionError },
+
+      { data: canAssignCaseHandlers, error: caseHandlerPermissionError },
     ] = await Promise.all([
       supabase.rpc("current_user_has_company_permission", {
         requested_company_id: membership.company_id,
@@ -263,6 +267,12 @@ export async function GET(request: Request) {
 
         requested_permission: "projects.view",
       }),
+
+      supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: membership.company_id,
+
+        requested_permission: "candidates.case_handler.assign",
+      }),
     ])
 
     if (
@@ -273,7 +283,8 @@ export async function GET(request: Request) {
       auditPermissionError ||
       suppliersPermissionError ||
       employersPermissionError ||
-      projectsPermissionError
+      projectsPermissionError ||
+      caseHandlerPermissionError
     ) {
       return NextResponse.json(
         { error: "Unable to verify report permissions." },
@@ -329,6 +340,49 @@ export async function GET(request: Request) {
 
         { status: 503, headers },
       )
+    }
+
+    let caseHandlersEnabled = false
+    let canViewCaseHandlerDetails = false
+    if (admin && (canReadStaffActivity || canReadCandidates)) {
+      const [
+        { data: company, error: companyError },
+        { data: currentRole, error: roleError },
+      ] = await Promise.all([
+        admin
+          .from("companies")
+          .select("primary_admin_user_id, case_handlers_enabled")
+          .eq("id", membership.company_id)
+          .maybeSingle(),
+        admin
+          .from("company_roles")
+          .select("name")
+          .eq("id", membership.role_id)
+          .eq("company_id", membership.company_id)
+          .maybeSingle(),
+      ])
+
+      if (companyError || roleError || !company || !currentRole) {
+        console.error(
+          "Report case-handler settings lookup failed",
+          companyError ?? roleError,
+        )
+        return NextResponse.json(
+          { error: "Unable to load case-handler reporting settings." },
+          { status: 503, headers },
+        )
+      }
+
+      caseHandlersEnabled = company.case_handlers_enabled
+      const roleName = currentRole.name.trim().toLocaleLowerCase()
+      const isChairman =
+        company.primary_admin_user_id === user.id ||
+        roleName === "chairman" ||
+        roleName === "company owner / primary administrator"
+      canViewCaseHandlerDetails =
+        caseHandlersEnabled &&
+        canReadCandidates &&
+        (isChairman || Boolean(canAssignCaseHandlers))
     }
 
     const url = new URL(request.url)
@@ -457,6 +511,8 @@ export async function GET(request: Request) {
 
         candidatesRegistered: 0,
 
+        candidatesHandled: 0,
+
         inquiriesReceived: 0,
 
         inquiryReminders: 0,
@@ -503,7 +559,7 @@ export async function GET(request: Request) {
                 .from("candidates")
 
                 .select(
-                  "created_at, created_by, agent_id, agent_user_id, details",
+                  "created_at, created_by, agent_id, agent_user_id, case_handler_user_id, details",
                 )
 
                 .eq("company_id", companyId)
@@ -708,6 +764,17 @@ export async function GET(request: Request) {
           if (item) item.candidatesRegistered += 1
         }
 
+        if (caseHandlersEnabled && candidate.case_handler_user_id) {
+          const item = staffActivityFor(
+            activity,
+            staffByUserId,
+            staffByName,
+            candidate.case_handler_user_id,
+            null,
+          )
+          if (item) item.candidatesHandled += 1
+        }
+
         const agentId =
           candidate.agent_id ??
           (candidate.agent_user_id
@@ -786,6 +853,8 @@ export async function GET(request: Request) {
       {
         period: { start, end },
 
+        caseHandlersEnabled,
+
         permissions: {
           candidates: canReadCandidates,
 
@@ -800,6 +869,8 @@ export async function GET(request: Request) {
           employers: canReadEmployers,
 
           projects: canReadProjects,
+
+          caseHandlerDetails: canViewCaseHandlerDetails,
         },
 
         previousPeriod,

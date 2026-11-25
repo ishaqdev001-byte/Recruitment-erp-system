@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Download, RefreshCw } from "lucide-react";
+import { Download, Eye, RefreshCw, X } from "lucide-react";
 
 type ReportSection = "overview" | "staff" | "agents" | "suppliers" | "contractors" | "growth" | "stages" | "finance";
 type ReportRange = "Today" | "This Week" | "This Month" | "This Year" | "All Time" | "Custom Range";
@@ -10,6 +10,7 @@ interface StaffActivity {
   id: string;
   name: string;
   candidatesRegistered: number;
+  candidatesHandled: number;
   inquiriesReceived: number;
   inquiryReminders: number;
   tasksCreated: number;
@@ -52,7 +53,9 @@ interface ReportsData {
     suppliers: boolean;
     employers: boolean;
     projects: boolean;
+    caseHandlerDetails: boolean;
   };
+  caseHandlersEnabled: boolean;
   candidates: { total: number; registered: number; previousRegistrations: number | null; stages: CandidateStage[]; agents: AgentReport[] } | null;
   inquiries: { received: number; reminders: number } | null;
   tasks: { created: number; completed: number; overdue: number } | null;
@@ -85,6 +88,51 @@ interface FinanceData {
   incomeBreakdown: { label: string; amount: number; color: string }[];
   expenseBreakdown: { label: string; amount: number; color: string }[];
   monthlyTrend: { month: string; income: number; expenses: number }[];
+}
+
+interface StaffCaseHandlerDetails {
+  staff: Record<string, unknown> & {
+    staffId: string;
+    name: string;
+    position: string | null;
+  };
+  candidates: {
+    id: string;
+    name: string;
+    fileNumber: string | null;
+    stage: string;
+    lastUpdatedAt: string;
+  }[];
+}
+
+const staffKycFields: { key: string; label: string }[] = [
+  { key: "staffId", label: "Staff ID" },
+  { key: "position", label: "Position" },
+  { key: "phone", label: "Phone" },
+  { key: "dateJoined", label: "Date joined" },
+  { key: "dateOfBirth", label: "Date of birth" },
+  { key: "sex", label: "Sex" },
+  { key: "maritalStatus", label: "Marital status" },
+  { key: "localAddress", label: "Local address" },
+  { key: "permanentAddress", label: "Permanent address" },
+  { key: "nextOfKin", label: "Next of kin" },
+  { key: "nextOfKinPhone", label: "Next-of-kin phone" },
+  { key: "emergencyContactAddress", label: "Emergency contact address" },
+  { key: "passportNumber", label: "Passport number" },
+  { key: "passportExpiry", label: "Passport expiry" },
+  { key: "nationalIdNumber", label: "National ID number" },
+  { key: "nationalIdExpiry", label: "National ID expiry" },
+  { key: "academicQualifications", label: "Academic qualifications" },
+  { key: "professionalQualifications", label: "Professional qualifications" },
+  { key: "workExperience", label: "Work experience" },
+  { key: "languages", label: "Languages" },
+]
+
+function displayKycValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "Not provided"
+  if (typeof value === "boolean") return value ? "Yes" : "No"
+  if (typeof value === "object") return JSON.stringify(value)
+  return String(value)
 }
 
 const rangeOptions: ReportRange[] = ["Today", "This Week", "This Month", "This Year", "All Time", "Custom Range"];
@@ -170,6 +218,10 @@ export default function Reports({ permissions }: { permissions: string[] }) {
   const [entityFilter, setEntityFilter] = useState("All");
   const [activeSection, setActiveSection] = useState<ReportSection>("overview");
   const [reportData, setReportData] = useState<ReportsData | null>(null);
+  const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
+  const [staffDetails, setStaffDetails] = useState<StaffCaseHandlerDetails | null>(null);
+  const [staffDetailsError, setStaffDetailsError] = useState("");
+  const [staffDetailsLoading, setStaffDetailsLoading] = useState(false);
   const [financeData, setFinanceData] = useState<FinanceData | null>(null);
   const [previousFinanceData, setPreviousFinanceData] = useState<FinanceData | null>(null);
   const [reportError, setReportError] = useState("");
@@ -308,6 +360,17 @@ export default function Reports({ permissions }: { permissions: string[] }) {
     ? reportData?.contractors?.items ?? []
     : (reportData?.contractors?.items ?? []).filter((item) => item.id === entityFilter);
   const staffActivity = selectedStaff;
+  const showCaseHandlerCounts = Boolean(
+    reportData?.caseHandlersEnabled && reportData.permissions.candidates,
+  );
+  const canViewStaffDetails = Boolean(reportData?.permissions.caseHandlerDetails);
+  const staffTableColumnCount =
+    1 +
+    Number(canViewStaffDetails) +
+    Number(showCaseHandlerCounts) +
+    Number(Boolean(reportData?.permissions.candidates)) +
+    2 * Number(Boolean(reportData?.permissions.inquiries)) +
+    2 * Number(Boolean(reportData?.permissions.tasks));
   const availableSections = sections.filter((section) => (
     section.id !== "staff" || Boolean(reportData?.permissions.candidates || reportData?.permissions.inquiries || reportData?.permissions.tasks)
   ) && (section.id !== "agents" || Boolean(reportData?.permissions.candidates))
@@ -367,9 +430,25 @@ export default function Reports({ permissions }: { permissions: string[] }) {
       for (const stage of reportData.candidates.stages) rows.push([stage.stage, stage.count]);
     }
     if (staffActivity.length) {
-      rows.push([], ["Staff member", "New candidates", "Inquiries", "Inquiries reminded", "Follow-ups created", "Completed tasks updated"]);
+      rows.push([], [
+        "Staff member",
+        "New candidates",
+        ...(showCaseHandlerCounts ? ["Candidates handled"] : []),
+        "Inquiries",
+        "Inquiries reminded",
+        "Follow-ups created",
+        "Completed tasks updated",
+      ]);
       for (const item of staffActivity) {
-        rows.push([item.name, item.candidatesRegistered, item.inquiriesReceived, item.inquiryReminders, item.tasksCreated, item.tasksCompleted]);
+        rows.push([
+          item.name,
+          item.candidatesRegistered,
+          ...(showCaseHandlerCounts ? [item.candidatesHandled] : []),
+          item.inquiriesReceived,
+          item.inquiryReminders,
+          item.tasksCreated,
+          item.tasksCompleted,
+        ]);
       }
     }
     if (reportData?.candidates?.agents.length) {
@@ -450,6 +529,39 @@ export default function Reports({ permissions }: { permissions: string[] }) {
   useEffect(() => {
     if (!entityFilterOptions.some((option) => option.value === entityFilter)) setEntityFilter("All");
   }, [entityFilter, entityFilterOptions]);
+
+  useEffect(() => {
+    if (!selectedStaffId) {
+      setStaffDetails(null);
+      setStaffDetailsError("");
+      return;
+    }
+
+    const controller = new AbortController();
+    setStaffDetails(null);
+    setStaffDetailsError("");
+    setStaffDetailsLoading(true);
+    void fetchReport<StaffCaseHandlerDetails>(
+      `/api/reports/staff/${encodeURIComponent(selectedStaffId)}`,
+      controller.signal,
+    )
+      .then((data) => {
+        if (!controller.signal.aborted) setStaffDetails(data);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setStaffDetailsError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load this staff member's details.",
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setStaffDetailsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [selectedStaffId]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -559,8 +671,10 @@ export default function Reports({ permissions }: { permissions: string[] }) {
               <thead>
                 <tr className="border-b text-left" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
                   {[
+                    ...(canViewStaffDetails ? ["Actions"] : []),
                     "Staff member",
                     ...(reportData?.permissions.candidates ? ["New candidates"] : []),
+                    ...(showCaseHandlerCounts ? ["Candidates handled"] : []),
                     ...(reportData?.permissions.inquiries ? ["Inquiries", "Inquiries reminded"] : []),
                     ...(reportData?.permissions.tasks ? ["Follow-ups created", "Assigned tasks completed"] : []),
                   ].map((heading) => <th key={heading} className="px-4 py-3 text-xs font-700 uppercase tracking-wide">{heading}</th>)}
@@ -569,8 +683,22 @@ export default function Reports({ permissions }: { permissions: string[] }) {
               <tbody>
                 {staffActivity.map((item) => (
                   <tr key={item.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                    {canViewStaffDetails && (
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedStaffId(item.id)}
+                          className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-600"
+                          style={{ borderColor: "var(--border)", color: "var(--primary)" }}
+                        >
+                          <Eye size={14} aria-hidden="true" />
+                          View
+                        </button>
+                      </td>
+                    )}
                     <td className="px-4 py-3 font-600" style={{ color: "var(--foreground)" }}>{item.name}</td>
                     {reportData?.permissions.candidates && <td className="px-4 py-3 mono">{item.candidatesRegistered}</td>}
+                    {showCaseHandlerCounts && <td className="px-4 py-3 mono">{item.candidatesHandled}</td>}
                     {reportData?.permissions.inquiries && <>
                       <td className="px-4 py-3 mono">{item.inquiriesReceived}</td>
                       <td className="px-4 py-3 mono">{item.inquiryReminders}</td>
@@ -581,7 +709,7 @@ export default function Reports({ permissions }: { permissions: string[] }) {
                     </>}
                   </tr>
                 ))}
-                {!staffActivity.length && <EmptyRow colSpan={6} text="No team activity in this period." />}
+                {!staffActivity.length && <EmptyRow colSpan={staffTableColumnCount} text="No team activity in this period." />}
               </tbody>
             </table></div>
           </div>
@@ -732,6 +860,112 @@ export default function Reports({ permissions }: { permissions: string[] }) {
           </div>
         )}
       </main>
+      {selectedStaffId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSelectedStaffId(null)
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="staff-case-handler-title"
+            className="max-h-[90dvh] w-full max-w-5xl overflow-y-auto rounded border p-5"
+            style={{ background: "var(--card)", borderColor: "var(--border)" }}
+          >
+            <header className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h2
+                  id="staff-case-handler-title"
+                  className="text-lg font-700"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {staffDetails?.staff.name ?? "Staff overview"}
+                </h2>
+                <p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>
+                  Staff KYC and candidates currently assigned as case handler
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close staff overview"
+                onClick={() => setSelectedStaffId(null)}
+                className="rounded p-2"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                <X size={18} aria-hidden="true" />
+              </button>
+            </header>
+
+            {staffDetailsLoading && (
+              <p className="flex items-center gap-2 py-6 text-sm" style={{ color: "var(--muted-foreground)" }}>
+                <RefreshCw size={15} className="animate-spin" aria-hidden="true" />
+                Loading staff overview…
+              </p>
+            )}
+            {staffDetailsError && (
+              <p role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-600">
+                {staffDetailsError}
+              </p>
+            )}
+            {staffDetails && (
+              <div className="space-y-6">
+                <section>
+                  <h3 className="mb-3 text-xs font-700 uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>
+                    Staff KYC
+                  </h3>
+                  <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {staffKycFields.map(({ key, label }) => (
+                      <div key={key} className="rounded border p-3" style={{ borderColor: "var(--border)" }}>
+                        <dt className="text-xs font-600" style={{ color: "var(--muted-foreground)" }}>{label}</dt>
+                        <dd className="mt-1 break-words text-sm" style={{ color: "var(--foreground)" }}>
+                          {displayKycValue(staffDetails.staff[key])}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+
+                <section>
+                  <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                    <h3 className="text-xs font-700 uppercase tracking-widest" style={{ color: "var(--muted-foreground)" }}>
+                      Candidates handled
+                    </h3>
+                    <span className="mono text-sm font-600" style={{ color: "var(--foreground)" }}>
+                      {staffDetails.candidates.length} total
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto rounded border" style={{ borderColor: "var(--border)" }}>
+                    <table className="w-full min-w-[560px] text-sm">
+                      <thead>
+                        <tr className="border-b text-left" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>
+                          {["Candidate", "File number", "Progress", "Last updated"].map((heading) => (
+                            <th key={heading} className="px-3 py-2 text-xs font-700 uppercase tracking-wide">{heading}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {staffDetails.candidates.map((candidate) => (
+                          <tr key={candidate.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                            <td className="px-3 py-2 font-600" style={{ color: "var(--foreground)" }}>{candidate.name || "Unnamed candidate"}</td>
+                            <td className="px-3 py-2">{candidate.fileNumber || "—"}</td>
+                            <td className="px-3 py-2">{candidate.stage}</td>
+                            <td className="px-3 py-2">{new Date(candidate.lastUpdatedAt).toLocaleString()}</td>
+                          </tr>
+                        ))}
+                        {!staffDetails.candidates.length && (
+                          <EmptyRow colSpan={4} text="No candidates are currently assigned to this staff member." />
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }

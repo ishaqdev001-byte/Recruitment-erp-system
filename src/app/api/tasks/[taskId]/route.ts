@@ -6,13 +6,43 @@ const headers = { "Cache-Control": "private, no-store" };
 const recurrences = ["none", "daily", "weekly", "monthly", "yearly"];
 const priorities = ["High", "Medium", "Low"];
 
-export async function POST(_request: Request, context: { params: Promise<{ taskId: string }> }) {
+export async function POST(request: Request, context: { params: Promise<{ taskId: string }> }) {
   try {
     const access = await getTaskAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
     if (!await hasTaskPermission(access, "tasks.view")) return NextResponse.json({ error: "You do not have permission to view tasks." }, { status: 403, headers });
     const { taskId } = await context.params;
     if (!isUuid(taskId)) return NextResponse.json({ error: "Task not found." }, { status: 404, headers });
+
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    if (body?.action === "progress-report") {
+      const progressPercent = body.progressPercent;
+      const note = typeof body.note === "string" ? body.note.trim() : "";
+      if (!Number.isInteger(progressPercent) || Number(progressPercent) < 0 || Number(progressPercent) > 100 || !note || note.length > 2000) {
+        return NextResponse.json({ error: "Enter a whole-number progress percentage from 0 to 100 and a note of up to 2,000 characters." }, { status: 400, headers });
+      }
+      const { data: task, error: taskError } = await access.supabase.from("tasks")
+        .select("id, assigned_to").eq("id", taskId).eq("company_id", access.companyId).maybeSingle();
+      if (taskError) throw taskError;
+      if (!task || task.assigned_to !== access.userId) {
+        return NextResponse.json({ error: "Only the assigned task owner can submit progress updates." }, { status: 403, headers });
+      }
+      const { data: report, error: reportError } = await access.supabase.from("task_progress_reports")
+        .insert({
+          company_id: access.companyId,
+          task_id: taskId,
+          reported_by: access.userId,
+          progress_percent: Number(progressPercent),
+          note,
+        })
+        .select("id, task_id, reported_by, progress_percent, note, created_at")
+        .single();
+      if (reportError || !report) {
+        console.error("Task progress report creation failed", reportError);
+        return NextResponse.json({ error: "Unable to submit the task progress report." }, { status: 400, headers });
+      }
+      return NextResponse.json({ report }, { status: 201, headers });
+    }
 
     const { data: task, error: taskError } = await access.supabase.from("tasks")
       .select("id, assigned_to, created_by").eq("id", taskId).eq("company_id", access.companyId).maybeSingle();

@@ -35,7 +35,7 @@ export async function GET() {
       )
     }
 
-    const [{ data, error }, assignmentContext, { data: companyData }] = await Promise.all([
+    const [{ data, error }, assignmentContext] = await Promise.all([
       access.supabase
 
         .from("projects")
@@ -47,16 +47,6 @@ export async function GET() {
         .order("created_at", { ascending: false }),
 
       getProjectAssignmentContext(access),
-
-      access.supabase
-
-        .from("companies")
-
-        .select("projects_manager_enabled")
-
-        .eq("id", access.companyId)
-
-        .maybeSingle(),
     ])
 
     if (error) {
@@ -96,8 +86,8 @@ export async function GET() {
 
     const canReadFullProjectData = canViewFull
 
-    const managerNameById = new Map(
-      assignmentContext.managers.map((manager) => [manager.id, manager.name]),
+    const handlerNameById = new Map(
+      assignmentContext.handlers.map((handler) => [handler.id, handler.name]),
     )
 
     const staffById = new Map(
@@ -121,7 +111,7 @@ export async function GET() {
         projects: (data ?? []).map((project) => {
           const project_manager_name =
             (project.project_manager_user_id &&
-              managerNameById.get(project.project_manager_user_id)) ||
+              handlerNameById.get(project.project_manager_user_id)) ||
             ""
 
           const assigned_staff_name =
@@ -131,9 +121,7 @@ export async function GET() {
 
           const can_assign_staff =
             assignmentContext.isChairman ||
-            (canAssign &&
-              assignmentContext.isProjectManager &&
-              project.project_manager_user_id === access.userId)
+            canAssign
 
           if (canReadFullProjectData) {
             return {
@@ -202,19 +190,22 @@ export async function GET() {
 
         partnerOptions: counterparties.partners,
 
-        managerOptions: assignmentContext.isChairman
-          ? assignmentContext.managers
+        projectHandlerOptions:
+          (assignmentContext.isChairman || canAssign) && (canCreate || canEdit)
+          ? assignmentContext.handlers
           : [],
 
         staffOptions:
-          assignmentContext.isChairman ||
-          (canAssign && assignmentContext.isProjectManager)
+          assignmentContext.assistantStaffEnabled &&
+          (assignmentContext.isChairman || canAssign)
             ? assignmentContext.staff
 
                 .filter((staff) => staff.status === "Active")
 
-                .map(({ id, name, position }) => ({ id, name, position }))
+                .map(({ id, name, position, status }) => ({ id, name, position, status }))
             : [],
+
+        assistantStaffEnabled: assignmentContext.assistantStaffEnabled,
 
         permissions: {
           canCreate,
@@ -227,14 +218,11 @@ export async function GET() {
 
           canViewFull,
 
-          canManageManagers: assignmentContext.isChairman,
+          canManageManagers: assignmentContext.isChairman || canAssign,
 
           canAssignStaff:
-            assignmentContext.isChairman ||
-            (canAssign && assignmentContext.isProjectManager),
+            assignmentContext.isChairman || canAssign,
         },
-
-        projectsManagerEnabled: companyData?.projects_manager_enabled ?? true,
       },
       { headers: responseHeaders },
     )
@@ -286,37 +274,36 @@ export async function POST(request: Request) {
         { status: 400, headers: responseHeaders },
       )
 
-    if (body && "projectManagerId" in body && !assignmentContext.isChairman) {
+    const requestedHandlerProperty = body && (
+      "projectHandlerId" in body || "projectManagerId" in body
+    )
+    const canAssignHandler =
+      assignmentContext.isChairman ||
+      await hasProjectPermission(access, "projects.assign")
+
+    if (requestedHandlerProperty && !canAssignHandler) {
       return NextResponse.json(
-        { error: "Only the Chairman can assign a Projects Manager." },
+        { error: "You do not have permission to assign a Project Handler." },
 
         { status: 403, headers: responseHeaders },
       )
     }
 
-    const requestedManagerId =
-      typeof body?.projectManagerId === "string" ? body.projectManagerId : ""
+    const requestedHandlerId =
+      typeof body?.projectHandlerId === "string"
+        ? body.projectHandlerId
+        : typeof body?.projectManagerId === "string"
+          ? body.projectManagerId
+          : ""
 
     if (
-      assignmentContext.isChairman &&
-      assignmentContext.managers.length > 0 &&
-      !requestedManagerId
-    ) {
-      return NextResponse.json(
-        { error: "Select a Projects Manager for this project." },
-
-        { status: 400, headers: responseHeaders },
-      )
-    }
-
-    if (
-      requestedManagerId &&
-      !assignmentContext.managers.some(
-        (manager) => manager.id === requestedManagerId,
+      requestedHandlerId &&
+      !assignmentContext.handlers.some(
+        (handler) => handler.id === requestedHandlerId,
       )
     ) {
       return NextResponse.json(
-        { error: "Select an active Projects Manager from this company." },
+        { error: "Select an active company member as Project Handler." },
 
         { status: 400, headers: responseHeaders },
       )
@@ -342,7 +329,7 @@ export async function POST(request: Request) {
 
         created_by: access.userId,
 
-        project_manager_user_id: requestedManagerId || null,
+        project_manager_user_id: requestedHandlerId || null,
       })
       .select("*")
       .single()

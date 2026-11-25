@@ -8,9 +8,17 @@ export type SearchOption = { value: string; label: string; description?: string;
 
 const defaultStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 
-function filteredOptions(options: SearchOption[], query: string, selectedValues: string[]) {
+function filteredOptions(
+  options: SearchOption[],
+  query: string,
+  selectedValues: string[],
+  matchMode: "contains" | "prefix" = "contains",
+) {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
   return options.filter((option) => !selectedValues.includes(option.value)
-    && matchesSearch(query, option.label, option.description, option.searchText)).slice(0, 50);
+    && (matchMode === "prefix"
+      ? option.label.toLocaleLowerCase().startsWith(normalizedQuery)
+      : matchesSearch(query, option.label, option.description, option.searchText))).slice(0, 50);
 }
 
 export function SearchableSelect({
@@ -23,6 +31,7 @@ export function SearchableSelect({
   allowCustom = false,
   inlineOptions = false,
   minQueryLength = 0,
+  matchMode = "contains",
   preserveValueOnInput = false,
   className = "",
   style,
@@ -37,6 +46,7 @@ export function SearchableSelect({
   allowCustom?: boolean;
   inlineOptions?: boolean;
   minQueryLength?: number;
+  matchMode?: "contains" | "prefix";
   preserveValueOnInput?: boolean;
   className?: string;
   style?: CSSProperties;
@@ -54,8 +64,8 @@ export function SearchableSelect({
     query.trim().length >= minQueryLength && (!selected || query !== selected.label)
   );
   const visibleOptions = useMemo(
-    () => queryMeetsMinimum ? filteredOptions(options, query, []) : [],
-    [options, query, queryMeetsMinimum],
+    () => queryMeetsMinimum ? filteredOptions(options, query, [], matchMode) : [],
+    [matchMode, options, query, queryMeetsMinimum],
   );
   const showOptions = open && !disabled && queryMeetsMinimum;
 

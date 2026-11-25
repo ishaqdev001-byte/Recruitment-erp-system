@@ -24,10 +24,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     if (currentError || !current) return NextResponse.json({ error: "Project not found." }, { status: 404, headers: responseHeaders });
 
     const changedFields = Object.keys(body);
-    if (body.action === "assign-staff") {
+    if (body.action === "assign-assistant-staff" || body.action === "assign-staff") {
+      const hasAssistantStaffId = changedFields.includes("assistantStaffId");
+      const hasLegacyStaffId = changedFields.includes("staffId");
       if (
-        changedFields.some((field) => !["action", "staffId"].includes(field)) ||
-        !changedFields.includes("staffId")
+        changedFields.some((field) => !["action", "assistantStaffId", "staffId"].includes(field)) ||
+        hasAssistantStaffId === hasLegacyStaffId
       ) {
         return NextResponse.json(
           { error: "Choose one staff assignment change." },
@@ -39,28 +41,30 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
         getProjectAssignmentContext(access),
         hasProjectPermission(access, "projects.assign"),
       ]);
-      const canAssignAsManager =
-        canAssign &&
-        assignmentContext.isProjectManager &&
-        current.project_manager_user_id === access.userId;
-      if (!assignmentContext.isChairman && !canAssignAsManager) {
+      if (!assignmentContext.assistantStaffEnabled) {
+        return NextResponse.json(
+          { error: "Assistant Staff assignments are disabled in company settings." },
+          { status: 409, headers: responseHeaders },
+        );
+      }
+      if (!assignmentContext.isChairman && !canAssign) {
         return NextResponse.json(
           {
-            error:
-              "Only the Chairman or this project's assigned Projects Manager can assign staff.",
+            error: "You do not have permission to assign Assistant Staff.",
           },
           { status: 403, headers: responseHeaders },
         );
       }
 
+      const requestedStaffId = body.assistantStaffId ?? body.staffId;
       const staffId =
-        body.staffId === null || body.staffId === ""
+        requestedStaffId === null || requestedStaffId === ""
           ? null
-          : typeof body.staffId === "string" &&
+          : typeof requestedStaffId === "string" &&
               /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-                body.staffId,
+                requestedStaffId,
               )
-            ? body.staffId
+            ? requestedStaffId
             : undefined;
       if (staffId === undefined) {
         return NextResponse.json(
@@ -81,19 +85,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
         }
       }
 
-      let assignmentQuery = access.supabase
+      const { data: updatedProject, error: assignmentError } = await access.supabase
         .from("projects")
         .update({ assigned_staff_id: staffId })
         .eq("id", projectId)
-        .eq("company_id", access.companyId);
-      if (!assignmentContext.isChairman) {
-        assignmentQuery = assignmentQuery.eq(
-          "project_manager_user_id",
-          access.userId,
-        );
-      }
-      const { data: updatedProject, error: assignmentError } =
-        await assignmentQuery.select("*").maybeSingle();
+        .eq("company_id", access.companyId)
+        .select("*")
+        .maybeSingle();
       if (assignmentError) {
         console.error("Project staff assignment failed", {
           code: assignmentError.code,
@@ -177,43 +175,45 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     }
 
     let managerUpdate: { project_manager_user_id: string | null } | null = null;
-    if ("projectManagerId" in body) {
+    if ("projectHandlerId" in body || "projectManagerId" in body) {
       const assignmentContext = await getProjectAssignmentContext(access);
-      if (!assignmentContext.isChairman) {
+      const canAssignHandler =
+        assignmentContext.isChairman ||
+        await hasProjectPermission(access, "projects.assign");
+      if (!canAssignHandler) {
         return NextResponse.json(
-          { error: "Only the Chairman can assign a Projects Manager." },
+          { error: "You do not have permission to assign a Project Handler." },
           { status: 403, headers: responseHeaders },
         );
       }
 
-      const requestedManagerId =
-        body.projectManagerId === null || body.projectManagerId === ""
+      const requestedHandlerValue = body.projectHandlerId ?? body.projectManagerId;
+      const requestedHandlerId =
+        requestedHandlerValue === null ||
+        requestedHandlerValue === ""
           ? ""
-          : typeof body.projectManagerId === "string"
-            ? body.projectManagerId
+          : typeof requestedHandlerValue === "string"
+            ? requestedHandlerValue
             : undefined;
-      if (
-        requestedManagerId === undefined ||
-        (assignmentContext.managers.length > 0 && !requestedManagerId)
-      ) {
+      if (requestedHandlerId === undefined) {
         return NextResponse.json(
-          { error: "Select an active Projects Manager for this project." },
+          { error: "Select an active company member as Project Handler." },
           { status: 400, headers: responseHeaders },
         );
       }
       if (
-        requestedManagerId &&
-        !assignmentContext.managers.some(
-          (manager) => manager.id === requestedManagerId,
+        requestedHandlerId &&
+        !assignmentContext.handlers.some(
+          (handler) => handler.id === requestedHandlerId,
         )
       ) {
         return NextResponse.json(
-          { error: "Select an active Projects Manager from this company." },
+          { error: "Select an active company member as Project Handler." },
           { status: 400, headers: responseHeaders },
         );
       }
       managerUpdate = {
-        project_manager_user_id: requestedManagerId || null,
+        project_manager_user_id: requestedHandlerId || null,
       };
     }
 

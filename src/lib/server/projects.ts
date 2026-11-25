@@ -21,7 +21,7 @@ export type ProjectAccount = {
   branch_id: string | null
 }
 
-export type ProjectManagerOption = {
+export type ProjectHandlerOption = {
   id: string
 
   name: string
@@ -49,9 +49,9 @@ export type ProjectPartnerOption = {
 export type ProjectAssignmentContext = {
   isChairman: boolean
 
-  isProjectManager: boolean
+  assistantStaffEnabled: boolean
 
-  managers: ProjectManagerOption[]
+  handlers: ProjectHandlerOption[]
 
   staff: ProjectStaffOption[]
 }
@@ -283,15 +283,13 @@ export async function getProjectAssignmentContext(
 
     { data: memberships, error: membershipError },
 
-    { data: roles, error: roleError },
-
     { data: staff, error: staffError },
   ] = await Promise.all([
     admin
 
       .from("companies")
 
-      .select("primary_admin_user_id")
+      .select("primary_admin_user_id, assistant_staff_enabled")
 
       .eq("id", access.companyId)
 
@@ -301,19 +299,11 @@ export async function getProjectAssignmentContext(
 
       .from("company_memberships")
 
-      .select("user_id, role_id")
+      .select("user_id")
 
       .eq("company_id", access.companyId)
 
       .eq("status", "active"),
-
-    admin
-
-      .from("company_roles")
-
-      .select("id, name, is_system_default")
-
-      .eq("company_id", access.companyId),
 
     admin
 
@@ -326,87 +316,72 @@ export async function getProjectAssignmentContext(
       .order("name"),
   ])
 
-  if (companyError || membershipError || roleError || staffError) {
-    throw companyError ?? membershipError ?? roleError ?? staffError
+  if (companyError || membershipError || staffError) {
+    throw companyError ?? membershipError ?? staffError
   }
 
   if (!company) throw new Error("Unable to verify company project assignments.")
 
-  const projectManagerRoleIds = new Set(
-    (roles ?? [])
+  const memberIds = [...new Set((memberships ?? []).map((membership) => membership.user_id))]
 
-      .filter(
-        (role) =>
-          role.is_system_default &&
-          ["projects manager", "project manager"].includes(
-            role.name.trim().toLowerCase(),
-          ),
-      )
-
-      .map((role) => role.id),
-  )
-
-  const managerIds = (memberships ?? [])
-
-    .filter((membership) => projectManagerRoleIds.has(membership.role_id))
-
-    .map((membership) => membership.user_id)
-
-  const managerProfilesResult = managerIds.length
+  const memberProfilesResult = memberIds.length
     ? await admin
 
         .from("profiles")
 
         .select("id, display_name")
 
-        .in("id", managerIds)
+        .in("id", memberIds)
     : { data: [], error: null }
 
-  if (managerProfilesResult.error) throw managerProfilesResult.error
+  if (memberProfilesResult.error) throw memberProfilesResult.error
 
   const profileNameById = new Map(
-    (managerProfilesResult.data ?? []).map((profile) => [
+    (memberProfilesResult.data ?? []).map((profile) => [
       profile.id,
 
       profile.display_name,
     ]),
   )
 
-  const managerIdsSet = new Set(managerIds)
+  const staffByUserId = new Map(
+    (staff ?? [])
+      .filter((record) => record.status === "Active" && record.linked_user_id)
+      .map((record) => [record.linked_user_id!, record]),
+  )
 
-  const managers = (staff ?? [])
+  const handlers = memberIds
 
-    .filter(
-      (record) =>
-        record.status === "Active" &&
-        Boolean(record.linked_user_id) &&
-        managerIdsSet.has(record.linked_user_id ?? ""),
-    )
+    .map((id) => {
+      const staffRecord = staffByUserId.get(id)
+      return {
+        id,
 
-    .map((record) => ({
-      id: record.linked_user_id ?? "",
+        name:
+          staffRecord?.name ||
+          profileNameById.get(id) ||
+          "Active company member",
 
-      name:
-        record.name ||
-        profileNameById.get(record.linked_user_id ?? "") ||
-        "Projects Manager",
-
-      position: record.position,
-    }))
-
-    .filter(
-      (manager, index, options) =>
-        options.findIndex((option) => option.id === manager.id) === index,
-    )
+        position: staffRecord?.position || "Company member",
+      }
+    })
+    .sort((left, right) => left.name.localeCompare(right.name))
 
   return {
     isChairman: company.primary_admin_user_id === access.userId,
 
-    isProjectManager: managerIdsSet.has(access.userId),
+    assistantStaffEnabled: company.assistant_staff_enabled,
 
-    managers,
+    handlers,
 
-    staff: (staff ?? []).map((record) => ({
+    staff: (staff ?? [])
+      .filter(
+        (record) =>
+          record.status === "Active" &&
+          Boolean(record.linked_user_id) &&
+          memberIds.includes(record.linked_user_id ?? ""),
+      )
+      .map((record) => ({
       id: record.id,
 
       name: record.name,
@@ -414,7 +389,7 @@ export async function getProjectAssignmentContext(
       position: record.position,
 
       status: record.status,
-    })),
+      })),
   }
 }
 

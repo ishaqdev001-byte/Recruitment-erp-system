@@ -395,8 +395,8 @@ const CaseHandlerSettings = dynamic(
   { loading: PageLoading },
 )
 
-const ProjectsManagerSettings = dynamic(
-  () => import("./components/settings/ProjectsManagerSettings"),
+const AssistantStaffSettings = dynamic(
+  () => import("./components/settings/AssistantStaffSettings"),
 
   { loading: PageLoading },
 )
@@ -498,7 +498,8 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
 
       import("./components/settings/CaseHandlerSettings"),
 
-      import("./components/settings/ProjectsManagerSettings"),
+      import("./components/settings/AssistantStaffSettings"),
+
     ]),
 }
 
@@ -3983,7 +3984,13 @@ export default function App() {
         )
 
       case "agents":
-        return <Agents />
+        return (
+          <Agents
+            companyName={session?.companyName ?? ""}
+            currentUserName={session?.userName ?? activeUser?.name ?? ""}
+            companyDetails={activeCompany}
+          />
+        )
 
       case "finance":
         return <Finance />
@@ -6971,7 +6978,7 @@ function SettingsPage({
     isChairman || permissions.includes("workflows.manage")
 
   const [settingsTab, setSettingsTab] =
-    useState<"general" | "candidate-sources" | "departments" | "currencies" | "service-providers" | "expense-categories" | "expense-items" | "positions" | "workflows" | "case-handlers" | "projects-manager" | "attendance">(
+    useState<"general" | "candidate-sources" | "departments" | "currencies" | "service-providers" | "expense-categories" | "expense-items" | "positions" | "workflows" | "case-handlers" | "assistant-staff" | "attendance">(
       "general",
     )
 
@@ -7017,7 +7024,7 @@ function SettingsPage({
       : []),
 
     ...(isChairman
-      ? [{ id: "projects-manager" as const, label: "Projects Manager" }]
+      ? [{ id: "assistant-staff" as const, label: "Assistant Staff" }]
       : []),
 
     ...(isChairman ? [{ id: "attendance" as const, label: "Attendance" }] : []),
@@ -7326,8 +7333,8 @@ function SettingsPage({
         {settingsTab === "case-handlers" && isChairman && (
           <CaseHandlerSettings />
         )}
-        {settingsTab === "projects-manager" && isChairman && (
-          <ProjectsManagerSettings />
+        {settingsTab === "assistant-staff" && isChairman && (
+          <AssistantStaffSettings />
         )}
         {settingsTab === "attendance" && isChairman && company?.id && (
           <AttendanceSettings

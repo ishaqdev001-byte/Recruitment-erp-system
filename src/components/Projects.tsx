@@ -47,7 +47,7 @@ type VisaCandidateRecord = {
 type ProjectForm = {
   projectName: string;
   accountId: string;
-  projectManagerId: string;
+  projectHandlerId: string;
   projectSourceType: ProjectSourceType | "";
   partnerId: string;
   contractorName: string;
@@ -72,16 +72,13 @@ type ProjectPermissions = {
   canManageManagers: boolean;
   canAssignStaff: boolean;
 };
-type ProjectSettings = {
-  projectsManagerEnabled: boolean;
-};
 type ProjectAccountOption = { id: string; name: string };
 type ProjectPartnerOption = { id: string; supplier_name: string };
-type ProjectManagerOption = { id: string; name: string; position: string };
-type ProjectStaffOption = { id: string; name: string; position: string };
+type ProjectHandlerOption = { id: string; name: string; position: string };
+type ProjectStaffOption = { id: string; name: string; position: string; status: string };
 
 const initialForm = (): ProjectForm => ({
-  projectName: "", accountId: "", projectManagerId: "", projectSourceType: "", partnerId: "", contractorName: "", country: "", salaryRange: "", ageBracket: "",
+  projectName: "", accountId: "", projectHandlerId: "", projectSourceType: "", partnerId: "", contractorName: "", country: "", salaryRange: "", ageBracket: "",
   totalDemand: "", contractorServiceCharge: "", partnerServiceCharge: "", candidateServiceCharge: "", interviewMode: "Face to face", status: "active",
   visaCount: "0", ticketCount: "0",
 });
@@ -93,7 +90,7 @@ function formFromProject(project: ProjectRecord): ProjectForm {
   return {
     projectName: project.project_name,
     accountId: project.account_id,
-    projectManagerId: project.project_manager_user_id ?? "",
+    projectHandlerId: project.project_manager_user_id ?? "",
     projectSourceType: project.project_source_type ?? "contractor",
     partnerId: project.partner_id ?? "",
     contractorName: project.contractor_name,
@@ -116,10 +113,10 @@ export default function Projects() {
   const [contractors, setContractors] = useState<ContractorRecord[]>([]);
   const [partners, setPartners] = useState<PartnerRecord[]>([]);
   const [accountOptions, setAccountOptions] = useState<ProjectAccountOption[]>([]);
-  const [managerOptions, setManagerOptions] = useState<ProjectManagerOption[]>([]);
+  const [handlerOptions, setHandlerOptions] = useState<ProjectHandlerOption[]>([]);
   const [staffOptions, setStaffOptions] = useState<ProjectStaffOption[]>([]);
+  const [assistantStaffEnabled, setAssistantStaffEnabled] = useState(false);
   const [permissions, setPermissions] = useState(defaultPermissions);
-  const [projectSettings, setProjectSettings] = useState<ProjectSettings>({ projectsManagerEnabled: true });
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -148,20 +145,21 @@ export default function Projects() {
             accountOptions?: ProjectAccountOption[];
             contractorOptions?: ContractorRecord[];
             partnerOptions?: ProjectPartnerOption[];
-            managerOptions?: ProjectManagerOption[];
+            projectHandlerOptions?: ProjectHandlerOption[];
+            managerOptions?: ProjectHandlerOption[];
             staffOptions?: ProjectStaffOption[];
+            assistantStaffEnabled?: boolean;
             permissions?: ProjectPermissions;
-            projectsManagerEnabled?: boolean;
             error?: string;
           };
         if (!projectResponse.ok) throw new Error(projectPayload.error ?? "Unable to load projects.");
         if (cancelled) return;
         setProjects(projectPayload.projects ?? []);
         setAccountOptions(projectPayload.accountOptions ?? []);
-        setManagerOptions(projectPayload.managerOptions ?? []);
+        setHandlerOptions(projectPayload.projectHandlerOptions ?? projectPayload.managerOptions ?? []);
         setStaffOptions(projectPayload.staffOptions ?? []);
+        setAssistantStaffEnabled(Boolean(projectPayload.assistantStaffEnabled));
         setPermissions(projectPayload.permissions ?? defaultPermissions);
-        setProjectSettings({ projectsManagerEnabled: projectPayload.projectsManagerEnabled ?? true });
         setContractors(projectPayload.contractorOptions ?? []);
         setPartners(projectPayload.partnerOptions ?? []);
       } catch (loadError) {
@@ -195,8 +193,6 @@ export default function Projects() {
     setForm({
       ...initialForm(),
       accountId: accountOptions.length === 1 ? accountOptions[0].id : "",
-      projectManagerId:
-        managerOptions.length === 1 ? managerOptions[0].id : "",
     });
     setError("");
     setShowForm(true);
@@ -267,9 +263,9 @@ export default function Projects() {
             : {}),
           ...(permissions.canManageManagers &&
           (!editingProject ||
-            form.projectManagerId !==
+            form.projectHandlerId !==
               (editingProject.project_manager_user_id ?? ""))
-            ? { projectManagerId: form.projectManagerId || null }
+            ? { projectHandlerId: form.projectHandlerId || null }
             : {}),
           contractorId: matchingContractor?.id ?? null,
           contractorName:
@@ -329,8 +325,8 @@ export default function Projects() {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action: "assign-staff",
-            staffId: staffId || null,
+            action: "assign-assistant-staff",
+            assistantStaffId: staffId || null,
           }),
         },
       );
@@ -427,38 +423,38 @@ export default function Projects() {
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="overflow-x-auto border" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <div className="app-table-scroll"><table className="w-full min-w-320 text-sm">
-            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Actions", "Project", "Partner / Contractor", ...(projectSettings.projectsManagerEnabled ? ["Projects Manager"] : []), "Assigned staff", "Country", "Salary range", "Age bracket", "Vacancies", "Submitted", "Shortfall", "Visas", "Candidate fee", ...(permissions.canViewFull ? ["Partner / Contractor fee", "Book"] : []), "Tickets", "Status"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
+            <thead><tr className="border-b text-left" style={{ borderColor: "var(--border)" }}>{["Actions", "Project", "Partner / Contractor", "Project Handler", ...(assistantStaffEnabled ? ["Assistant Staff"] : []), "Country", "Salary range", "Age bracket", "Vacancies", "Submitted", "Shortfall", "Visas", "Candidate fee", ...(permissions.canViewFull ? ["Partner / Contractor fee", "Book"] : []), "Tickets", "Status"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{heading}</th>)}</tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={permissions.canViewFull ? 18 : 16} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading projects…</td></tr>}
-              {!loading && !error && filteredProjects.length === 0 && <tr><td colSpan={permissions.canViewFull ? 18 : 16} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{projects.length ? "No projects match this search." : "No projects registered yet."}</td></tr>}
+              {loading && <tr><td colSpan={(permissions.canViewFull ? 17 : 15) - (assistantStaffEnabled ? 0 : 1)} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading projects…</td></tr>}
+              {!loading && !error && filteredProjects.length === 0 && <tr><td colSpan={(permissions.canViewFull ? 17 : 15) - (assistantStaffEnabled ? 0 : 1)} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{projects.length ? "No projects match this search." : "No projects registered yet."}</td></tr>}
               {!loading && filteredProjects.map((project) => <tr key={project.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                 <td className="whitespace-nowrap px-3 py-3"><div className="flex items-center gap-1"><button type="button" aria-label={`Edit ${project.project_name}`} title="Edit project" disabled={!permissions.canEdit} onClick={() => openEditProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "var(--muted-foreground)" }}><Pencil size={15} aria-hidden="true" /></button><button type="button" aria-label={`View visa candidates for ${project.project_name}`} title="View visa candidates" onClick={() => openVisaCandidates(project)} className="p-2" style={{ color: "var(--foreground)" }}><Eye size={15} aria-hidden="true" /></button><button type="button" aria-label={`Delete ${project.project_name}`} title="Delete project" disabled={!permissions.canDelete} onClick={() => void deleteProject(project)} className="p-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: "#ef4444" }}><Trash2 size={15} aria-hidden="true" /></button></div></td>
                 <td className="whitespace-nowrap px-3 py-3 font-600" style={{ color: "var(--foreground)" }}>{project.project_name}</td>
                 <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.project_source_type === "partner" ? "Partner: " : "Contractor: "}{project.contractor_name}</td>
-                {projectSettings.projectsManagerEnabled && <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.project_manager_name || "Unassigned"}</td>}
-                <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>
+                <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.project_manager_name || "Unassigned"}</td>
+                {assistantStaffEnabled && <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>
                   {project.can_assign_staff ? (
-                    <select
+                    <SearchableSelect
                       aria-label={`Assign staff to ${project.project_name}`}
                       value={project.assigned_staff_id ?? ""}
+                      onChange={(staffId) => void updateStaffAssignment(project, staffId)}
+                      options={staffOptions.filter((staff) => staff.status === "Active").map((staff) => ({
+                        value: staff.id,
+                        label: staff.name,
+                        description: staff.position,
+                      }))}
+                      placeholder="Search at least 2 characters"
+                      minQueryLength={2}
+                      matchMode="prefix"
+                      preserveValueOnInput
                       disabled={assigningProjectId === project.id}
-                      onChange={(event) =>
-                        void updateStaffAssignment(project, event.target.value)
-                      }
-                      className="max-w-56 border px-2 py-1 text-xs disabled:opacity-60"
+                      className="min-w-52 max-w-64 text-xs"
                       style={fieldStyle}
-                    >
-                      <option value="">Unassigned</option>
-                      {staffOptions.map((staff) => (
-                        <option key={staff.id} value={staff.id}>
-                          {staff.name}{staff.position ? ` — ${staff.position}` : ""}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   ) : (
                     project.assigned_staff_name || "Unassigned"
                   )}
-                </td>
+                </td>}
                 <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.country}</td>
                 <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.salary_range}</td>
                 <td className="whitespace-nowrap px-3 py-3" style={{ color: "var(--foreground)" }}>{project.age_bracket}</td>
@@ -483,7 +479,7 @@ export default function Projects() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project name<input required maxLength={200} value={form.projectName} onChange={(event) => setForm((current) => ({ ...current, projectName: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             {!editingProject && <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project account<select required value={form.accountId} onChange={(event) => setForm((current) => ({ ...current, accountId: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}><option value="">Select an active account</option>{accountOptions.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select>{accountOptions.length === 0 && <span className="mt-1 block normal-case tracking-normal text-amber-500">No active account is available for your branch. Ask an administrator to configure one.</span>}</label>}
-            {permissions.canManageManagers && projectSettings.projectsManagerEnabled && <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Projects Manager<SearchableSelect required={managerOptions.length > 0} disabled={managerOptions.length === 0} ariaLabel="Search and select Projects Manager from company staff" value={form.projectManagerId} onChange={(projectManagerId) => setForm((current) => ({ ...current, projectManagerId }))} options={managerOptions.map((manager) => ({ value: manager.id, label: manager.name, description: manager.position || "Projects Manager" }))} placeholder={managerOptions.length ? "Search at least 2 characters" : "No active Projects Manager"} minQueryLength={2} className="mt-1 normal-case tracking-normal" />{managerOptions.length === 0 && <span className="mt-1 block normal-case tracking-normal text-amber-500">No active Projects Manager is available. You can still assign this project to staff from the project list.</span>}</label>}
+            {permissions.canManageManagers && <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project Handler (optional)<SearchableSelect disabled={handlerOptions.length === 0} ariaLabel="Search and optionally select a Project Handler from active company members" value={form.projectHandlerId} onChange={(projectHandlerId) => setForm((current) => ({ ...current, projectHandlerId }))} options={handlerOptions.map((handler) => ({ value: handler.id, label: handler.name, description: handler.position }))} placeholder={handlerOptions.length ? "Optional — search at least 2 characters" : "No active company members"} minQueryLength={2} matchMode="prefix" preserveValueOnInput className="mt-1 normal-case tracking-normal" />{handlerOptions.length === 0 && <span className="mt-1 block normal-case tracking-normal text-amber-500">Add an active company member before assigning a Project Handler.</span>}</label>}
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project source<select required disabled={Boolean(editingProject && !permissions.canViewFull)} value={form.projectSourceType} onChange={(event) => { const projectSourceType = event.target.value as ProjectSourceType; setForm((current) => ({ ...current, projectSourceType, partnerId: "", contractorName: "", contractorServiceCharge: projectSourceType === "contractor" ? "" : "0", partnerServiceCharge: projectSourceType === "partner" ? "" : "0" })); }} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none disabled:opacity-60" style={fieldStyle}><option value="" disabled>Select a project source</option><option value="contractor">From a contractor</option><option value="partner">From a partner</option></select>{editingProject && !permissions.canViewFull && <span className="mt-1 block normal-case tracking-normal">Only users with full project access can change the source or service charge.</span>}</label>
             {form.projectSourceType === "contractor" ? (
               <label className="relative z-20 block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Contractor name<SearchableSelect required ariaLabel="Select a registered contractor" value={form.contractorName} onChange={(contractorName) => setForm((current) => ({ ...current, contractorName }))} options={contractors.map((contractor) => ({ value: contractor.company_name, label: contractor.company_name }))} placeholder={contractors.length ? "Search registered contractors" : "No contractors registered"} className="z-50 mt-1 normal-case tracking-normal" /></label>

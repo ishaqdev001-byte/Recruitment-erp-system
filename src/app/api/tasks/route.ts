@@ -15,8 +15,6 @@ export async function GET() {
       canEdit,
       canDelete,
       canSendSmsResult,
-      { data: lists, error: listError },
-      { data: tasks, error: taskError },
     ] = await Promise.all([
       hasTaskPermission(access, "tasks.create"),
       hasTaskPermission(access, "tasks.edit"),
@@ -25,14 +23,30 @@ export async function GET() {
         requested_company_id: access.companyId,
         requested_permission: "communications.sms.send",
       }),
-      access.supabase.from("task_lists").select("id, name, position, created_at")
+    ]);
+    const { data: company, error: companyError } = await access.supabase.from("companies")
+      .select("primary_admin_user_id")
+      .eq("id", access.companyId)
+      .maybeSingle();
+    if (companyError) throw companyError;
+    const isChairman = company?.primary_admin_user_id === access.userId;
+    const admin = createTaskAdminClient();
+    if (isChairman && !admin) {
+      return NextResponse.json({ error: "Company-wide task oversight requires server-side membership verification to be configured." }, { status: 503, headers });
+    }
+    const companyQueryClient = isChairman && admin ? admin : access.supabase;
+    const [{ data: visibleLists, error: listError }, { data: visibleTasks, error: taskError }] = await Promise.all([
+      companyQueryClient.from("task_lists").select("id, name, position, created_at")
         .eq("company_id", access.companyId).order("position").order("name"),
-      access.supabase.from("tasks").select("*").eq("company_id", access.companyId)
-        .or(`created_by.eq.${access.userId},assigned_to.eq.${access.userId}`)
-        .order("is_starred", { ascending: false }).order("due_at", { ascending: true, nullsFirst: false }).order("created_at", { ascending: false }),
+      isChairman
+        ? companyQueryClient.from("tasks").select("*").eq("company_id", access.companyId)
+          .order("is_starred", { ascending: false }).order("due_at", { ascending: true, nullsFirst: false }).order("created_at", { ascending: false })
+        : companyQueryClient.from("tasks").select("*").eq("company_id", access.companyId)
+          .or(`created_by.eq.${access.userId},assigned_to.eq.${access.userId}`)
+          .order("is_starred", { ascending: false }).order("due_at", { ascending: true, nullsFirst: false }).order("created_at", { ascending: false }),
     ]);
     if (listError || taskError) throw listError ?? taskError;
-    let taskLists = lists ?? [];
+    let taskLists = visibleLists ?? [];
     if (!taskLists.length && canCreate) {
       const { data: newList, error: createListError } = await access.supabase.from("task_lists")
         .insert({ company_id: access.companyId, name: "My Tasks", created_by: access.userId })
@@ -45,7 +59,6 @@ export async function GET() {
       .select("id, display_name").eq("id", access.userId).maybeSingle();
     if (profileError) throw profileError;
     const members = [{ id: access.userId, name: profile?.display_name || `Staff ${access.userId.slice(0, 8)}` }];
-    const admin = createTaskAdminClient();
     if (admin) {
       const { data: memberships, error: membershipError } = await admin.from("company_memberships")
         .select("user_id").eq("company_id", access.companyId).eq("status", "active");
@@ -62,8 +75,24 @@ export async function GET() {
         })));
       }
     }
+    const taskIds = (visibleTasks ?? []).map((task) => task.id);
+    const { data: progressReports, error: progressError } = taskIds.length
+      ? await companyQueryClient.from("task_progress_reports")
+        .select("id, task_id, reported_by, progress_percent, note, created_at")
+        .eq("company_id", access.companyId)
+        .in("task_id", taskIds)
+        .order("created_at", { ascending: false })
+      : { data: [], error: null };
+    if (progressError) throw progressError;
+    const reportsByTask = new Map<string, NonNullable<typeof progressReports>>();
+    for (const report of progressReports ?? []) {
+      reportsByTask.set(report.task_id, [...(reportsByTask.get(report.task_id) ?? []), report]);
+    }
     return NextResponse.json({
-      tasks: tasks ?? [],
+      tasks: (visibleTasks ?? []).map((task) => ({
+        ...task,
+        progressReports: reportsByTask.get(task.id) ?? [],
+      })),
       lists: taskLists,
       members,
       currentUserId: access.userId,
@@ -73,6 +102,7 @@ export async function GET() {
         canDelete,
         canAssign: canCreate && Boolean(admin),
         canSendSms: !canSendSmsResult.error && Boolean(canSendSmsResult.data),
+        isChairman,
       },
     }, { headers });
   } catch (error) {

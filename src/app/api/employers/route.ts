@@ -1,3 +1,4 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -6,8 +7,21 @@ export const runtime = "nodejs";
 const responseHeaders = { "Cache-Control": "private, no-store" };
 const employerFields = "id, company_name, contact_persons, phone_numbers, email_addresses, countries, created_at";
 
+function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) return null;
+  return createClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
 async function getEmployerAccess(
-  permission: "employers.view" | "employers.create" | "employers.edit",
+  permission:
+    | "employers.view"
+    | "employers.create"
+    | "employers.edit"
+    | "employers.delete",
 ) {
   const supabase = await createSupabaseServerClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -59,6 +73,7 @@ export async function GET() {
       { data: canViewFinance, error: financePermissionError },
       { data: canCreate, error: createPermissionError },
       { data: canEdit, error: editPermissionError },
+      { data: canDelete, error: deletePermissionError },
       { data: company, error: companyError },
     ] = await Promise.all([
       access.supabase.rpc("current_user_has_company_permission", {
@@ -73,6 +88,10 @@ export async function GET() {
         requested_company_id: access.companyId,
         requested_permission: "employers.edit",
       }),
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "employers.delete",
+      }),
       access.supabase
         .from("companies")
         .select("primary_admin_user_id")
@@ -83,9 +102,10 @@ export async function GET() {
       financePermissionError ||
       createPermissionError ||
       editPermissionError ||
+      deletePermissionError ||
       companyError
     )
-      throw financePermissionError ?? createPermissionError ?? editPermissionError ?? companyError;
+      throw financePermissionError ?? createPermissionError ?? editPermissionError ?? deletePermissionError ?? companyError;
     let financeByContractor = new Map<string, { projectId: string; projectName: string; visaCount: number; contractorServiceCharge: number; amountDue: number; accountId: string }[]>();
     if (canViewFinance) {
       const { data: projectFinance, error: projectFinanceError } = await access.supabase.rpc("list_project_contractor_finance", {
@@ -113,6 +133,7 @@ export async function GET() {
         canViewFinance: Boolean(canViewFinance),
         canCreate: Boolean(canCreate),
         canEdit: Boolean(canEdit && company?.primary_admin_user_id === access.userId),
+        canDelete: Boolean(canDelete),
       },
     }, { headers: responseHeaders });
   } catch (error) {
@@ -174,7 +195,18 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const { data, error } = await access.supabase
+    const admin = createAdminClient();
+    if (!admin) {
+      return NextResponse.json(
+        {
+          error:
+            "Contractor editing requires SUPABASE_SERVICE_ROLE_KEY in the server environment.",
+        },
+        { status: 503, headers: responseHeaders },
+      );
+    }
+
+    const { data, error } = await admin
       .from("employers")
       .update({
         company_name: companyName,
@@ -251,5 +283,94 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Employer registration request failed", error);
     return NextResponse.json({ error: "Contractor registration is unavailable." }, { status: 503, headers: responseHeaders });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const access = await getEmployerAccess("employers.delete");
+    if ("error" in access)
+      return NextResponse.json(
+        { error: access.error },
+        { status: access.status, headers: responseHeaders },
+      );
+
+    const body = (await request
+      .json()
+      .catch(() => null)) as Record<string, unknown> | null;
+    const employerId = typeof body?.id === "string" ? body.id : "";
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        employerId,
+      )
+    ) {
+      return NextResponse.json(
+        { error: "Select a valid contractor to delete." },
+        { status: 400, headers: responseHeaders },
+      );
+    }
+
+    const admin = createAdminClient();
+    if (!admin) {
+      return NextResponse.json(
+        {
+          error:
+            "Contractor deletion requires SUPABASE_SERVICE_ROLE_KEY in the server environment.",
+        },
+        { status: 503, headers: responseHeaders },
+      );
+    }
+
+    const { data: project, error: projectError } = await admin
+      .from("projects")
+      .select("id, project_name")
+      .eq("company_id", access.companyId)
+      .eq("contractor_id", employerId)
+      .limit(1)
+      .maybeSingle();
+    if (projectError) {
+      console.error("Contractor project reference check failed", projectError);
+      return NextResponse.json(
+        { error: "Unable to verify whether projects use this contractor." },
+        { status: 503, headers: responseHeaders },
+      );
+    }
+    if (project) {
+      return NextResponse.json(
+        {
+          error: `This contractor is used by project "${project.project_name}". Reassign or remove the project before deleting the contractor.`,
+        },
+        { status: 409, headers: responseHeaders },
+      );
+    }
+
+    const { data, error } = await admin
+      .from("employers")
+      .delete()
+      .eq("id", employerId)
+      .eq("company_id", access.companyId)
+      .select("id")
+      .maybeSingle();
+    if (error) {
+      console.error("Contractor deletion failed", error);
+      return NextResponse.json(
+        { error: "Unable to delete this contractor." },
+        { status: 500, headers: responseHeaders },
+      );
+    }
+    if (!data) {
+      return NextResponse.json(
+        { error: "Contractor not found in this company." },
+        { status: 404, headers: responseHeaders },
+      );
+    }
+
+    return NextResponse.json({ success: true }, { headers: responseHeaders });
+  } catch (error) {
+    console.error("Contractor deletion request failed", error);
+    return NextResponse.json(
+      { error: "Contractor deletion is unavailable." },
+      { status: 503, headers: responseHeaders },
+    );
   }
 }

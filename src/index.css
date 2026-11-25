@@ -474,6 +474,11 @@ img {
   max-width: 100%;
 }
 
+.task-form select option {
+  background-color: var(--card);
+  color: var(--foreground);
+}
+
 .app-shell main :where([role='tablist']) {
   max-width: 100%;
   min-width: 0;

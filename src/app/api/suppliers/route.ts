@@ -24,7 +24,7 @@ function createAdminClient() {
 }
 
 async function getSupplierAccess(
-  permission: "suppliers.view" | "suppliers.create",
+  permission: "suppliers.view" | "suppliers.create" | "suppliers.delete",
 ) {
   const supabase = await createSupabaseServerClient()
 
@@ -65,10 +65,21 @@ async function getSupplierAccess(
     },
   )
 
-  if (permissionError || !allowed) {
+  if (permissionError) {
+    console.error("Supplier permission check failed", permissionError)
+
+    return {
+      error: "Unable to verify partner permissions.",
+      status: 503 as const,
+    }
+  }
+
+  if (!allowed) {
     return {
       error:
-        "You do not have permission to access partners. Workspace administrators should apply the latest Supabase migration if partner setup is incomplete.",
+        permission === "suppliers.delete"
+          ? "You do not have permission to delete company partners. A Chairman can grant suppliers.delete in Users & Roles."
+          : "You do not have permission to access partners. Workspace administrators should apply the latest Supabase migration if partner setup is incomplete.",
       status: 403 as const,
     }
   }
@@ -108,12 +119,20 @@ export async function GET() {
     const [
       { data: canCreate, error: createPermissionError },
 
+      { data: canDelete, error: deletePermissionError },
+
       { data: company, error: companyError },
     ] = await Promise.all([
       access.supabase.rpc("current_user_has_company_permission", {
         requested_company_id: access.companyId,
 
         requested_permission: "suppliers.create",
+      }),
+
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+
+        requested_permission: "suppliers.delete",
       }),
 
       access.supabase
@@ -127,10 +146,15 @@ export async function GET() {
         .maybeSingle(),
     ])
 
-    if (createPermissionError || companyError || !company) {
+    if (
+      createPermissionError ||
+      deletePermissionError ||
+      companyError ||
+      !company
+    ) {
       console.error(
         "Supplier edit access lookup failed",
-        createPermissionError ?? companyError,
+        createPermissionError ?? deletePermissionError ?? companyError,
       )
 
       return NextResponse.json({ error: "Unable to verify partner access." }, {
@@ -146,6 +170,8 @@ export async function GET() {
         canCreateSuppliers: Boolean(canCreate),
 
         canEditSuppliers: company.primary_admin_user_id === access.userId,
+
+        canDeleteSuppliers: Boolean(canDelete),
       },
 
       { headers: responseHeaders },
@@ -386,5 +412,107 @@ export async function PATCH(request: Request) {
       status: 503,
       headers: responseHeaders,
     })
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const access = await getSupplierAccess("suppliers.delete")
+
+    if ("error" in access)
+      return NextResponse.json({ error: access.error }, {
+        status: access.status,
+        headers: responseHeaders,
+      })
+
+    const body = (await request
+      .json()
+      .catch(() => null)) as Record<string, unknown> | null
+
+    const id = typeof body?.id === "string" ? body.id : ""
+
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        id,
+      )
+    ) {
+      return NextResponse.json({ error: "Provide a valid partner ID." }, {
+        status: 400,
+        headers: responseHeaders,
+      })
+    }
+
+    const admin = createAdminClient()
+
+    if (!admin)
+      return NextResponse.json(
+        {
+          error:
+            "Partner deletion requires SUPABASE_SERVICE_ROLE_KEY in the server environment.",
+        },
+        { status: 503, headers: responseHeaders },
+      )
+
+    const { data: linkedProject, error: projectError } = await admin
+      .from("projects")
+      .select("project_name")
+      .eq("company_id", access.companyId)
+      .eq("partner_id", id)
+      .limit(1)
+      .maybeSingle()
+
+    if (projectError) {
+      console.error("Partner deletion reference check failed", projectError)
+
+      return NextResponse.json(
+        { error: "Unable to verify whether this partner is in use." },
+        { status: 503, headers: responseHeaders },
+      )
+    }
+
+    if (linkedProject) {
+      return NextResponse.json(
+        {
+          error: `Cannot delete this partner while project "${linkedProject.project_name}" is linked to it.`,
+        },
+        { status: 409, headers: responseHeaders },
+      )
+    }
+
+    const { data: deletedSupplier, error: deleteError } = await admin
+      .from("suppliers")
+      .delete()
+      .eq("id", id)
+      .eq("company_id", access.companyId)
+      .select("id")
+      .maybeSingle()
+
+    if (deleteError) {
+      console.error("Partner deletion failed", deleteError)
+
+      return NextResponse.json(
+        { error: "Unable to delete this company partner." },
+        {
+          status: deleteError?.code === "23503" ? 409 : 500,
+          headers: responseHeaders,
+        },
+      )
+    }
+
+    if (!deletedSupplier) {
+      return NextResponse.json(
+        { error: "Partner not found in this company." },
+        { status: 404, headers: responseHeaders },
+      )
+    }
+
+    return NextResponse.json({ success: true }, { headers: responseHeaders })
+  } catch (error) {
+    console.error("Partner DELETE failed", error)
+
+    return NextResponse.json(
+      { error: "Partner deletion is unavailable." },
+      { status: 503, headers: responseHeaders },
+    )
   }
 }

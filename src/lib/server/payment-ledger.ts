@@ -61,7 +61,7 @@ async function loadCompanyExpenses(access: Access) {
   const expensesQuery = admin
     .from("company_expenses")
     .select(
-      "id, account_id, expense_type, description, paid_to, amount, payment_method, reference, paid_at",
+      "id, account_id, expense_type, description, paid_to, amount, payment_method, reference, paid_at, payable_invoice_id",
     )
     .eq("company_id", access.companyId)
     .order("paid_at", { ascending: false })
@@ -74,6 +74,168 @@ async function loadCompanyExpenses(access: Access) {
   if (error) throw error
 
   return data ?? []
+}
+
+export type PayableInvoiceOption = {
+  id: string
+  invoiceNumber: string
+  vendorType: "contractor" | "partner"
+  vendorId: string | null
+  vendorName: string
+  vendorInvoiceNumber: string | null
+  description: string
+  amount: number
+  paidAmount: number
+  balanceDue: number
+  invoiceDate: string
+  dueDate: string | null
+  sourceType: "manual" | "visa"
+  projectName: string | null
+  candidateName: string | null
+}
+
+export type PayableVendorOption = {
+  id: string
+  name: string
+  vendorType: "contractor" | "partner"
+}
+
+export function formatPayableInvoiceNumber(invoiceNumber: number | string) {
+  return `PVI-${String(invoiceNumber).padStart(6, "0")}`
+}
+
+export async function loadPayableInvoices(access: Access) {
+  const admin = createAdminClient()
+  const [
+    { data: membership, error: membershipError },
+    { data: isMainBranch, error: branchError },
+  ] = await Promise.all([
+    access.supabase
+      .from("company_memberships")
+      .select("role_id, branch_id")
+      .eq("company_id", access.companyId)
+      .eq("user_id", access.userId)
+      .eq("status", "active")
+      .maybeSingle(),
+    access.supabase.rpc("current_user_is_main_branch_user", {
+      requested_company_id: access.companyId,
+    }),
+  ])
+
+  if (membershipError || branchError || !membership) {
+    throw membershipError ?? branchError ?? new Error("Unable to verify finance branch access.")
+  }
+
+  const { data: role, error: roleError } = await admin
+    .from("company_roles")
+    .select("name")
+    .eq("id", membership.role_id)
+    .eq("company_id", access.companyId)
+    .maybeSingle()
+  if (roleError || !role) {
+    throw roleError ?? new Error("Unable to verify finance role.")
+  }
+
+  const canViewAllBranches =
+    Boolean(isMainBranch) || role.name.trim().toLowerCase() === "chairman"
+  if (!canViewAllBranches && !membership.branch_id) {
+    throw new Error("Unable to verify finance branch access.")
+  }
+
+  const invoicesQuery = admin
+    .from("company_payable_invoices")
+    .select(
+      "id, invoice_number, branch_id, vendor_type, vendor_id, vendor_name, vendor_invoice_number, description, amount, invoice_date, due_date, source_type, project_name, candidate_name",
+    )
+    .eq("company_id", access.companyId)
+    .order("invoice_date", { ascending: false })
+    .order("created_at", { ascending: false })
+
+  if (!canViewAllBranches) {
+    invoicesQuery.eq("branch_id", membership.branch_id!)
+  }
+
+  const { data: invoices, error: invoiceError } = await invoicesQuery
+  if (invoiceError) throw invoiceError
+  if (!invoices?.length) return []
+
+  const { data: expenseRows, error: expensesError } = await admin
+    .from("company_expenses")
+    .select("payable_invoice_id, amount")
+    .eq("company_id", access.companyId)
+    .in("payable_invoice_id", invoices.map((invoice) => invoice.id))
+  if (expensesError) throw expensesError
+
+  const paidAmounts = new Map<string, number>()
+  for (const expense of expenseRows ?? []) {
+    if (!expense.payable_invoice_id) continue
+    paidAmounts.set(
+      expense.payable_invoice_id,
+      (paidAmounts.get(expense.payable_invoice_id) ?? 0) +
+        Number(expense.amount),
+    )
+  }
+
+  return invoices.map((invoice): PayableInvoiceOption => {
+    const paidAmount = Math.round((paidAmounts.get(invoice.id) ?? 0) * 100) / 100
+    const amount = Number(invoice.amount)
+    return {
+      id: invoice.id,
+      invoiceNumber: formatPayableInvoiceNumber(invoice.invoice_number),
+      vendorType: invoice.vendor_type,
+      vendorId: invoice.vendor_id,
+      vendorName: invoice.vendor_name,
+      vendorInvoiceNumber: invoice.vendor_invoice_number,
+      description: invoice.description,
+      amount,
+      paidAmount,
+      balanceDue: Math.max(0, Math.round((amount - paidAmount) * 100) / 100),
+      invoiceDate: invoice.invoice_date,
+      dueDate: invoice.due_date,
+      sourceType: invoice.source_type,
+      projectName: invoice.project_name,
+      candidateName: invoice.candidate_name,
+    }
+  })
+}
+
+export async function loadPayableVendors(access: Access) {
+  const admin = createAdminClient()
+  const [
+    { data: employers, error: employersError },
+    { data: suppliers, error: suppliersError },
+  ] = await Promise.all([
+    admin
+      .from("employers")
+      .select("id, company_name")
+      .eq("company_id", access.companyId)
+      .order("company_name"),
+    admin
+      .from("suppliers")
+      .select("id, supplier_name")
+      .eq("company_id", access.companyId)
+      .eq("status", "active")
+      .order("supplier_name"),
+  ])
+
+  if (employersError || suppliersError) {
+    throw employersError ?? suppliersError
+  }
+
+  const vendors: PayableVendorOption[] = [
+    ...(employers ?? []).map((employer) => ({
+      id: employer.id,
+      name: employer.company_name,
+      vendorType: "contractor" as const,
+    })),
+    ...(suppliers ?? []).map((supplier) => ({
+      id: supplier.id,
+      name: supplier.supplier_name,
+      vendorType: "partner" as const,
+    })),
+  ]
+
+  return vendors
 }
 
 export type PaymentTransaction = {
@@ -128,6 +290,7 @@ export async function loadPaymentLedger(access: Access) {
     invoices,
     { data: projectRows, error: projectError },
     expenseRows,
+    payableInvoices,
   ] = await Promise.all([
     access.supabase
       .from("financial_receipts")
@@ -147,11 +310,16 @@ export async function loadPaymentLedger(access: Access) {
     }),
 
     loadCompanyExpenses(access),
+    loadPayableInvoices(access),
   ])
 
   if (receiptError) throw receiptError
 
   if (projectError) throw projectError
+
+  const payableInvoiceNumbers = new Map(
+    payableInvoices.map((invoice) => [invoice.id, invoice.invoiceNumber]),
+  )
 
   const projectNames = new Map<string, string>()
 
@@ -294,7 +462,9 @@ export async function loadPaymentLedger(access: Access) {
 
       invoiceId: null,
 
-      invoiceNumber: null,
+      invoiceNumber: expense.payable_invoice_id
+        ? (payableInvoiceNumbers.get(expense.payable_invoice_id) ?? null)
+        : null,
 
       projectId: null,
 
@@ -320,5 +490,5 @@ export async function loadPaymentLedger(access: Access) {
     }),
   )
 
-  return { transactions, projects }
+  return { transactions, projects, payableInvoices }
 }

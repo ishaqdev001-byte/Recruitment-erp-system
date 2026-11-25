@@ -11,6 +11,7 @@ import {
   UserPlus,
   UserX,
 } from "lucide-react"
+import { clearClientApiCache } from "@/lib/client-api-cache"
 import { matchesSearch } from "@/lib/search"
 
 type AgentRecord = {
@@ -274,6 +275,7 @@ export default function Agents() {
       const payload = (await response.json()) as { error?: string }
       if (!response.ok)
         throw new Error(payload.error ?? "Unable to update agent details.")
+      clearClientApiCache()
       setEditingAgent(null)
       setReloadKey((key) => key + 1)
     } catch (saveError) {
@@ -310,6 +312,7 @@ export default function Agents() {
       const payload = (await response.json()) as { error?: string }
       if (!response.ok)
         throw new Error(payload.error ?? "Unable to add this agent.")
+      clearClientApiCache()
       setCreatingAgent(false)
       setCreateLogin(false)
       setStatusMessage(
@@ -351,6 +354,7 @@ export default function Agents() {
       }
       if (!response.ok)
         throw new Error(payload.error ?? "Unable to link this agent.")
+      clearClientApiCache()
       setLinkingAgent(null)
       setStatusMessage(
         "Agent login created. Share the username and initial password with the agent; they must change the password at first sign-in.",
@@ -382,6 +386,7 @@ export default function Agents() {
       const payload = (await response.json()) as { error?: string }
       if (!response.ok)
         throw new Error(payload.error ?? "Unable to change agent status.")
+      clearClientApiCache()
       setReloadKey((key) => key + 1)
     } catch (statusError) {
       setError(
@@ -436,6 +441,7 @@ export default function Agents() {
       const payload = (await response.json()) as { error?: string }
       if (!response.ok)
         throw new Error(payload.error ?? "Unable to delete agent.")
+      clearClientApiCache()
       setAgents((current) => current.filter((item) => item.id !== agent.id))
       if (selectedAgentId === agent.id) setSelectedAgentId(null)
     } catch (deleteError) {

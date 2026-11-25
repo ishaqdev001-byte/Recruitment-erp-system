@@ -7,6 +7,25 @@ type ReceiptType = "candidate_deposit" | "other_income" | "invoice_payment" | "c
 type CandidateOption = { candidate_id: string; file_number: string; candidate_name: string; account_id: string | null };
 type AccountOption = { id: string; name: string; account_type: string; account_number: string };
 type ProjectOption = { id: string; name: string };
+type PayableInvoiceOption = {
+  id: string;
+  invoiceNumber: string;
+  vendorType: "contractor" | "partner";
+  vendorId: string | null;
+  vendorName: string;
+  vendorInvoiceNumber: string | null;
+  description: string;
+  amount: number;
+  paidAmount: number;
+  balanceDue: number;
+  invoiceDate: string;
+  dueDate: string | null;
+  sourceType: "manual" | "visa";
+  projectName: string | null;
+  candidateName: string | null;
+};
+type PayableVendorOption = { id: string; name: string; vendorType: "contractor" | "partner" };
+type ExpenseCategoryOption = { id: string; name: string };
 type PaymentTransaction = {
   id: string;
   recordId: string;
@@ -33,6 +52,8 @@ type LedgerPayload = {
   projects?: ProjectOption[];
   candidates?: CandidateOption[];
   accounts?: AccountOption[];
+  payableInvoices?: PayableInvoiceOption[];
+  payableVendors?: PayableVendorOption[];
   permissions?: { canRecord?: boolean; canDelete?: boolean };
   totals?: { totalReceived: number; totalCashOut: number; candidateDeposits: number; invoicePayments: number; otherIncome: number };
   error?: string;
@@ -47,12 +68,17 @@ const localDate = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 };
+const newExpenseReference = () => `EXP-${Date.now().toString(36).toUpperCase()}`;
 
 export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => void }) {
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [candidates, setCandidates] = useState<CandidateOption[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [payableInvoices, setPayableInvoices] = useState<PayableInvoiceOption[]>([]);
+  const [payableVendors, setPayableVendors] = useState<PayableVendorOption[]>([]);
+  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategoryOption[]>([]);
+  const [expenseCategoriesEnabled, setExpenseCategoriesEnabled] = useState(false);
   const [canRecord, setCanRecord] = useState(false);
   const [canDelete, setCanDelete] = useState(false);
   const [totals, setTotals] = useState({ totalReceived: 0, totalCashOut: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
@@ -63,6 +89,8 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
   const [error, setError] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [showExpense, setShowExpense] = useState(false);
+  const [showPayableInvoice, setShowPayableInvoice] = useState(false);
   const [entryType, setEntryType] = useState<"candidate_deposit" | "other_income">("candidate_deposit");
   const [candidateId, setCandidateId] = useState("");
   const [accountId, setAccountId] = useState("");
@@ -73,6 +101,27 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
   const [externalReference, setExternalReference] = useState("");
   const [notes, setNotes] = useState("");
   const [receivedAt, setReceivedAt] = useState(localDate);
+  const [expenseForm, setExpenseForm] = useState({
+    accountId: "",
+    expenseCategoryId: "",
+    itemName: "",
+    paidTo: "",
+    description: "",
+    amount: "",
+    paymentMethod: "Cash",
+    reference: newExpenseReference(),
+    paidAt: localDate(),
+    payableInvoiceId: "",
+  });
+  const [payableInvoiceForm, setPayableInvoiceForm] = useState({
+    vendorType: "contractor" as "contractor" | "partner",
+    vendorId: "",
+    vendorInvoiceNumber: "",
+    description: "",
+    amount: "",
+    invoiceDate: localDate(),
+    dueDate: "",
+  });
   const [reloadKey, setReloadKey] = useState(0);
   const [deletingId, setDeletingId] = useState("");
 
@@ -82,21 +131,28 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
       setLoading(true);
       setError("");
       try {
-        const [response, accountsResponse] = await Promise.all([
+        const [response, accountsResponse, categoriesResponse] = await Promise.all([
           fetch("/api/payments", { cache: "no-store" }),
           fetch("/api/finance/accounts?options=1", { cache: "no-store" }),
+          fetch("/api/settings/expense-categories", { cache: "no-store" }),
         ]);
-        const [payload, accountsPayload] = await Promise.all([
+        const [payload, accountsPayload, categoriesPayload] = await Promise.all([
           response.json() as Promise<LedgerPayload>,
           accountsResponse.json() as Promise<{ accounts?: AccountOption[]; error?: string }>,
+          categoriesResponse.json() as Promise<{ categories?: ExpenseCategoryOption[]; enabled?: boolean; error?: string }>,
         ]);
         if (!response.ok) throw new Error(payload.error ?? "Unable to load receipts.");
         if (!accountsResponse.ok) throw new Error(accountsPayload.error ?? "Unable to load company accounts.");
+        if (!categoriesResponse.ok) throw new Error(categoriesPayload.error ?? "Unable to load expense categories.");
         if (cancelled) return;
         setTransactions(payload.transactions ?? []);
         setProjects(payload.projects ?? []);
         setCandidates(payload.candidates ?? []);
         setAccounts(accountsPayload.accounts ?? []);
+        setPayableInvoices(payload.payableInvoices ?? []);
+        setPayableVendors(payload.payableVendors ?? []);
+        setExpenseCategories(categoriesPayload.categories ?? []);
+        setExpenseCategoriesEnabled(Boolean(categoriesPayload.enabled));
         setCanRecord(Boolean(payload.permissions?.canRecord));
         setCanDelete(Boolean(payload.permissions?.canDelete));
         setTotals(payload.totals ?? { totalReceived: 0, totalCashOut: 0, candidateDeposits: 0, invoicePayments: 0, otherIncome: 0 });
@@ -152,6 +208,41 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
     setReceivedAt(localDate());
   };
 
+  const resetExpenseForm = () => {
+    setExpenseForm({
+      accountId: "",
+      expenseCategoryId: "",
+      itemName: "",
+      paidTo: "",
+      description: "",
+      amount: "",
+      paymentMethod: "Cash",
+      reference: newExpenseReference(),
+      paidAt: localDate(),
+      payableInvoiceId: "",
+    });
+  };
+
+  const openExpenseForm = () => {
+    resetExpenseForm();
+    setError("");
+    setShowExpense(true);
+  };
+
+  const openPayableInvoiceForm = () => {
+    setPayableInvoiceForm({
+      vendorType: "contractor",
+      vendorId: "",
+      vendorInvoiceNumber: "",
+      description: "",
+      amount: "",
+      invoiceDate: localDate(),
+      dueDate: "",
+    });
+    setError("");
+    setShowPayableInvoice(true);
+  };
+
   const recordReceipt = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSaving(true);
@@ -169,6 +260,49 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
       setReloadKey((key) => key + 1);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to record this receipt.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const recordExpense = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "record-expense", ...expenseForm }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to record this expense.");
+      setShowExpense(false);
+      resetExpenseForm();
+      setReloadKey((key) => key + 1);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to record this expense.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const recordPayableInvoice = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "record-payable-invoice", ...payableInvoiceForm }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to record this payable invoice.");
+      setShowPayableInvoice(false);
+      setReloadKey((key) => key + 1);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to record this payable invoice.");
     } finally {
       setSaving(false);
     }
@@ -202,7 +336,11 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
     <section className="flex h-full min-h-0 flex-col" aria-labelledby="payments-title">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4" style={{ borderColor: "var(--border)" }}>
         <div><h1 id="payments-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Payments &amp; Deposits</h1><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Candidate deposits, other income, invoice receipts, and company cash-outs</p></div>
-        <button type="button" onClick={() => { resetForm(); setError(""); setShowAdd(true); }} disabled={!canRecord || loading} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />Record receipt</button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={openExpenseForm} disabled={!canRecord || loading || accounts.length === 0} className="inline-flex items-center gap-2 border px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Plus size={16} aria-hidden="true" />Record expense</button>
+          <button type="button" onClick={openPayableInvoiceForm} disabled={!canRecord || loading} className="inline-flex items-center gap-2 border px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Plus size={16} aria-hidden="true" />Record payable invoice</button>
+          <button type="button" onClick={() => { resetForm(); setError(""); setShowAdd(true); }} disabled={!canRecord || loading} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><Plus size={16} aria-hidden="true" />Record receipt</button>
+        </div>
       </header>
 
       <div className="grid grid-cols-2 border-b sm:grid-cols-5" style={{ borderColor: "var(--border)" }}>
@@ -248,7 +386,7 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
                 <td className="whitespace-nowrap px-3 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{transaction.paymentMethod}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs font-700" style={{ color: transaction.direction === "debit" ? "#c2413b" : "#17845b" }}>{transaction.direction === "debit" ? "-" : "+"}{money(transaction.amount)}</td>
                 <td className="whitespace-nowrap px-3 py-3 mono text-xs" style={{ color: "var(--muted-foreground)" }}>{transaction.externalReference || "—"}</td>
-                <td className="whitespace-nowrap px-3 py-3">{transaction.invoiceNumber ? <button type="button" onClick={onOpenInvoices} className="inline-flex items-center gap-1 text-xs font-600 underline underline-offset-2" style={{ color: "var(--primary)" }}>{transaction.invoiceNumber}<ArrowUpRight size={12} aria-hidden="true" /></button> : <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>—</span>}</td>
+                <td className="whitespace-nowrap px-3 py-3">{transaction.invoiceNumber ? transaction.entryType === "invoice_payment" ? <button type="button" onClick={onOpenInvoices} className="inline-flex items-center gap-1 text-xs font-600 underline underline-offset-2" style={{ color: "var(--primary)" }}>{transaction.invoiceNumber}<ArrowUpRight size={12} aria-hidden="true" /></button> : <span className="text-xs mono" style={{ color: "var(--foreground)" }}>{transaction.invoiceNumber}</span> : <span className="text-xs" style={{ color: "var(--muted-foreground)" }}>—</span>}</td>
                 <td className="max-w-56 truncate px-3 py-3 text-xs" title={transaction.notes} style={{ color: "var(--muted-foreground)" }}>{transaction.notes || "—"}</td>
                 {canDelete && <td className="whitespace-nowrap px-3 py-3"><button type="button" onClick={() => void deleteTransaction(transaction)} disabled={Boolean(deletingId)} aria-label={`Delete transaction ${transaction.reference}`} className="inline-flex items-center gap-1 border px-2 py-1 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "#c2413b" }}><Trash2 size={13} aria-hidden="true" />{deletingId === transaction.id ? "Deleting…" : "Delete"}</button></td>}
               </tr>)}
@@ -270,6 +408,51 @@ export default function Payments({ onOpenInvoices }: { onOpenInvoices: () => voi
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Notes<textarea rows={2} maxLength={2000} value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1 w-full resize-y border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
           </div>
           <div className="mt-6 flex gap-3"><button type="submit" disabled={saving || !accountId || (entryType === "candidate_deposit" && !candidateId)} className="flex-1 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save receipt"}</button><button type="button" onClick={() => { setShowAdd(false); resetForm(); }} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
+        </form>
+      </div>}
+      {showExpense && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShowExpense(false); resetExpenseForm(); } }}>
+        <form onSubmit={recordExpense} className="max-h-[90dvh] w-full max-w-xl overflow-y-auto border p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="mb-5 flex items-center justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Record expense</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Record a cash-out and deduct it from the selected account.</p></div><button type="button" onClick={() => { setShowExpense(false); resetExpenseForm(); }} aria-label="Close expense form" className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
+          <div className="space-y-4">
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payable invoice (optional)<SearchableSelect ariaLabel="Select payable contractor or partner invoice" value={expenseForm.payableInvoiceId} onChange={(invoiceId) => {
+              const invoice = payableInvoices.find((option) => option.id === invoiceId);
+              setExpenseForm((current) => ({
+                ...current,
+                payableInvoiceId: invoiceId,
+                paidTo: invoice?.vendorName ?? "",
+                itemName: invoice?.description ?? "",
+                description: invoice?.description ?? "",
+                amount: invoice ? invoice.balanceDue.toFixed(2) : "",
+              }));
+            }} options={payableInvoices.filter((invoice) => invoice.balanceDue > 0).map((invoice) => ({
+              value: invoice.id,
+              label: `${invoice.invoiceNumber} - ${invoice.vendorName} - ${money(invoice.balanceDue)} due`,
+              description: invoice.description,
+              searchText: `${invoice.vendorType} ${invoice.candidateName ?? ""} ${invoice.projectName ?? ""} ${invoice.vendorInvoiceNumber ?? ""}`,
+            }))} placeholder="Search open contractor or partner invoices" className="mt-1 normal-case tracking-normal" /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>What are you paying for?<input required maxLength={500} value={expenseForm.itemName} onChange={(event) => setExpenseForm((current) => ({ ...current, itemName: event.target.value }))} placeholder="e.g. Visa service charge" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Service provider<input required maxLength={200} readOnly={Boolean(expenseForm.payableInvoiceId)} value={expenseForm.paidTo} onChange={(event) => setExpenseForm((current) => ({ ...current, paidTo: event.target.value }))} placeholder="Contractor or partner being paid" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none read-only:opacity-70" style={fieldStyle} /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Description<textarea required rows={2} maxLength={500} value={expenseForm.description} onChange={(event) => setExpenseForm((current) => ({ ...current, description: event.target.value }))} placeholder="Add details about this payment" className="mt-1 w-full resize-y border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+            {expenseCategoriesEnabled && <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Expense category<select required value={expenseForm.expenseCategoryId} onChange={(event) => setExpenseForm((current) => ({ ...current, expenseCategoryId: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}><option value="">Select a category</option>{expenseCategories.filter((expenseCategory) => expenseCategory.id).map((expenseCategory) => <option key={expenseCategory.id} value={expenseCategory.id}>{expenseCategory.name}</option>)}</select></label>}
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Account to deduct from<SearchableSelect required ariaLabel="Choose account to deduct the expense from" value={expenseForm.accountId} onChange={(accountId) => setExpenseForm((current) => ({ ...current, accountId }))} options={accounts.map((account) => ({ value: account.id, label: account.name, description: account.account_type.replace(/_/g, " "), searchText: account.account_number }))} placeholder="Select the company account" className="mt-1 normal-case tracking-normal" /></label>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Amount (UGX)<input required min="0.01" max={expenseForm.payableInvoiceId ? payableInvoices.find((invoice) => invoice.id === expenseForm.payableInvoiceId)?.balanceDue : undefined} step="0.01" type="number" value={expenseForm.amount} onChange={(event) => setExpenseForm((current) => ({ ...current, amount: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} />{expenseForm.payableInvoiceId && <span className="mt-1 block text-xs normal-case tracking-normal" style={{ color: "var(--muted-foreground)" }}>Partial payments are allowed up to the remaining invoice balance.</span>}</label><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Payment method<select value={expenseForm.paymentMethod} onChange={(event) => setExpenseForm((current) => ({ ...current, paymentMethod: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}>{methods.map((method) => <option key={method}>{method}</option>)}</select></label></div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Paid date<input required type="date" value={expenseForm.paidAt} onChange={(event) => setExpenseForm((current) => ({ ...current, paidAt: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Reference<input required maxLength={100} value={expenseForm.reference} onChange={(event) => setExpenseForm((current) => ({ ...current, reference: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label></div>
+          </div>
+          <div className="mt-6 flex gap-3"><button type="submit" disabled={saving || !expenseForm.accountId || (expenseCategoriesEnabled && !expenseForm.expenseCategoryId)} className="flex-1 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Record expense"}</button><button type="button" onClick={() => { setShowExpense(false); resetExpenseForm(); }} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
+        </form>
+      </div>}
+      {showPayableInvoice && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowPayableInvoice(false); }}>
+        <form onSubmit={recordPayableInvoice} className="max-h-[90dvh] w-full max-w-xl overflow-y-auto border p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+          <div className="mb-5 flex items-center justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>Record payable invoice</h2><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Add a contractor or partner bill to the open payables list.</p></div><button type="button" onClick={() => setShowPayableInvoice(false)} aria-label="Close payable invoice form" className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
+          <div className="space-y-4">
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Provider type<select value={payableInvoiceForm.vendorType} onChange={(event) => setPayableInvoiceForm((current) => ({ ...current, vendorType: event.target.value as "contractor" | "partner", vendorId: "" }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}><option value="contractor">Contractor</option><option value="partner">Partner</option></select></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Service provider<SearchableSelect required ariaLabel="Choose contractor or partner" value={payableInvoiceForm.vendorId} onChange={(vendorId) => setPayableInvoiceForm((current) => ({ ...current, vendorId }))} options={payableVendors.filter((vendor) => vendor.vendorType === payableInvoiceForm.vendorType).map((vendor) => ({ value: vendor.id, label: vendor.name }))} placeholder={`Select a ${payableInvoiceForm.vendorType}`} className="mt-1 normal-case tracking-normal" /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Provider invoice number (optional)<input maxLength={100} value={payableInvoiceForm.vendorInvoiceNumber} onChange={(event) => setPayableInvoiceForm((current) => ({ ...current, vendorInvoiceNumber: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>What is the invoice for?<textarea required rows={2} maxLength={500} value={payableInvoiceForm.description} onChange={(event) => setPayableInvoiceForm((current) => ({ ...current, description: event.target.value }))} className="mt-1 w-full resize-y border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Invoice amount (UGX)<input required min="0.01" step="0.01" type="number" value={payableInvoiceForm.amount} onChange={(event) => setPayableInvoiceForm((current) => ({ ...current, amount: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label><label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Invoice date<input required type="date" value={payableInvoiceForm.invoiceDate} onChange={(event) => setPayableInvoiceForm((current) => ({ ...current, invoiceDate: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label></div>
+            <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Due date (optional)<input type="date" value={payableInvoiceForm.dueDate} onChange={(event) => setPayableInvoiceForm((current) => ({ ...current, dueDate: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
+          </div>
+          <div className="mt-6 flex gap-3"><button type="submit" disabled={saving || !payableInvoiceForm.vendorId} className="flex-1 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save payable invoice"}</button><button type="button" onClick={() => setShowPayableInvoice(false)} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
         </form>
       </div>}
     </section>

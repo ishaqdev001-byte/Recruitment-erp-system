@@ -424,7 +424,7 @@ export default function TaskWorkspace() {
       </div>
 
       {showTaskForm && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-3 sm:p-6">
-        <form onSubmit={(event) => void saveTask(event)} className="my-auto max-h-[94dvh] w-full max-w-xl overflow-y-auto border p-5 sm:p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
+        <form onSubmit={(event) => void saveTask(event)} className="task-form my-auto max-h-[94dvh] w-full max-w-xl overflow-y-auto border p-5 sm:p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
           <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>{editingId ? "Edit task" : draft.parentTaskId ? "Add subtask" : draft.assignedTo !== currentUserId ? "Assign task" : "New task"}</h2>{draft.parentTaskId && <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>Subtask of {tasks.find((task) => task.id === draft.parentTaskId)?.title}</p>}</div><button type="button" aria-label="Close task form" onClick={() => setShowTaskForm(false)} className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="sm:col-span-2"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Task title *</span><input autoFocus required maxLength={300} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="w-full border px-3 py-2.5 text-sm outline-none" style={inputStyle} placeholder="What needs to be done?" /></label>

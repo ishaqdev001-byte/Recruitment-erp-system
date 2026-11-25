@@ -1,3 +1,4 @@
+import { createClient } from "@supabase/supabase-js"
 import { NextResponse, type NextRequest } from "next/server"
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
@@ -8,6 +9,39 @@ const responseHeaders = { "Cache-Control": "private, no-store" }
 
 const pageSize = 1000
 const pageBatchSize = 4
+
+function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url || !serviceRoleKey) return null
+
+  return createClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+}
+
+async function countCompanyRecruitmentAgents(companyId: string) {
+  const admin = createAdminClient()
+
+  if (!admin) {
+    throw new Error(
+      "Agent summary requires SUPABASE_SERVICE_ROLE_KEY on the server.",
+    )
+  }
+
+  const { count, error } = await admin
+    .from("company_recruitment_agents")
+    .select("id", { count: "exact", head: true })
+    .eq("company_id", companyId)
+
+  if (error) {
+    console.error("Workspace summary agent count query failed", error)
+    throw error
+  }
+
+  return count ?? 0
+}
 
 type CandidateSummaryRow = {
   created_at: string
@@ -37,12 +71,6 @@ type ProjectSummaryRow = {
   country: string
 
   contractor_name: string
-}
-
-type CompanyRoleRow = {
-  id: string
-
-  name: string
 }
 
 type VisaTrend = {
@@ -404,7 +432,7 @@ export async function GET(request: NextRequest) {
       availablePassportCountResult,
       withdrawnPassportCountResult,
       documentCountResult,
-      roleRows,
+      agentCount,
     ] = await Promise.all([
       canViewCandidates
         ? loadAll<CandidateSummaryRow>((from, to) =>
@@ -476,15 +504,7 @@ export async function GET(request: NextRequest) {
         : Promise.resolve(null),
 
       canViewUsers
-        ? supabase
-
-            .from("company_roles")
-
-            .select("id, name")
-
-            .eq("company_id", companyId)
-
-            .order("name")
+        ? countCompanyRecruitmentAgents(companyId)
         : Promise.resolve(null),
     ])
 
@@ -496,43 +516,11 @@ export async function GET(request: NextRequest) {
 
     if (documentCountResult?.error) throw documentCountResult.error
 
-    if (roleRows?.error) throw roleRows.error
-
     const candidates = candidateRows ?? []
 
     const projects = projectRows ?? []
 
     const deployments = makeDeploymentSummary(candidates, projects)
-
-    const roles = (roleRows?.data ?? []) as CompanyRoleRow[]
-
-    const agentRoleIds = roles
-
-      .filter((role) => role.name.toLocaleLowerCase().includes("agent"))
-
-      .map((role) => role.id)
-
-    let agentCount: number | null = null
-
-    if (canViewUsers) {
-      if (!agentRoleIds.length) {
-        agentCount = 0
-      } else {
-        const { count, error: agentCountError } = await supabase
-
-          .from("company_memberships")
-
-          .select("user_id", { count: "exact", head: true })
-
-          .eq("company_id", companyId)
-
-          .in("role_id", agentRoleIds)
-
-        if (agentCountError) throw agentCountError
-
-        agentCount = count ?? 0
-      }
-    }
 
     const passportCount = passportCountResult?.count ?? null
 

@@ -18,6 +18,8 @@ type SupplierRecord = {
   branch: string
 
   status: string
+
+  projectCount: number
 }
 
 const fieldStyle = {
@@ -435,7 +437,7 @@ export default function Partners() {
           style={{ borderColor: "var(--border)", background: "var(--card)" }}
         >
           <div className="app-table-scroll">
-            <table className="w-full min-w-225 text-sm">
+            <table className="w-full min-w-240 text-sm">
               <thead>
                 <tr
                   className="border-b text-left"
@@ -444,6 +446,7 @@ export default function Partners() {
                   {[
                     "Actions",
                     "Partner",
+                    "Projects",
                     "Contact person",
                     "Phone",
                     "Email address",
@@ -464,7 +467,7 @@ export default function Partners() {
                 {loading && (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-4 py-10 text-center text-sm"
                       style={{ color: "var(--muted-foreground)" }}
                     >
@@ -475,7 +478,7 @@ export default function Partners() {
                 {!loading && !error && filtered.length === 0 && (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-4 py-10 text-center text-sm"
                       style={{ color: "var(--muted-foreground)" }}
                     >
@@ -566,6 +569,12 @@ export default function Partners() {
                             {supplier.supplier_name}
                           </span>
                         </div>
+                      </td>
+                      <td
+                        className="whitespace-nowrap px-4 py-3 text-xs font-600"
+                        style={{ color: "var(--foreground)" }}
+                      >
+                        {supplier.projectCount}
                       </td>
                       <td
                         className="whitespace-nowrap px-4 py-3 text-xs"

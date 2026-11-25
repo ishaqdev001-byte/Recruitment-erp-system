@@ -10,6 +10,7 @@ type Employer = {
   email_addresses: string[];
   countries: string[];
   created_at: string;
+  projectCount: number;
   financeProjects?: { projectId: string; projectName: string; visaCount: number; contractorServiceCharge: number; amountDue: number; accountId: string }[];
 };
 
@@ -244,17 +245,17 @@ export default function Employers() {
         <div className="flex-1 overflow-auto p-6">
           {error && <div role="alert" className="mb-4 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
           <div className="overflow-x-auto rounded border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <div className="app-table-scroll"><table className="w-full min-w-190 text-sm">
+            <div className="app-table-scroll"><table className="w-full min-w-216 text-sm">
               <thead>
                 <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                  {["Actions", "Company", "Contact person(s)", "Phone number(s)", "Email address(es)", "Country(s)"].map((h) => (
+                  {["Actions", "Company", "Projects", "Contact person(s)", "Phone number(s)", "Email address(es)", "Country(s)"].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-700 uppercase tracking-wide" style={{ color: "var(--muted-foreground)" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading contractor records…</td></tr>}
-                {!loading && !error && filtered.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{employers.length ? "No contractors match this search." : "No contractors registered yet."}</td></tr>}
+                {loading && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>Loading contractor records…</td></tr>}
+                {!loading && !error && filtered.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm" style={{ color: "var(--muted-foreground)" }}>{employers.length ? "No contractors match this search." : "No contractors registered yet."}</td></tr>}
                 {!loading && filtered.map((e) => (
                   <tr key={e.id} className="border-b" style={{ borderColor: "var(--border)" }}>
                     <td className="px-4 py-3"><div className="inline-flex items-center gap-2"><button type="button" onClick={() => setSelectedEmployerId(e.id)} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--card)" }}><Eye size={14} aria-hidden="true" />View</button>{canEdit && <button type="button" onClick={() => openEditEmployer(e)} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)", background: "var(--card)" }}><Pencil size={14} aria-hidden="true" />Edit</button>}{canDelete && <button type="button" onClick={() => void deleteEmployer(e)} className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-600" style={{ borderColor: "var(--border)", color: "#ef4444", background: "var(--card)" }}><Trash2 size={14} aria-hidden="true" />Delete</button>}</div></td>
@@ -267,6 +268,7 @@ export default function Employers() {
                         <span className="font-600" style={{ color: "var(--foreground)" }}>{e.company_name}</span>
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-xs font-600" style={{ color: "var(--foreground)" }}>{e.projectCount}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--foreground)" }}>{e.contact_persons.join(", ")}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--foreground)" }}>{e.phone_numbers.join(", ")}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--muted-foreground)" }}>{e.email_addresses.join(", ")}</td>

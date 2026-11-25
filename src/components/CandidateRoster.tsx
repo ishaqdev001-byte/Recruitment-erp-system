@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 
 import {
   ArrowRight,
@@ -21,6 +21,8 @@ import {
 import { matchesSearch } from "@/lib/search"
 
 import { clearClientApiCache, fetchClientCached } from "@/lib/client-api-cache"
+
+import { SearchableSelect } from "./SearchableSelect"
 
 import AttachmentDrawer from "./AttachmentDrawer"
 
@@ -94,6 +96,8 @@ type CaseHandlerOption = {
   userId: string
 
   displayName: string
+
+  description?: string
 }
 
 type CandidateImportOutcome = {
@@ -796,6 +800,16 @@ export default function CandidateRoster({
 
   const [caseHandlerOptions, setCaseHandlerOptions] =
     useState<CaseHandlerOption[]>([])
+
+  const searchableCaseHandlerOptions = useMemo(
+    () =>
+      caseHandlerOptions.map((option) => ({
+        value: option.userId,
+        label: option.displayName,
+        description: option.description,
+      })),
+    [caseHandlerOptions],
+  )
 
   const [candidateAgentOptions, setCandidateAgentOptions] = useState<
     CandidateAgentOption[]
@@ -4444,42 +4458,40 @@ export default function CandidateRoster({
                     {permissions.caseHandlersEnabled && (
                       <td className="px-3 py-2">
                         {permissions.canAssignCaseHandler ? (
-                          <select
+                          <SearchableSelect
                             aria-label={`Case handler for ${candidate.first_name} ${candidate.last_name}`}
                             value={candidate.case_handler_user_id ?? ""}
-                            disabled={savingCaseHandlerId !== null}
-                            onChange={(event) => {
-                              const userId = event.currentTarget.value || null
-
-                              void assignCaseHandler(candidate.id, userId)
-                            }}
-                            className="min-w-36 rounded border px-2 py-1.5 text-xs outline-none disabled:opacity-60"
-                            style={{
-                              background: "var(--secondary)",
-
-                              borderColor: "var(--border)",
-
-                              color: "var(--foreground)",
-                            }}
-                          >
-                            <option value="">Unassigned</option>
-                            {candidate.case_handler_user_id &&
+                            options={[
+                              ...searchableCaseHandlerOptions,
+                              ...(candidate.case_handler_user_id &&
                               !caseHandlerOptions.some(
                                 (option) =>
                                   option.userId ===
                                   candidate.case_handler_user_id,
-                              ) && (
-                                <option value={candidate.case_handler_user_id}>
-                                  {candidate.case_handler_name ||
-                                    "Former team member"}
-                                </option>
-                              )}
-                            {caseHandlerOptions.map((option) => (
-                              <option key={option.userId} value={option.userId}>
-                                {option.displayName}
-                              </option>
-                            ))}
-                          </select>
+                              )
+                                ? [
+                                    {
+                                      value: candidate.case_handler_user_id,
+                                      label:
+                                        candidate.case_handler_name ||
+                                        "Former team member",
+                                      description: "Current assignment",
+                                    },
+                                  ]
+                                : []),
+                            ]}
+                            placeholder="Search members or staff"
+                            minQueryLength={1}
+                            preserveValueOnInput
+                            disabled={savingCaseHandlerId !== null}
+                            onChange={(userId) => {
+                              void assignCaseHandler(
+                                candidate.id,
+                                userId || null,
+                              )
+                            }}
+                            className="min-w-36 text-xs"
+                          />
                         ) : (
                           <span className="whitespace-nowrap">
                             {candidate.case_handler_name || "—"}

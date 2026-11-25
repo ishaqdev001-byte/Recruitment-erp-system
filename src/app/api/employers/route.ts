@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { listProjectCounterpartyCounts } from "@/lib/server/projects";
 
 export const runtime = "nodejs";
 
@@ -106,6 +107,9 @@ export async function GET() {
       companyError
     )
       throw financePermissionError ?? createPermissionError ?? editPermissionError ?? deletePermissionError ?? companyError;
+    const { contractorCounts } = await listProjectCounterpartyCounts(
+      access.companyId,
+    );
     let financeByContractor = new Map<string, { projectId: string; projectName: string; visaCount: number; contractorServiceCharge: number; amountDue: number; accountId: string }[]>();
     if (canViewFinance) {
       const { data: projectFinance, error: projectFinanceError } = await access.supabase.rpc("list_project_contractor_finance", {
@@ -128,7 +132,11 @@ export async function GET() {
     }
 
     return NextResponse.json({
-      employers: (data ?? []).map((employer) => ({ ...employer, financeProjects: financeByContractor.get(employer.id) ?? [] })),
+      employers: (data ?? []).map((employer) => ({
+        ...employer,
+        projectCount: contractorCounts.get(employer.id) ?? 0,
+        financeProjects: financeByContractor.get(employer.id) ?? [],
+      })),
       permissions: {
         canViewFinance: Boolean(canViewFinance),
         canCreate: Boolean(canCreate),

@@ -403,6 +403,15 @@ export async function GET() {
       }),
     ])
 
+    const roleName = roleData?.name || ""
+    const normalizedRoleName = roleName.trim().toLocaleLowerCase()
+    const isCaseHandlerChairman =
+      company.primary_admin_user_id === user.id ||
+      [
+        "chairman",
+        "company owner / primary administrator",
+      ].includes(normalizedRoleName)
+
     if (
       financePermissionError ||
       editPermissionError ||
@@ -414,7 +423,7 @@ export async function GET() {
       stagePermissionError ||
       projectSubmissionPermissionError ||
       smsPermissionError ||
-      caseHandlerPermissionError
+      (caseHandlerPermissionError && !isCaseHandlerChairman)
     ) {
       return NextResponse.json(
         { error: "Unable to verify candidate access." },
@@ -428,8 +437,6 @@ export async function GET() {
         agentFinancePermissionError,
       )
     }
-
-    const roleName = roleData?.name || ""
 
     const roleSettings = roleAccessSettings(roleData?.access_settings, roleName)
 
@@ -530,9 +537,13 @@ export async function GET() {
     }))
 
     const canAssignCaseHandlerToCandidates =
-      company.primary_admin_user_id === user.id || Boolean(canAssignCaseHandler)
+      isCaseHandlerChairman || Boolean(canAssignCaseHandler)
 
-    let caseHandlerOptions: { userId: string; displayName: string }[] = []
+    let caseHandlerOptions: {
+      userId: string
+      displayName: string
+      description: string
+    }[] = []
 
     let caseHandlerNames = new Map<string, string>()
 
@@ -549,36 +560,43 @@ export async function GET() {
         )
       }
 
-      const { data: staffRows, error: staffError } = await admin
+      const activeMemberships: { user_id: string; role_id: string }[] = []
+      const membershipPageSize = 1000
+      let afterUserId: string | null = null
 
-        .from("company_staff_members")
+      while (true) {
+        let membershipQuery = admin
+          .from("company_memberships")
+          .select("user_id, role_id")
+          .eq("company_id", membership.company_id)
+          .eq("status", "active")
+          .order("user_id", { ascending: true })
+          .limit(membershipPageSize)
 
-        .select("linked_user_id")
+        if (afterUserId)
+          membershipQuery = membershipQuery.gt("user_id", afterUserId)
 
-        .eq("company_id", membership.company_id)
+        const { data: membershipPage, error: activeMembershipError } =
+          await membershipQuery
 
-        .ilike("status", "active")
+        if (activeMembershipError) {
+          console.error(
+            "Candidate case-handler membership lookup failed",
+            activeMembershipError,
+          )
 
-        .not("linked_user_id", "is", null)
+          return NextResponse.json(
+            { error: "Unable to load case-handler options." },
+            { status: 503, headers },
+          )
+        }
 
-      if (staffError) {
-        console.error("Candidate case-handler staff lookup failed", staffError)
+        const page = membershipPage ?? []
+        activeMemberships.push(...page)
 
-        return NextResponse.json(
-          { error: "Unable to load case-handler options." },
-          { status: 503, headers },
-        )
+        if (page.length < membershipPageSize) break
+        afterUserId = page[page.length - 1].user_id
       }
-
-      const staffUserIds = [
-        ...new Set(
-          (staffRows ?? [])
-
-            .map((staff) => staff.linked_user_id)
-
-            .filter((userId): userId is string => Boolean(userId)),
-        ),
-      ]
 
       const candidateHandlerIds = [
         ...new Set(
@@ -590,37 +608,25 @@ export async function GET() {
         ),
       ]
 
-      const profileIds = [...new Set([...staffUserIds, ...candidateHandlerIds])]
+      const profileIds = [
+        ...new Set([
+          ...activeMemberships.map((item) => item.user_id),
+          ...candidateHandlerIds,
+        ]),
+      ]
+      const profileRows: { id: string; display_name: string | null }[] = []
+      const profileBatchSize = 500
 
-      if (profileIds.length) {
-        const [
-          { data: activeMemberships, error: activeMembershipError },
+      for (let offset = 0; offset < profileIds.length; offset += profileBatchSize) {
+        const { data: profiles, error: profileError } = await admin
+          .from("profiles")
+          .select("id, display_name")
+          .in("id", profileIds.slice(offset, offset + profileBatchSize))
 
-          { data: profiles, error: profileError },
-        ] = await Promise.all([
-          admin
-            .from("company_memberships")
-
-            .select("user_id")
-
-            .eq("company_id", membership.company_id)
-
-            .eq("status", "active")
-
-            .in("user_id", profileIds),
-
-          admin
-            .from("profiles")
-
-            .select("id, display_name")
-
-            .in("id", profileIds),
-        ])
-
-        if (activeMembershipError || profileError) {
+        if (profileError) {
           console.error(
-            "Candidate case-handler details lookup failed",
-            activeMembershipError ?? profileError,
+            "Candidate case-handler profile lookup failed",
+            profileError,
           )
 
           return NextResponse.json(
@@ -629,35 +635,52 @@ export async function GET() {
           )
         }
 
-        const activeUserIds = new Set(
-          (activeMemberships ?? []).map((item) => item.user_id),
-        )
-
-        caseHandlerNames = new Map(
-          (profiles ?? []).map((profile) => [
-            profile.id,
-
-            profile.display_name || `Staff ${profile.id.slice(0, 8)}`,
-          ]),
-        )
-
-        caseHandlerOptions = [
-          ...new Set(
-            staffUserIds.filter((userId) => activeUserIds.has(userId)),
-          ),
-        ]
-
-          .map((userId) => ({
-            userId,
-
-            displayName:
-              caseHandlerNames.get(userId) ?? `Staff ${userId.slice(0, 8)}`,
-          }))
-
-          .sort((left, right) =>
-            left.displayName.localeCompare(right.displayName),
-          )
+        profileRows.push(...(profiles ?? []))
       }
+
+      caseHandlerNames = new Map(
+        profileRows.map((profile) => [
+          profile.id,
+          profile.display_name || `Member ${profile.id.slice(0, 8)}`,
+        ]),
+      )
+
+      const roleIds = [...new Set(activeMemberships.map((item) => item.role_id))]
+      const roleNames = new Map<string, string>()
+
+      if (roleIds.length) {
+        const { data: roles, error: roleLookupError } = await admin
+          .from("company_roles")
+          .select("id, name")
+          .eq("company_id", membership.company_id)
+          .in("id", roleIds)
+
+        if (roleLookupError) {
+          console.error(
+            "Candidate case-handler role lookup failed",
+            roleLookupError,
+          )
+
+          return NextResponse.json(
+            { error: "Unable to load case-handler options." },
+            { status: 503, headers },
+          )
+        }
+
+        for (const role of roles ?? []) roleNames.set(role.id, role.name)
+      }
+
+      caseHandlerOptions = activeMemberships
+        .map((item) => ({
+          userId: item.user_id,
+          displayName:
+            caseHandlerNames.get(item.user_id) ??
+            `Member ${item.user_id.slice(0, 8)}`,
+          description: `${roleNames.get(item.role_id) ?? "Company member"} · ${item.user_id.slice(0, 8)}`,
+        }))
+        .sort((left, right) =>
+          left.displayName.localeCompare(right.displayName),
+        )
     }
 
     return NextResponse.json(

@@ -23,6 +23,7 @@ export function SearchableSelect({
   allowCustom = false,
   inlineOptions = false,
   minQueryLength = 0,
+  preserveValueOnInput = false,
   className = "",
   style,
   ariaLabel,
@@ -36,6 +37,7 @@ export function SearchableSelect({
   allowCustom?: boolean;
   inlineOptions?: boolean;
   minQueryLength?: number;
+  preserveValueOnInput?: boolean;
   className?: string;
   style?: CSSProperties;
   ariaLabel?: string;
@@ -117,14 +119,17 @@ export function SearchableSelect({
           disabled={disabled}
           autoComplete="off"
           value={query}
-          onFocus={() => setOpen(true)}
+          onFocus={() => {
+            setOpen(true);
+            if (preserveValueOnInput && value) inputRef.current?.select();
+          }}
           onChange={(event) => {
             const nextQuery = event.target.value;
             setQuery(nextQuery);
             setOpen(true);
             setActiveIndex(0);
             queryEdited.current = allowCustom || Boolean(value);
-            onChange(allowCustom ? nextQuery : "");
+            if (!preserveValueOnInput) onChange(allowCustom ? nextQuery : "");
             event.currentTarget.setCustomValidity(required && !allowCustom && nextQuery ? "Select a result from the list." : "");
           }}
           onKeyDown={handleKeyDown}

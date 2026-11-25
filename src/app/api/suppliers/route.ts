@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { NextResponse } from "next/server"
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { listProjectCounterpartyCounts } from "@/lib/server/projects"
 
 export const runtime = "nodejs"
 
@@ -163,9 +164,16 @@ export async function GET() {
       })
     }
 
+    const { partnerCounts } = await listProjectCounterpartyCounts(
+      access.companyId,
+    )
+
     return NextResponse.json(
       {
-        suppliers: data ?? [],
+        suppliers: (data ?? []).map((supplier) => ({
+          ...supplier,
+          projectCount: partnerCounts.get(supplier.id) ?? 0,
+        })),
 
         canCreateSuppliers: Boolean(canCreate),
 

@@ -61,7 +61,7 @@ export async function PATCH(
 
       .from("company_memberships")
 
-      .select("company_id")
+      .select("company_id, role_id")
 
       .eq("user_id", user.id)
 
@@ -90,12 +90,14 @@ export async function PATCH(
 
     if (handlerUserId === undefined)
       return NextResponse.json(
-        { error: "Choose an active Staff member or clear the assignment." },
+        { error: "Choose an active company member or clear the assignment." },
         { status: 400, headers },
       )
 
     const [
       { data: company, error: companyError },
+
+      { data: role, error: roleError },
 
       permissionResult,
 
@@ -107,6 +109,17 @@ export async function PATCH(
         .select("primary_admin_user_id, case_handlers_enabled")
 
         .eq("id", membership.company_id)
+
+        .maybeSingle(),
+
+      supabase
+        .from("company_roles")
+
+        .select("name")
+
+        .eq("id", membership.role_id)
+
+        .eq("company_id", membership.company_id)
 
         .maybeSingle(),
 
@@ -128,10 +141,10 @@ export async function PATCH(
         .maybeSingle(),
     ])
 
-    if (companyError || !company) {
+    if (companyError || !company || roleError || !role) {
       console.error(
-        "Candidate case-handler company lookup failed",
-        companyError,
+        "Candidate case-handler access lookup failed",
+        companyError ?? roleError,
       )
 
       return NextResponse.json({ error: "Unable to verify company access." }, {
@@ -164,9 +177,15 @@ export async function PATCH(
         { status: 409, headers },
       )
 
-    const isPrimaryAdmin = company.primary_admin_user_id === user.id
+    const roleName = role.name.trim().toLocaleLowerCase()
+    const isCaseHandlerChairman =
+      company.primary_admin_user_id === user.id ||
+      [
+        "chairman",
+        "company owner / primary administrator",
+      ].includes(roleName)
 
-    if (permissionResult.error && !isPrimaryAdmin) {
+    if (permissionResult.error && !isCaseHandlerChairman) {
       console.error(
         "Candidate case-handler permission lookup failed",
         permissionResult.error,
@@ -178,7 +197,7 @@ export async function PATCH(
       )
     }
 
-    if (!isPrimaryAdmin && !permissionResult.data)
+    if (!isCaseHandlerChairman && !permissionResult.data)
       return NextResponse.json(
         { error: "You do not have permission to assign case handlers." },
         { status: 403, headers },
@@ -215,7 +234,7 @@ export async function PATCH(
         {
           caseHandlerUserId: handlerUserId,
 
-          caseHandlerName: currentProfile?.display_name || "Staff member",
+          caseHandlerName: currentProfile?.display_name || "Company member",
         },
         { headers },
       )
@@ -224,27 +243,8 @@ export async function PATCH(
     let handlerName: string | null = null
 
     if (handlerUserId) {
-      const [
-        { data: staff, error: staffError },
-
-        { data: activeMembership, error: activeMembershipError },
-      ] = await Promise.all([
-        admin
-          .from("company_staff_members")
-
-          .select("linked_user_id")
-
-          .eq("company_id", membership.company_id)
-
-          .eq("linked_user_id", handlerUserId)
-
-          .ilike("status", "active")
-
-          .limit(1)
-
-          .maybeSingle(),
-
-        admin
+      const { data: activeMembership, error: activeMembershipError } =
+        await admin
           .from("company_memberships")
 
           .select("user_id")
@@ -255,13 +255,12 @@ export async function PATCH(
 
           .eq("status", "active")
 
-          .maybeSingle(),
-      ])
+          .maybeSingle()
 
-      if (staffError || activeMembershipError) {
+      if (activeMembershipError) {
         console.error(
           "Candidate case-handler target lookup failed",
-          staffError ?? activeMembershipError,
+          activeMembershipError,
         )
 
         return NextResponse.json(
@@ -270,9 +269,9 @@ export async function PATCH(
         )
       }
 
-      if (!staff || !activeMembership)
+      if (!activeMembership)
         return NextResponse.json(
-          { error: "Choose an active, linked Staff member in this company." },
+          { error: "Choose an active member in this company." },
           { status: 400, headers },
         )
 

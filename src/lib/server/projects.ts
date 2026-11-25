@@ -68,6 +68,61 @@ function createAdminClient() {
   })
 }
 
+export async function listProjectCounterpartyCounts(companyId: string) {
+  const admin = createAdminClient()
+
+  if (!admin)
+    throw new Error(
+      "Project counterparty counts require the server service-role configuration.",
+    )
+
+  const contractorCounts = new Map<string, number>()
+  const partnerCounts = new Map<string, number>()
+  const pageSize = 1000
+  let afterProjectId: string | null = null
+
+  while (true) {
+    let query = admin
+      .from("projects")
+      .select("id, contractor_id, partner_id")
+      .eq("company_id", companyId)
+      .order("id", { ascending: true })
+      .limit(pageSize)
+
+    if (afterProjectId) query = query.gt("id", afterProjectId)
+
+    const { data, error } = await query
+
+    if (error) {
+      console.error("Project counterparty count query failed", error)
+      throw error
+    }
+
+    const projects = data ?? []
+
+    for (const project of projects) {
+      if (project.contractor_id) {
+        contractorCounts.set(
+          project.contractor_id,
+          (contractorCounts.get(project.contractor_id) ?? 0) + 1,
+        )
+      }
+
+      if (project.partner_id) {
+        partnerCounts.set(
+          project.partner_id,
+          (partnerCounts.get(project.partner_id) ?? 0) + 1,
+        )
+      }
+    }
+
+    if (projects.length < pageSize) break
+    afterProjectId = projects[projects.length - 1].id
+  }
+
+  return { contractorCounts, partnerCounts }
+}
+
 export async function getProjectAccess(): Promise<ProjectAccess> {
   const supabase = await createSupabaseServerClient()
 

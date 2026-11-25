@@ -56,6 +56,9 @@ async function getAccess() {
       requested_company_id: membership.company_id,
     },
   )
+  if (branchError) {
+    console.error("Requisition branch access check failed", branchError)
+  }
   if (branchError || (!isMainBranch && !membership.branch_id))
     return {
       error: "Unable to verify your company branch.",
@@ -159,6 +162,12 @@ export async function GET(request: Request) {
       canCreateRequisitions(access),
     ])
     if (permissionResults.some((result) => result.error)) {
+      console.error(
+        "Requisition permission checks failed",
+        permissionResults
+          .filter((result) => result.error)
+          .map((result) => result.error),
+      )
       return NextResponse.json(
         { error: "Unable to verify requisition permissions." },
         { status: 503, headers: responseHeaders },

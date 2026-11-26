@@ -112,6 +112,12 @@ import {
   roleAccessSettings,
 } from "./lib/role-access-settings"
 
+import {
+  setupPerformanceObserver,
+  generateReport,
+  monitor,
+} from "./lib/performance-monitoring"
+
 function KilaxLogo({ size = 64 }: { size?: number }) {
   return (
     <img
@@ -1409,6 +1415,30 @@ export default function App() {
 
     [hrPersonalDetailsComplete, hrProfileUpdateRequired, session],
   )
+
+  // Initialize performance monitoring for the entire app
+  useEffect(() => {
+    // Setup performance observers to track page load, API calls, and interactions
+    setupPerformanceObserver()
+
+    // Log optimization info
+    console.log(
+      "%c🚀 Performance Optimization Active",
+      "color: #10b981; font-weight: bold; font-size: 14px",
+    )
+    console.log(
+      "%c📊 Monitoring app performance across all pages",
+      "color: #3b82f6; font-size: 12px",
+    )
+    console.log(
+      "%c💡 Tips: Use Chrome DevTools Network tab to inspect API calls",
+      "color: #f59e0b; font-size: 11px",
+    )
+
+    return () => {
+      // Cleanup performance monitoring if needed
+    }
+  }, [])
 
   const respondToHrProfileReminder = async (
     action: "reviewed" | "review_later" | "same" | "changed",

@@ -4,9 +4,11 @@ import { NextResponse } from "next/server"
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
+import { getCacheHeaders } from "@/lib/cache-headers"
+
 export const runtime = "nodejs"
 
-const headers = { "Cache-Control": "private, no-store" }
+const headers = getCacheHeaders("reference")
 
 type ExpenseCategoryChanges = {
   name?: string

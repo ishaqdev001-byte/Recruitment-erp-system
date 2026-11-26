@@ -2,10 +2,11 @@ import { createClient } from "@supabase/supabase-js"
 import { NextResponse } from "next/server"
 import { isUuid } from "@/lib/server/documents"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { getCacheHeaders } from "@/lib/cache-headers"
 
 export const runtime = "nodejs"
 
-const headers = { "Cache-Control": "private, no-store" }
+const headers = getCacheHeaders("reference")
 
 function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL

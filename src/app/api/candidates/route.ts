@@ -227,10 +227,65 @@ function candidateAge(dateOfBirth: string) {
   return age
 }
 
-export async function GET() {
-  const headers = { "Cache-Control": "private, no-store" }
+/**
+ * GET /api/candidates
+ *
+ * Fetches paginated candidates list with permission checks and metadata.
+ *
+ * Query Parameters:
+ * - `limit` (optional): Number of records per page, default 50, max 1000
+ * - `offset` (optional): Number of records to skip, default 0
+ * - `cursor` (optional): For cursor-based pagination, skips offset parameter
+ *
+ * Response Format:
+ * {
+ *   candidates: [...],
+ *   pagination: {
+ *     total: number,
+ *     limit: number,
+ *     offset: number,
+ *     has_next: boolean,
+ *     next_cursor: string | null
+ *   },
+ *   agentOptions: [...],
+ *   caseHandlerOptions: [...],
+ *   caseHandlersEnabled: boolean,
+ *   permissions: {...},
+ *   warning?: string
+ * }
+ */
+export async function GET(request: Request) {
+  // Cache candidates list for 5 minutes to improve performance
+  // stale-while-revalidate allows showing cached data while fetching fresh data
+  const headers = {
+    "Cache-Control": "private, max-age=300, stale-while-revalidate=600",
+  }
 
   try {
+    // Parse pagination parameters from query string
+    const { searchParams } = new URL(request.url)
+    const limitParam = searchParams.get("limit")
+    const offsetParam = searchParams.get("offset")
+    const cursor = searchParams.get("cursor")
+
+    // Validate and parse limit (default 50, max 1000)
+    let limit = 50
+    if (limitParam) {
+      const parsedLimit = parseInt(limitParam, 10)
+      if (!Number.isNaN(parsedLimit) && parsedLimit > 0 && parsedLimit <= 1000) {
+        limit = parsedLimit
+      }
+    }
+
+    // Validate and parse offset (default 0, ignored if cursor provided)
+    let offset = 0
+    if (!cursor && offsetParam) {
+      const parsedOffset = parseInt(offsetParam, 10)
+      if (!Number.isNaN(parsedOffset) && parsedOffset >= 0) {
+        offset = parsedOffset
+      }
+    }
+
     const supabase = await createSupabaseServerClient()
 
     const {
@@ -467,26 +522,46 @@ export async function GET() {
     const canRegister =
       Boolean(canRegisterCandidates) && roleSettings.candidate_registration
 
-    let query = supabase
+    // Build candidates query with pagination
+    const selectFields =
+      "id, source_row_number, branch_id, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_id, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by, case_handler_user_id"
 
+    // Get total count for pagination metadata
+    const countQuery = supabase
       .from("candidates")
-
-      .select(
-        "id, source_row_number, branch_id, inquiry_number, file_number, first_name, last_name, phone, date_of_birth, place_of_birth, agent_id, agent_name, agent_user_id, religion, position, nationality, father_name, mother_name, details, created_at, created_by, updated_at, updated_by, case_handler_user_id",
-      )
-
+      .select("id", { count: "exact", head: true })
       .eq("company_id", membership.company_id)
 
+    // Build data query with pagination
+    let dataQuery = supabase
+      .from("candidates")
+      .select(selectFields)
+      .eq("company_id", membership.company_id)
       .order("created_at", { ascending: false })
 
-    const [{ data, error }, { data: people, error: peopleError }] =
-      await Promise.all([
-        query,
+    // Apply cursor-based or offset-based pagination
+    if (cursor) {
+      dataQuery = dataQuery.lt("created_at", cursor).limit(limit + 1)
+    } else {
+      dataQuery = dataQuery.range(offset, offset + limit)
+    }
 
+    const [{ count: totalCount, error: countError }, { data, error }, { data: people, error: peopleError }] =
+      await Promise.all([
+        countQuery,
+        dataQuery,
         supabase.rpc("list_candidate_inquiry_people", {
           requested_company_id: membership.company_id,
         }),
       ])
+
+    if (countError) {
+      console.error("Candidate count query failed", countError)
+      return NextResponse.json({ error: "Unable to count candidates." }, {
+        status: 503,
+        headers,
+      })
+    }
 
     if (error) {
       console.error("Candidate list query failed", error)
@@ -683,9 +758,30 @@ export async function GET() {
         )
     }
 
+    // Calculate pagination metadata
+    let paginatedData = data ?? []
+    let hasNextPage = false
+    let nextCursor: string | null = null
+
+    if (cursor) {
+      // For cursor-based pagination, we fetched limit + 1 to check if there are more
+      if (paginatedData.length > limit) {
+        hasNextPage = true
+        paginatedData = paginatedData.slice(0, limit)
+        // Next cursor is the created_at of the last item in current page
+        const lastItem = paginatedData[paginatedData.length - 1]
+        if (lastItem?.created_at) {
+          nextCursor = lastItem.created_at
+        }
+      }
+    } else {
+      // For offset-based pagination, check if there are more records
+      hasNextPage = (totalCount ?? 0) > offset + limit
+    }
+
     return NextResponse.json(
       {
-        candidates: (data ?? []).map((candidate) => ({
+        candidates: paginatedData.map((candidate) => ({
           ...candidate,
 
           created_by_name: candidate.created_by
@@ -702,6 +798,14 @@ export async function GET() {
               "Former team member")
             : null,
         })),
+
+        pagination: {
+          total: totalCount ?? 0,
+          limit,
+          offset: cursor ? undefined : offset,
+          has_next: hasNextPage,
+          next_cursor: nextCursor,
+        },
 
         agentOptions,
 

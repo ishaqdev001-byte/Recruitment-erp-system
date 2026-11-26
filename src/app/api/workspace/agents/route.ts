@@ -5,7 +5,11 @@ import { normalizeUgandanPhone } from "@/lib/server/smsug"
 
 export const runtime = "nodejs"
 
-const headers = { "Cache-Control": "private, no-store" }
+// Cache agents list for 5 minutes to improve performance
+// stale-while-revalidate allows showing cached data while fetching fresh data
+const headers = {
+  "Cache-Control": "private, max-age=300, stale-while-revalidate=600",
+}
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -310,7 +314,7 @@ async function getAccess() {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const access = await getAccess()
 
@@ -321,32 +325,56 @@ export async function GET() {
       })
     }
 
+    // Parse pagination parameters from URL
+    const url = new URL(request.url)
+    const searchParams = url.searchParams
+    const limitParam = searchParams.get("limit")
+    const offsetParam = searchParams.get("offset")
+    const cursor = searchParams.get("cursor")
+
+    // Validate and parse limit (default 100, max 500)
+    let limit = 100
+    if (limitParam) {
+      const parsedLimit = parseInt(limitParam, 10)
+      if (!Number.isNaN(parsedLimit) && parsedLimit > 0 && parsedLimit <= 500) {
+        limit = parsedLimit
+      }
+    }
+
+    // Validate and parse offset (default 0, ignored if cursor provided)
+    let offset = 0
+    if (!cursor && offsetParam) {
+      const parsedOffset = parseInt(offsetParam, 10)
+      if (!Number.isNaN(parsedOffset) && parsedOffset >= 0) {
+        offset = parsedOffset
+      }
+    }
+
     let agentsQuery = access.admin
-
       .from("company_recruitment_agents")
-
       .select(
-        "id, agent_code, name, username, email, phone, branch_id, linked_user_id, status",
+        "id, agent_code, name, username, email, phone, branch_id, linked_user_id, status, created_at",
+        { count: "exact" },
       )
-
       .eq("company_id", access.companyId)
-
       .order("name")
 
     if (!access.isMainBranch && !access.isPrimaryAdmin && access.branchId) {
       agentsQuery = agentsQuery.eq("branch_id", access.branchId)
     }
 
+    // Apply cursor-based or offset-based pagination
+    if (cursor) {
+      agentsQuery = agentsQuery.gt("created_at", cursor).limit(limit + 1)
+    } else {
+      agentsQuery = agentsQuery.range(offset, offset + limit - 1)
+    }
+
     let branchQuery = access.admin
-
       .from("company_branches")
-
       .select("id, name, code, is_main_branch")
-
       .eq("company_id", access.companyId)
-
       .eq("status", "active")
-
       .order("name")
 
     if (!access.isMainBranch && !access.isPrimaryAdmin && access.branchId) {
@@ -354,15 +382,34 @@ export async function GET() {
     }
 
     const [
-      { data: agentRows, error: agentsError },
+      { data: agentRows, error: agentsError, count: totalCount },
       { data: branchRows, error: branchesError },
     ] = await Promise.all([agentsQuery, branchQuery])
 
     if (agentsError || branchesError) throw agentsError ?? branchesError
 
+    let paginatedAgents = agentRows ?? []
+    let hasNextPage = false
+    let nextCursor: string | null = null
+
+    if (cursor) {
+      // For cursor-based pagination, we fetched limit + 1 to check if there are more
+      if (paginatedAgents.length > limit) {
+        hasNextPage = true
+        paginatedAgents = paginatedAgents.slice(0, limit)
+        // Next cursor is the created_at of the last item in current page
+        const lastAgent = paginatedAgents[paginatedAgents.length - 1]
+        if (lastAgent?.created_at) {
+          nextCursor = lastAgent.created_at
+        }
+      }
+    } else if (totalCount) {
+      hasNextPage = offset + limit < totalCount
+    }
+
     return NextResponse.json(
       {
-        agents: (agentRows ?? []).map((agent) => ({
+        agents: paginatedAgents.map((agent) => ({
           id: agent.id,
 
           agentCode: agent.agent_code,
@@ -405,6 +452,13 @@ export async function GET() {
         canExport: access.canExport,
 
         canResetPasswords: access.canResetPasswords,
+
+        pagination: {
+          limit,
+          offset: cursor ? undefined : offset,
+          has_next: hasNextPage,
+          next_cursor: nextCursor,
+        },
       },
 
       { headers },

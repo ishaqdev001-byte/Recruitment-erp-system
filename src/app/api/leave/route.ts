@@ -8,9 +8,11 @@ import {
   isIsoDate,
 } from "@/lib/server/workforce"
 
+import { getCacheHeaders } from "@/lib/cache-headers"
+
 export const runtime = "nodejs"
 
-const responseHeaders = { "Cache-Control": "private, no-store" }
+const responseHeaders = getCacheHeaders("list")
 
 function isUuid(value: unknown): value is string {
   return (

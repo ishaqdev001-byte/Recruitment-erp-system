@@ -2,10 +2,11 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listProjectCounterpartyCounts } from "@/lib/server/projects";
+import { getCacheHeaders } from "@/lib/cache-headers";
 
 export const runtime = "nodejs";
 
-const responseHeaders = { "Cache-Control": "private, no-store" };
+const responseHeaders = getCacheHeaders("list");
 const employerFields = "id, company_name, contact_persons, phone_numbers, email_addresses, countries, created_at";
 
 function createAdminClient() {

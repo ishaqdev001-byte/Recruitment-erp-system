@@ -175,19 +175,20 @@ export default function Agents({
       setLoading(true)
       setError("")
       try {
-        const agentsResponse = await fetch("/api/workspace/agents", {
-          cache: "no-store",
-        })
+        // Fetch agents and candidates in parallel to improve performance
+        const [agentsResponse, candidatesResponse] = await Promise.all([
+          fetch("/api/workspace/agents", { cache: "no-store" }),
+          fetch("/api/candidates", { cache: "no-store" }),
+        ])
+
         const agentsPayload = (await agentsResponse.json()) as AgentPayload
         if (!agentsResponse.ok)
           throw new Error(
             agentsPayload.error ?? "Unable to load company agents.",
           )
+
         let candidateRows: CandidateRecord[] = []
         if (agentsPayload.canViewCandidates) {
-          const candidatesResponse = await fetch("/api/candidates", {
-            cache: "no-store",
-          })
           const candidatesPayload = (await candidatesResponse.json()) as {
             candidates?: CandidateRecord[]
             error?: string

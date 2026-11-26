@@ -14,9 +14,13 @@ import {
 
 export const runtime = "nodejs"
 
-const responseHeaders = { "Cache-Control": "private, no-store" }
+// Cache projects list for 5 minutes to improve performance
+// stale-while-revalidate allows showing cached data while fetching fresh data
+const responseHeaders = {
+  "Cache-Control": "private, max-age=300, stale-while-revalidate=600",
+}
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const access = await getProjectAccess()
 
@@ -36,17 +40,46 @@ export async function GET() {
       )
     }
 
-    const [{ data, error }, assignmentContext] = await Promise.all([
-      access.supabase
+    // Parse pagination parameters from URL
+    const url = new URL(request.url)
+    const searchParams = url.searchParams
+    const limitParam = searchParams.get("limit")
+    const offsetParam = searchParams.get("offset")
+    const cursor = searchParams.get("cursor")
 
-        .from("projects")
+    // Validate and parse limit (default 50, max 500)
+    let limit = 50
+    if (limitParam) {
+      const parsedLimit = parseInt(limitParam, 10)
+      if (!Number.isNaN(parsedLimit) && parsedLimit > 0 && parsedLimit <= 500) {
+        limit = parsedLimit
+      }
+    }
 
-        .select("*")
+    // Validate and parse offset (default 0, ignored if cursor provided)
+    let offset = 0
+    if (!cursor && offsetParam) {
+      const parsedOffset = parseInt(offsetParam, 10)
+      if (!Number.isNaN(parsedOffset) && parsedOffset >= 0) {
+        offset = parsedOffset
+      }
+    }
 
-        .eq("company_id", access.companyId)
+    let projectsQuery = access.supabase
+      .from("projects")
+      .select("*", { count: "exact" })
+      .eq("company_id", access.companyId)
+      .order("created_at", { ascending: false })
 
-        .order("created_at", { ascending: false }),
+    // Apply cursor-based or offset-based pagination
+    if (cursor) {
+      projectsQuery = projectsQuery.lt("created_at", cursor).limit(limit + 1)
+    } else {
+      projectsQuery = projectsQuery.range(offset, offset + limit - 1)
+    }
 
+    const [{ data, error, count: totalCount }, assignmentContext] = await Promise.all([
+      projectsQuery,
       getProjectAssignmentContext(access),
     ])
 
@@ -57,6 +90,25 @@ export async function GET() {
         status: 500,
         headers: responseHeaders,
       })
+    }
+
+    let paginatedProjects = data ?? []
+    let hasNextPage = false
+    let nextCursor: string | null = null
+
+    if (cursor) {
+      // For cursor-based pagination, we fetched limit + 1 to check if there are more
+      if (paginatedProjects.length > limit) {
+        hasNextPage = true
+        paginatedProjects = paginatedProjects.slice(0, limit)
+        // Next cursor is the created_at of the last item in current page
+        const lastProject = paginatedProjects[paginatedProjects.length - 1]
+        if (lastProject?.created_at) {
+          nextCursor = lastProject.created_at
+        }
+      }
+    } else if (totalCount) {
+      hasNextPage = offset + limit < totalCount
     }
 
     const [
@@ -109,7 +161,7 @@ export async function GET() {
 
     return NextResponse.json(
       {
-        projects: (data ?? []).map((project) => {
+        projects: paginatedProjects.map((project) => {
           const project_manager_name =
             (project.project_manager_user_id &&
               handlerNameById.get(project.project_manager_user_id)) ||
@@ -238,6 +290,13 @@ export async function GET() {
 
           canAssignStaff:
             assignmentContext.isChairman || canAssign,
+        },
+
+        pagination: {
+          limit,
+          offset: cursor ? undefined : offset,
+          has_next: hasNextPage,
+          next_cursor: nextCursor,
         },
       },
       { headers: responseHeaders },

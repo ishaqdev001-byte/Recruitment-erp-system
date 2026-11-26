@@ -197,13 +197,15 @@ export default function AccountsWorkspace() {
     setError("")
 
     try {
-      const response = await fetch("/api/finance/accounts", {
-        cache: "no-store",
-      })
+      // Fetch accounts and expense category settings in parallel for better performance
+      const [accountsResponse, categoryResponse] = await Promise.all([
+        fetch("/api/finance/accounts", { cache: "no-store" }),
+        fetch("/api/settings/expense-categories", { cache: "no-store" }),
+      ])
 
-      const result = (await response.json()) as AccountsPayload
+      const result = (await accountsResponse.json()) as AccountsPayload
 
-      if (!response.ok)
+      if (!accountsResponse.ok)
         throw new Error(result.error ?? "Unable to load accounts.")
 
       setAccounts(result.accounts ?? [])
@@ -214,9 +216,6 @@ export default function AccountsWorkspace() {
 
       setExpenseCategories(result.expenseCategories ?? [])
 
-      const categoryResponse = await fetch("/api/settings/expense-categories", {
-        cache: "no-store",
-      })
       const categorySettings = (await categoryResponse.json()) as {
         categories?: ExpenseCategory[]
         enabled?: boolean

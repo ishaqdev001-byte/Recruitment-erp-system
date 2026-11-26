@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getWorkforceAccess, hasWorkforcePermission, isIsoDate } from "@/lib/server/workforce";
+import { getCacheHeaders } from "@/lib/cache-headers";
 
 export const runtime = "nodejs";
-const responseHeaders = { "Cache-Control": "private, no-store" };
+const responseHeaders = getCacheHeaders("list");
 
 function kampalaWorkDate() {
   const parts = new Intl.DateTimeFormat("en-CA", {

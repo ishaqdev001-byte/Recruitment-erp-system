@@ -16,9 +16,11 @@ import {
   roleAccessSettings,
 } from "@/lib/role-access-settings"
 
+import { getCacheHeaders } from "@/lib/cache-headers"
+
 export const runtime = "nodejs"
 
-const responseHeaders = { "Cache-Control": "private, no-store" }
+const responseHeaders = getCacheHeaders("settings")
 
 function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL

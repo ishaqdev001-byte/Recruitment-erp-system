@@ -275,6 +275,31 @@ export async function PATCH(
           { status: 400, headers },
         )
 
+      const { data: eligibility, error: eligibilityError } = await admin
+        .from("company_assignment_eligibility")
+        .select("id")
+        .eq("company_id", membership.company_id)
+        .eq("assignment_type", "case_handler")
+        .eq("user_id", handlerUserId)
+        .maybeSingle()
+
+      if (eligibilityError) {
+        console.error(
+          "Candidate case-handler eligibility lookup failed",
+          eligibilityError,
+        )
+        return NextResponse.json(
+          { error: "Unable to verify the selected case handler." },
+          { status: 503, headers },
+        )
+      }
+
+      if (!eligibility)
+        return NextResponse.json(
+          { error: "Choose a person on the company's case-handler list." },
+          { status: 400, headers },
+        )
+
       const { data: profile, error: profileError } = await admin
 
         .from("profiles")

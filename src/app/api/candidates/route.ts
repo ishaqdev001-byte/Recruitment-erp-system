@@ -635,6 +635,28 @@ export async function GET(request: Request) {
         )
       }
 
+      const { data: eligibilityRows, error: eligibilityError } = await admin
+        .from("company_assignment_eligibility")
+        .select("user_id")
+        .eq("company_id", membership.company_id)
+        .eq("assignment_type", "case_handler")
+
+      if (eligibilityError) {
+        console.error(
+          "Candidate case-handler eligibility lookup failed",
+          eligibilityError,
+        )
+        return NextResponse.json(
+          { error: "Unable to load case-handler options." },
+          { status: 503, headers },
+        )
+      }
+
+      const eligibleUserIds = new Set(
+        (eligibilityRows ?? []).flatMap((entry) =>
+          entry.user_id ? [entry.user_id] : [],
+        ),
+      )
       const activeMemberships: { user_id: string; role_id: string }[] = []
       const membershipPageSize = 1000
       let afterUserId: string | null = null
@@ -667,7 +689,9 @@ export async function GET(request: Request) {
         }
 
         const page = membershipPage ?? []
-        activeMemberships.push(...page)
+        activeMemberships.push(
+          ...page.filter((item) => eligibleUserIds.has(item.user_id)),
+        )
 
         if (page.length < membershipPageSize) break
         afterUserId = page[page.length - 1].user_id

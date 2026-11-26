@@ -15,6 +15,7 @@ type ProjectRecord = {
   project_handler_staff_id: string | null;
   project_manager_name: string;
   assigned_staff_id: string | null;
+  assigned_staff_user_id: string | null;
   assigned_staff_name: string;
   can_assign_staff: boolean;
   contractor_name: string;
@@ -81,7 +82,13 @@ type ProjectHandlerOption = {
   position: string;
   kind: "member" | "staff";
 };
-type ProjectStaffOption = { id: string; name: string; position: string; status: string };
+type ProjectStaffOption = {
+  id: string;
+  name: string;
+  position: string;
+  status: string;
+  kind: "member" | "staff";
+};
 
 const initialForm = (): ProjectForm => ({
   projectName: "", accountId: "", projectHandlerId: "", projectSourceType: "", partnerId: "", contractorName: "", country: "", salaryRange: "", ageBracket: "",
@@ -452,7 +459,13 @@ export default function Projects() {
                   {project.can_assign_staff ? (
                     <SearchableSelect
                       aria-label={`Assign staff to ${project.project_name}`}
-                      value={project.assigned_staff_id ?? ""}
+                      value={
+                        project.assigned_staff_user_id
+                          ? `member:${project.assigned_staff_user_id}`
+                          : project.assigned_staff_id
+                            ? `staff:${project.assigned_staff_id}`
+                            : ""
+                      }
                       onChange={(staffId) => void updateStaffAssignment(project, staffId)}
                       options={staffOptions.filter((staff) => staff.status === "Active").map((staff) => ({
                         value: staff.id,

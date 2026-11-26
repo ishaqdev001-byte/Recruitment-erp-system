@@ -34,6 +34,7 @@ export type ProjectStaffOption = {
   name: string
   position: string
   status: string
+  kind: "member" | "staff"
 }
 
 export type ProjectContractorOption = {
@@ -56,6 +57,41 @@ export type ProjectAssignmentContext = {
   staffHandlers: ProjectHandlerOption[]
 
   staff: ProjectStaffOption[]
+}
+
+export type ProjectAssistantStaffAssignment = {
+  assigned_staff_id: string | null
+  assigned_staff_user_id: string | null
+}
+
+export function resolveAssistantStaffSelection(
+  value: unknown,
+  context: ProjectAssignmentContext,
+): ProjectAssistantStaffAssignment | null {
+  if (value === null || value === "") {
+    return {
+      assigned_staff_id: null,
+      assigned_staff_user_id: null,
+    }
+  }
+
+  if (typeof value !== "string") return null
+
+  const option = context.staff.find(
+    (staff) => staff.id === value && staff.status === "Active",
+  )
+
+  if (!option) return null
+
+  return option.kind === "member"
+    ? {
+        assigned_staff_id: null,
+        assigned_staff_user_id: value.slice("member:".length),
+      }
+    : {
+        assigned_staff_id: value.slice("staff:".length),
+        assigned_staff_user_id: null,
+      }
 }
 
 export type ProjectHandlerAssignment = {
@@ -333,6 +369,8 @@ export async function getProjectAssignmentContext(
     { data: memberships, error: membershipError },
 
     { data: staff, error: staffError },
+
+    { data: eligibility, error: eligibilityError },
   ] = await Promise.all([
     admin
 
@@ -355,20 +393,21 @@ export async function getProjectAssignmentContext(
       .eq("status", "active"),
 
     admin
-
       .from("company_staff_members")
-
       .select("id, name, position, status, linked_user_id")
-
       .eq("company_id", access.companyId)
-
       .eq("status", "Active")
-
       .order("name"),
+
+    admin
+      .from("company_assignment_eligibility")
+      .select("user_id, staff_id")
+      .eq("company_id", access.companyId)
+      .eq("assignment_type", "assistant_staff"),
   ])
 
-  if (companyError || membershipError || staffError) {
-    throw companyError ?? membershipError ?? staffError
+  if (companyError || membershipError || staffError || eligibilityError) {
+    throw companyError ?? membershipError ?? staffError ?? eligibilityError
   }
 
   if (!company) throw new Error("Unable to verify company project assignments.")
@@ -418,12 +457,45 @@ export async function getProjectAssignmentContext(
     })
     .sort((left, right) => left.name.localeCompare(right.name))
 
-  const assistantStaff = (staff ?? []).map((record) => ({
-    id: record.id,
-    name: record.name,
-    position: record.position ?? "",
-    status: record.status,
-  }))
+  const activeMembershipIds = new Set(memberIds)
+  const eligibleUserIds = new Set(
+    (eligibility ?? []).flatMap((record) =>
+      record.user_id ? [record.user_id] : [],
+    ),
+  )
+  const eligibleStaffIds = new Set(
+    (eligibility ?? []).flatMap((record) =>
+      record.staff_id ? [record.staff_id] : [],
+    ),
+  )
+  const assistantStaff: ProjectStaffOption[] = [
+    ...(staff ?? [])
+      .filter(
+        (record) =>
+          record.status === "Active" && eligibleStaffIds.has(record.id),
+      )
+      .map((record) => ({
+        id: `staff:${record.id}`,
+        name: record.name,
+        position: record.position ?? "",
+        status: record.status,
+        kind: "staff" as const,
+      })),
+    ...memberIds
+      .filter(
+        (id) => activeMembershipIds.has(id) && eligibleUserIds.has(id),
+      )
+      .map((id) => ({
+        id: `member:${id}`,
+        name:
+          staffByUserId.get(id)?.name ||
+          profileNameById.get(id) ||
+          "Active company member",
+        position: staffByUserId.get(id)?.position || "Company member",
+        status: "Active",
+        kind: "member" as const,
+      })),
+  ].sort((left, right) => left.name.localeCompare(right.name))
 
   const staffHandlers = (staff ?? [])
     .filter((record) => !record.linked_user_id)

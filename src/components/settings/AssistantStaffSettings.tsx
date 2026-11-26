@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import AssignmentEligibilityManager from "./AssignmentEligibilityManager"
 
 export default function AssistantStaffSettings() {
   const [enabled, setEnabled] = useState(false)
@@ -182,6 +183,12 @@ export default function AssistantStaffSettings() {
           </button>
         </div>
       </section>
+      <AssignmentEligibilityManager
+        key={enabled ? "enabled" : "disabled"}
+        type="assistant_staff"
+        title="Eligible Assistant Staff"
+        description="Add active company members or active staff records who may be assigned to projects. Only people on this list will appear in the Assistant Staff selector."
+      />
     </div>
   )
 }

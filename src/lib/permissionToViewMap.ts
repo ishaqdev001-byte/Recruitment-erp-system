@@ -49,6 +49,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "candidate_inquiries.create": new Set(["candidate-inquiries"]),
   "candidates.edit": new Set(["candidates"]),
   "candidates.delete": new Set(["candidates"]),
+  "candidates.case_handler.assign": new Set(["settings"]),
   "human_resources.view": new Set(["human-resources"]),
 
   // Company Drive permissions. Candidate document permissions remain scoped to
@@ -142,6 +143,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "projects.edit": new Set(["projects"]),
   "projects.delete": new Set(["projects"]),
   "projects.status": new Set(["projects"]),
+  "projects.assign": new Set(["settings"]),
 
   // Branches
   "branches.view": new Set(["branches"]),

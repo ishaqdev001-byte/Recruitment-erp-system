@@ -4,6 +4,7 @@ import {
   getProjectAccess,
   hasProjectPermission,
   listProjectAccounts,
+  resolveAssistantStaffSelection,
   resolveProjectHandlerSelection,
   parseProjectInput,
   projectToDatabase,
@@ -57,38 +58,24 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
         );
       }
 
-      const requestedStaffId = body.assistantStaffId ?? body.staffId;
-      const staffId =
-        requestedStaffId === null || requestedStaffId === ""
-          ? null
-          : typeof requestedStaffId === "string" &&
-              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-                requestedStaffId,
-              )
-            ? requestedStaffId
-            : undefined;
-      if (staffId === undefined) {
+      const requestedStaffValue =
+        "assistantStaffId" in body
+          ? body.assistantStaffId
+          : body.staffId;
+      const assistantAssignment = resolveAssistantStaffSelection(
+        requestedStaffValue,
+        assignmentContext,
+      );
+      if (!assistantAssignment) {
         return NextResponse.json(
-          { error: "Select an active staff member from this company." },
+          { error: "Select an eligible Assistant Staff member." },
           { status: 400, headers: responseHeaders },
         );
       }
 
-      if (staffId) {
-        const selectedStaff = assignmentContext.staff.find(
-          (staff) => staff.id === staffId && staff.status === "Active",
-        );
-        if (!selectedStaff) {
-          return NextResponse.json(
-            { error: "Select an active staff member from this company." },
-            { status: 400, headers: responseHeaders },
-          );
-        }
-      }
-
       const { data: updatedProject, error: assignmentError } = await access.supabase
         .from("projects")
-        .update({ assigned_staff_id: staffId })
+        .update(assistantAssignment)
         .eq("id", projectId)
         .eq("company_id", access.companyId)
         .select("*")

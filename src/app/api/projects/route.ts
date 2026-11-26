@@ -144,7 +144,9 @@ export async function GET(request: Request) {
     )
 
     const staffById = new Map(
-      assignmentContext.staff.map((staff) => [staff.id, staff]),
+      assignmentContext.staff
+        .filter((staff) => staff.kind === "staff")
+        .map((staff) => [staff.id.slice("staff:".length), staff]),
     )
 
     const accountOptions = canCreate
@@ -172,6 +174,8 @@ export async function GET(request: Request) {
           const assigned_staff_name =
             (project.assigned_staff_id &&
               staffById.get(project.assigned_staff_id)?.name) ||
+            (project.assigned_staff_user_id &&
+              handlerNameById.get(project.assigned_staff_user_id)) ||
             ""
 
           const can_assign_staff =
@@ -202,6 +206,8 @@ export async function GET(request: Request) {
             project_manager_name,
 
             assigned_staff_id: project.assigned_staff_id,
+
+            assigned_staff_user_id: project.assigned_staff_user_id,
 
             assigned_staff_name,
 

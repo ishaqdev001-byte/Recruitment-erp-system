@@ -6,6 +6,17 @@ export const runtime = "nodejs"
 
 const responseHeaders = { "Cache-Control": "private, no-store" }
 
+function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url || !key) return null
+
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+}
+
 export async function GET() {
   try {
     const cookieStore = await cookies()
@@ -55,14 +66,45 @@ export async function GET() {
       )
     }
 
-    // Fetch projects where user is assigned as Project Handler or Assistant Staff
+    const admin = createAdminClient()
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Assigned project lookup is unavailable on this server." },
+        { status: 503, headers: responseHeaders },
+      )
+    }
+
+    const { data: linkedStaff, error: staffError } = await admin
+      .from("company_staff_members")
+      .select("id")
+      .eq("company_id", membership.company_id)
+      .eq("linked_user_id", user.id)
+      .eq("status", "Active")
+
+    if (staffError) {
+      console.error("Failed to fetch linked staff assignment", staffError)
+      return NextResponse.json(
+        { error: "Unable to verify assigned staff projects." },
+        { status: 500, headers: responseHeaders },
+      )
+    }
+
+    const assignmentFilters = [
+      `project_manager_user_id.eq.${user.id}`,
+      `assigned_staff_user_id.eq.${user.id}`,
+    ]
+    const staffIds = (linkedStaff ?? []).map((staff) => staff.id)
+    if (staffIds.length) {
+      assignmentFilters.push(`assigned_staff_id.in.(${staffIds.join(",")})`)
+    }
+
     const { data: projects, error: projectsError } = await supabase
       .from("projects")
-      .select("id, project_name, project_manager_user_id, assigned_staff_id, status")
-      .eq("company_id", membership.company_id)
-      .or(
-        `project_manager_user_id.eq.${user.id},assigned_staff_id.eq.${user.id}`,
+      .select(
+        "id, project_name, project_manager_user_id, assigned_staff_id, assigned_staff_user_id, status",
       )
+      .eq("company_id", membership.company_id)
+      .or(assignmentFilters.join(","))
       .eq("status", "active")
       .order("project_name")
 

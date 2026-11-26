@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import AssignmentEligibilityManager from "./AssignmentEligibilityManager"
 
 export default function CaseHandlerSettings() {
   const [enabled, setEnabled] = useState(false)
@@ -188,6 +189,12 @@ export default function CaseHandlerSettings() {
           </p>
         )}
       </section>
+      <AssignmentEligibilityManager
+        key={enabled ? "enabled" : "disabled"}
+        type="case_handler"
+        title="Eligible case handlers"
+        description="Add active company members who should appear in the Pipeline Case Handler selector. People not on this list will not be offered for new assignments."
+      />
     </div>
   )
 }

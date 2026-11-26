@@ -7007,9 +7007,31 @@ function SettingsPage({
   const canManageWorkflows =
     isChairman || permissions.includes("workflows.manage")
 
+  const canManageCaseHandlers =
+    isChairman || permissions.includes("candidates.case_handler.assign")
+
+  const canManageAssistantStaff =
+    isChairman || permissions.includes("projects.assign")
+
+  const canViewGeneralSettings =
+    isChairman ||
+    permissions.some((permission) =>
+      [
+        "roles.manage",
+        "workflows.manage",
+        "expense_items.manage",
+        "staff.positions.manage",
+        "candidates.sources.manage",
+      ].includes(permission),
+    )
+
   const [settingsTab, setSettingsTab] =
     useState<"general" | "candidate-sources" | "departments" | "currencies" | "service-providers" | "expense-categories" | "expense-items" | "positions" | "workflows" | "case-handlers" | "assistant-staff" | "attendance">(
-      "general",
+      canViewGeneralSettings
+        ? "general"
+        : canManageCaseHandlers
+          ? "case-handlers"
+          : "assistant-staff",
     )
 
   const permissionRows = [
@@ -7025,38 +7047,31 @@ function SettingsPage({
   ]
 
   const tabs: { id: typeof settingsTab; label: string }[] = [
-    { id: "general", label: "General" },
-
-    { id: "candidate-sources", label: "Candidate Sources" },
-
-    { id: "departments", label: "Departments" },
-
-    { id: "currencies", label: "Currencies" },
-
-    { id: "service-providers", label: "Service Providers" },
-
-    { id: "expense-categories", label: "Expense Categories" },
-
-    ...(canManageItems
-      ? [{ id: "expense-items" as const, label: "Expense Items" }]
+    ...(canViewGeneralSettings
+      ? [
+          { id: "general" as const, label: "General" },
+          { id: "candidate-sources" as const, label: "Candidate Sources" },
+          { id: "departments" as const, label: "Departments" },
+          { id: "currencies" as const, label: "Currencies" },
+          { id: "service-providers" as const, label: "Service Providers" },
+          { id: "expense-categories" as const, label: "Expense Categories" },
+          ...(canManageItems
+            ? [{ id: "expense-items" as const, label: "Expense Items" }]
+            : []),
+          ...(isChairman || permissions.includes("staff.positions.manage")
+            ? [{ id: "positions" as const, label: "Positions" }]
+            : []),
+          ...(canManageWorkflows
+            ? [{ id: "workflows" as const, label: "Approval Workflows" }]
+            : []),
+        ]
       : []),
-
-    ...(isChairman || permissions.includes("staff.positions.manage")
-      ? [{ id: "positions" as const, label: "Positions" }]
-      : []),
-
-    ...(canManageWorkflows
-      ? [{ id: "workflows" as const, label: "Approval Workflows" }]
-      : []),
-
-    ...(isChairman
+    ...(canManageCaseHandlers
       ? [{ id: "case-handlers" as const, label: "Case Handlers" }]
       : []),
-
-    ...(isChairman
+    ...(canManageAssistantStaff
       ? [{ id: "assistant-staff" as const, label: "Assistant Staff" }]
       : []),
-
     ...(isChairman ? [{ id: "attendance" as const, label: "Attendance" }] : []),
   ]
 
@@ -7360,10 +7375,10 @@ function SettingsPage({
         {settingsTab === "workflows" && canManageWorkflows && (
           <ApprovalWorkflowsSettings />
         )}
-        {settingsTab === "case-handlers" && isChairman && (
+        {settingsTab === "case-handlers" && canManageCaseHandlers && (
           <CaseHandlerSettings />
         )}
-        {settingsTab === "assistant-staff" && isChairman && (
+        {settingsTab === "assistant-staff" && canManageAssistantStaff && (
           <AssistantStaffSettings />
         )}
         {settingsTab === "attendance" && isChairman && company?.id && (

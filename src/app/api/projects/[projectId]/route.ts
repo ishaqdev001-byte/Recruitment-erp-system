@@ -4,6 +4,7 @@ import {
   getProjectAccess,
   hasProjectPermission,
   listProjectAccounts,
+  resolveProjectHandlerSelection,
   parseProjectInput,
   projectToDatabase,
   resolveProjectSource,
@@ -174,7 +175,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
       return NextResponse.json({ error: "You do not have permission to change project status." }, { status: 403, headers: responseHeaders });
     }
 
-    let managerUpdate: { project_manager_user_id: string | null } | null = null;
+    let managerUpdate: {
+      project_manager_user_id: string | null;
+      project_handler_staff_id: string | null;
+    } | null = null;
     if ("projectHandlerId" in body || "projectManagerId" in body) {
       const assignmentContext = await getProjectAssignmentContext(access);
       const canAssignHandler =
@@ -187,34 +191,24 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
         );
       }
 
-      const requestedHandlerValue = body.projectHandlerId ?? body.projectManagerId;
-      const requestedHandlerId =
-        requestedHandlerValue === null ||
-        requestedHandlerValue === ""
-          ? ""
-          : typeof requestedHandlerValue === "string"
-            ? requestedHandlerValue
-            : undefined;
-      if (requestedHandlerId === undefined) {
+      const requestedHandlerValue =
+        "projectHandlerId" in body
+          ? body.projectHandlerId
+          : body.projectManagerId;
+      const handlerAssignment = resolveProjectHandlerSelection(
+        requestedHandlerValue,
+        assignmentContext,
+      );
+      if (!handlerAssignment) {
         return NextResponse.json(
-          { error: "Select an active company member as Project Handler." },
+          {
+            error:
+              "Select an active company member or staff member as Project Handler.",
+          },
           { status: 400, headers: responseHeaders },
         );
       }
-      if (
-        requestedHandlerId &&
-        !assignmentContext.handlers.some(
-          (handler) => handler.id === requestedHandlerId,
-        )
-      ) {
-        return NextResponse.json(
-          { error: "Select an active company member as Project Handler." },
-          { status: 400, headers: responseHeaders },
-        );
-      }
-      managerUpdate = {
-        project_manager_user_id: requestedHandlerId || null,
-      };
+      managerUpdate = handlerAssignment;
     }
 
     let branchId = current.branch_id;

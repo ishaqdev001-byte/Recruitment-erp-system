@@ -75,6 +75,7 @@ export async function GET() {
       { data: canCreate, error: createPermissionError },
       { data: canEdit, error: editPermissionError },
       { data: canDelete, error: deletePermissionError },
+      { data: canExport, error: exportPermissionError },
       { data: company, error: companyError },
     ] = await Promise.all([
       access.supabase.rpc("current_user_has_company_permission", {
@@ -93,6 +94,10 @@ export async function GET() {
         requested_company_id: access.companyId,
         requested_permission: "employers.delete",
       }),
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
+        requested_permission: "employers.export",
+      }),
       access.supabase
         .from("companies")
         .select("primary_admin_user_id")
@@ -104,9 +109,10 @@ export async function GET() {
       createPermissionError ||
       editPermissionError ||
       deletePermissionError ||
+      exportPermissionError ||
       companyError
     )
-      throw financePermissionError ?? createPermissionError ?? editPermissionError ?? deletePermissionError ?? companyError;
+      throw financePermissionError ?? createPermissionError ?? editPermissionError ?? deletePermissionError ?? exportPermissionError ?? companyError;
     const { contractorCounts } = await listProjectCounterpartyCounts(
       access.companyId,
     );
@@ -142,6 +148,7 @@ export async function GET() {
         canCreate: Boolean(canCreate),
         canEdit: Boolean(canEdit && company?.primary_admin_user_id === access.userId),
         canDelete: Boolean(canDelete),
+        canExport: Boolean(canExport),
       },
     }, { headers: responseHeaders });
   } catch (error) {

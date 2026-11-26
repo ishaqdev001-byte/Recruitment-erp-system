@@ -12,6 +12,7 @@ type ProjectRecord = {
   contractor_id: string | null;
   partner_id: string | null;
   project_manager_user_id: string | null;
+  project_handler_staff_id: string | null;
   project_manager_name: string;
   assigned_staff_id: string | null;
   assigned_staff_name: string;
@@ -74,7 +75,12 @@ type ProjectPermissions = {
 };
 type ProjectAccountOption = { id: string; name: string };
 type ProjectPartnerOption = { id: string; supplier_name: string };
-type ProjectHandlerOption = { id: string; name: string; position: string };
+type ProjectHandlerOption = {
+  id: string;
+  name: string;
+  position: string;
+  kind: "member" | "staff";
+};
 type ProjectStaffOption = { id: string; name: string; position: string; status: string };
 
 const initialForm = (): ProjectForm => ({
@@ -86,11 +92,21 @@ const defaultPermissions: ProjectPermissions = { canViewFull: false, canCreate: 
 const statusLabels: Record<ProjectStatus, string> = { active: "Active", inactive: "Inactive", cancelled: "Cancelled" };
 const fieldStyle = { background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" };
 
+function projectHandlerValue(project: ProjectRecord) {
+  if (project.project_handler_staff_id) {
+    return `staff:${project.project_handler_staff_id}`;
+  }
+  if (project.project_manager_user_id) {
+    return `member:${project.project_manager_user_id}`;
+  }
+  return "";
+}
+
 function formFromProject(project: ProjectRecord): ProjectForm {
   return {
     projectName: project.project_name,
     accountId: project.account_id,
-    projectHandlerId: project.project_manager_user_id ?? "",
+    projectHandlerId: projectHandlerValue(project),
     projectSourceType: project.project_source_type ?? "contractor",
     partnerId: project.partner_id ?? "",
     contractorName: project.contractor_name,
@@ -264,7 +280,7 @@ export default function Projects() {
           ...(permissions.canManageManagers &&
           (!editingProject ||
             form.projectHandlerId !==
-              (editingProject.project_manager_user_id ?? ""))
+              projectHandlerValue(editingProject))
             ? { projectHandlerId: form.projectHandlerId || null }
             : {}),
           contractorId: matchingContractor?.id ?? null,
@@ -479,12 +495,12 @@ export default function Projects() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project name<input required maxLength={200} value={form.projectName} onChange={(event) => setForm((current) => ({ ...current, projectName: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             {!editingProject && <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project account<select required value={form.accountId} onChange={(event) => setForm((current) => ({ ...current, accountId: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle}><option value="">Select an active account</option>{accountOptions.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select>{accountOptions.length === 0 && <span className="mt-1 block normal-case tracking-normal text-amber-500">No active account is available for your branch. Ask an administrator to configure one.</span>}</label>}
-            {permissions.canManageManagers && <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project Handler (optional)<SearchableSelect disabled={handlerOptions.length === 0} ariaLabel="Search and optionally select a Project Handler from active company members" value={form.projectHandlerId} onChange={(projectHandlerId) => setForm((current) => ({ ...current, projectHandlerId }))} options={handlerOptions.map((handler) => ({ value: handler.id, label: handler.name, description: handler.position }))} placeholder={handlerOptions.length ? "Optional — search at least 2 characters" : "No active company members"} minQueryLength={2} matchMode="prefix" preserveValueOnInput className="mt-1 normal-case tracking-normal" />{handlerOptions.length === 0 && <span className="mt-1 block normal-case tracking-normal text-amber-500">Add an active company member before assigning a Project Handler.</span>}</label>}
+            {permissions.canManageManagers && <label className="relative block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project Handler (optional)<SearchableSelect disabled={handlerOptions.length === 0} ariaLabel="Search and optionally select a Project Handler from active company members and staff" value={form.projectHandlerId} onChange={(projectHandlerId) => setForm((current) => ({ ...current, projectHandlerId }))} options={handlerOptions.map((handler) => ({ value: handler.id, label: handler.name, description: `${handler.kind === "staff" ? "Unlinked staff" : "Company member"} · ${handler.position}` }))} placeholder={handlerOptions.length ? "Search active members and staff" : "No active members or staff"} minQueryLength={2} matchMode="contains" inlineOptions className="mt-1 normal-case tracking-normal" />{handlerOptions.length === 0 ? <span className="mt-1 block normal-case tracking-normal text-amber-500">Add an active company member or staff record before assigning a Project Handler.</span> : handlerOptions.some((handler) => handler.kind === "staff") && <span className="mt-1 block normal-case tracking-normal">Unlinked staff will not receive workspace notifications or tasks.</span>}</label>}
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Project source<select required disabled={Boolean(editingProject && !permissions.canViewFull)} value={form.projectSourceType} onChange={(event) => { const projectSourceType = event.target.value as ProjectSourceType; setForm((current) => ({ ...current, projectSourceType, partnerId: "", contractorName: "", contractorServiceCharge: projectSourceType === "contractor" ? "" : "0", partnerServiceCharge: projectSourceType === "partner" ? "" : "0" })); }} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none disabled:opacity-60" style={fieldStyle}><option value="" disabled>Select a project source</option><option value="contractor">From a contractor</option><option value="partner">From a partner</option></select>{editingProject && !permissions.canViewFull && <span className="mt-1 block normal-case tracking-normal">Only users with full project access can change the source or service charge.</span>}</label>
             {form.projectSourceType === "contractor" ? (
-              <label className="relative z-20 block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Contractor name<SearchableSelect required ariaLabel="Select a registered contractor" value={form.contractorName} onChange={(contractorName) => setForm((current) => ({ ...current, contractorName }))} options={contractors.map((contractor) => ({ value: contractor.company_name, label: contractor.company_name }))} placeholder={contractors.length ? "Search registered contractors" : "No contractors registered"} className="z-50 mt-1 normal-case tracking-normal" /></label>
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Contractor name<SearchableSelect required ariaLabel="Select a registered contractor" value={form.contractorName} onChange={(contractorName) => setForm((current) => ({ ...current, contractorName }))} options={contractors.map((contractor) => ({ value: contractor.company_name, label: contractor.company_name }))} placeholder={contractors.length ? "Search registered contractors" : "No contractors registered"} inlineOptions className="mt-1 normal-case tracking-normal" /></label>
             ) : (
-              <label className="relative z-20 block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Partner name<SearchableSelect required ariaLabel="Select an active partner" value={form.partnerId} onChange={(partnerId) => { const partner = partners.find((option) => option.id === partnerId); setForm((current) => ({ ...current, partnerId, contractorName: partner?.supplier_name ?? current.contractorName })); }} options={partnerOptions} placeholder={partnerOptions.length ? "Search registered partners" : "No active partners registered"} className="z-50 mt-1 normal-case tracking-normal" />{!partners.length && <span className="mt-1 block normal-case tracking-normal text-amber-500">Register an active partner in the Partners module first.</span>}</label>
+              <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Partner name<SearchableSelect required ariaLabel="Select an active partner" value={form.partnerId} onChange={(partnerId) => { const partner = partners.find((option) => option.id === partnerId); setForm((current) => ({ ...current, partnerId, contractorName: partner?.supplier_name ?? current.contractorName })); }} options={partnerOptions} placeholder={partnerOptions.length ? "Search registered partners" : "No active partners registered"} inlineOptions className="mt-1 normal-case tracking-normal" />{!partners.length && <span className="mt-1 block normal-case tracking-normal text-amber-500">Register an active partner in the Partners module first.</span>}</label>
             )}
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Country of deployment<input required maxLength={200} value={form.country} onChange={(event) => setForm((current) => ({ ...current, country: event.target.value }))} className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>
             <label className="block text-xs font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Salary range<input required maxLength={200} value={form.salaryRange} onChange={(event) => setForm((current) => ({ ...current, salaryRange: event.target.value }))} placeholder="e.g. UGX 1,000,000 - 1,500,000" className="mt-1 w-full border px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none" style={fieldStyle} /></label>

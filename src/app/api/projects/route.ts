@@ -6,6 +6,7 @@ import {
   hasProjectPermission,
   listProjectAccounts,
   listProjectCounterparties,
+  resolveProjectHandlerSelection,
   projectToDatabase,
   parseProjectInput,
   resolveProjectSource,
@@ -112,6 +113,8 @@ export async function GET() {
           const project_manager_name =
             (project.project_manager_user_id &&
               handlerNameById.get(project.project_manager_user_id)) ||
+            (project.project_handler_staff_id &&
+              staffById.get(project.project_handler_staff_id)?.name) ||
             ""
 
           const assigned_staff_name =
@@ -141,6 +144,8 @@ export async function GET() {
             project_name: project.project_name,
 
             project_manager_user_id: project.project_manager_user_id,
+
+            project_handler_staff_id: project.project_handler_staff_id,
 
             project_manager_name,
 
@@ -192,17 +197,28 @@ export async function GET() {
 
         projectHandlerOptions:
           (assignmentContext.isChairman || canAssign) && (canCreate || canEdit)
-          ? assignmentContext.handlers
+          ? [
+              ...assignmentContext.handlers.map(({ id, name, position }) => ({
+                id: `member:${id}`,
+                name,
+                position,
+                kind: "member" as const,
+              })),
+              ...assignmentContext.staffHandlers.map(
+                ({ id, name, position }) => ({
+                  id: `staff:${id}`,
+                  name,
+                  position,
+                  kind: "staff" as const,
+                }),
+              ),
+            ]
           : [],
 
         staffOptions:
           assignmentContext.assistantStaffEnabled &&
           (assignmentContext.isChairman || canAssign)
             ? assignmentContext.staff
-
-                .filter((staff) => staff.status === "Active")
-
-                .map(({ id, name, position, status }) => ({ id, name, position, status }))
             : [],
 
         assistantStaffEnabled: assignmentContext.assistantStaffEnabled,
@@ -274,8 +290,8 @@ export async function POST(request: Request) {
         { status: 400, headers: responseHeaders },
       )
 
-    const requestedHandlerProperty = body && (
-      "projectHandlerId" in body || "projectManagerId" in body
+    const requestedHandlerProperty = Boolean(
+      body && ("projectHandlerId" in body || "projectManagerId" in body),
     )
     const canAssignHandler =
       assignmentContext.isChairman ||
@@ -289,22 +305,23 @@ export async function POST(request: Request) {
       )
     }
 
-    const requestedHandlerId =
-      typeof body?.projectHandlerId === "string"
+    const requestedHandlerValue =
+      body && "projectHandlerId" in body
         ? body.projectHandlerId
-        : typeof body?.projectManagerId === "string"
-          ? body.projectManagerId
-          : ""
+        : body?.projectManagerId
+    const handlerAssignment = requestedHandlerProperty
+      ? resolveProjectHandlerSelection(requestedHandlerValue, assignmentContext)
+      : {
+          project_manager_user_id: null,
+          project_handler_staff_id: null,
+        }
 
-    if (
-      requestedHandlerId &&
-      !assignmentContext.handlers.some(
-        (handler) => handler.id === requestedHandlerId,
-      )
-    ) {
+    if (!handlerAssignment) {
       return NextResponse.json(
-        { error: "Select an active company member as Project Handler." },
-
+        {
+          error:
+            "Select an active company member or staff member as Project Handler.",
+        },
         { status: 400, headers: responseHeaders },
       )
     }
@@ -329,7 +346,7 @@ export async function POST(request: Request) {
 
         created_by: access.userId,
 
-        project_manager_user_id: requestedHandlerId || null,
+        ...handlerAssignment,
       })
       .select("*")
       .single()

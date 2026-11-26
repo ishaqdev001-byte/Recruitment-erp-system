@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, Eye, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, Eye, FileSpreadsheet, FileText, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { matchesSearch } from "@/lib/search";
+import { exportToExcel, exportToPdf } from "@/lib/export-utils";
 
 type Employer = {
   id: string;
@@ -36,7 +37,9 @@ export default function Employers() {
   const [canCreate, setCanCreate] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
   const [canDelete, setCanDelete] = useState(false);
+  const [canExport, setCanExport] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState<"excel" | "pdf" | null>(null);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -47,7 +50,7 @@ export default function Employers() {
       setError("");
       try {
         const response = await fetch("/api/employers", { cache: "no-store" });
-        const payload = await response.json() as { employers?: Employer[]; permissions?: { canViewFinance?: boolean; canCreate?: boolean; canEdit?: boolean; canDelete?: boolean }; error?: string };
+        const payload = await response.json() as { employers?: Employer[]; permissions?: { canViewFinance?: boolean; canCreate?: boolean; canEdit?: boolean; canDelete?: boolean; canExport?: boolean }; error?: string };
         if (!response.ok) throw new Error(payload.error ?? "Unable to load company contractors.");
         if (!cancelled) {
           setEmployers(payload.employers ?? []);
@@ -55,6 +58,7 @@ export default function Employers() {
           setCanCreate(Boolean(payload.permissions?.canCreate));
           setCanEdit(Boolean(payload.permissions?.canEdit));
           setCanDelete(Boolean(payload.permissions?.canDelete));
+          setCanExport(Boolean(payload.permissions?.canExport));
         }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load company contractors.");
@@ -152,6 +156,43 @@ export default function Employers() {
     }
   };
 
+  const exportContractors = async (format: "excel" | "pdf") => {
+    if (!canExport) return;
+    setExporting(format);
+    setError("");
+
+    try {
+      const headers = ["Contractor Name", "Contact Persons", "Phone Numbers", "Email Addresses", "Countries"];
+      const rows = filtered.map((contractor) => [
+        contractor.company_name,
+        contractor.contact_persons.join("; ") || "—",
+        contractor.phone_numbers.join("; ") || "—",
+        contractor.email_addresses.join("; ") || "—",
+        contractor.countries.join("; ") || "—",
+      ]);
+
+      const exportConfig = {
+        tableName: "Contractors",
+        fileName: "contractors",
+        headers,
+        rows,
+        companyName: "Recruitment Company",
+        filterSummary: search.trim() ? `Search: ${search.trim()}` : "No filters",
+        exportedByName: "Workspace User",
+      };
+
+      if (format === "excel") {
+        await exportToExcel(exportConfig as any);
+      } else {
+        await exportToPdf(exportConfig as any);
+      }
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : "Unable to export contractors.");
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const openNewEmployer = () => {
     setEditingEmployerId(null);
     setForm(emptyForm());
@@ -234,6 +275,16 @@ export default function Employers() {
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3">
             <label className="flex items-center gap-2 rounded border px-3" style={{ background: "var(--card)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search employers" type="search" placeholder="Search employers" value={search} onChange={(e) => setSearch(e.target.value)} className="w-52 bg-transparent py-1.5 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
+            {canExport && <>
+              <button type="button" onClick={() => void exportContractors("excel")} disabled={filtered.length === 0 || exporting !== null} className="inline-flex items-center gap-2 border px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                {exporting === "excel" ? <Loader2 className="animate-spin" size={14} aria-hidden="true" /> : <FileSpreadsheet size={14} aria-hidden="true" />}
+                {exporting === "excel" ? "Preparing…" : "Export"}
+              </button>
+              <button type="button" onClick={() => void exportContractors("pdf")} disabled={filtered.length === 0 || exporting !== null} className="inline-flex items-center gap-2 border px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>
+                {exporting === "pdf" ? <Loader2 className="animate-spin" size={14} aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
+                {exporting === "pdf" ? "Preparing…" : "PDF"}
+              </button>
+            </>}
             {canCreate && (
               <button type="button" onClick={openNewEmployer} className="inline-flex items-center gap-2 rounded px-4 py-1.5 text-sm font-600" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
                 <Plus size={16} aria-hidden="true" /> Add contractor

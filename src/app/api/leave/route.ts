@@ -53,14 +53,25 @@ export async function GET() {
       hasWorkforcePermission(access, "leave.manage"),
     ])
 
-    const { data: canFinalize } = await access.supabase.rpc(
-      "current_user_has_company_permission",
-      {
-        requested_company_id: access.companyId,
+    const [{ data: canFinalize }, { data: canExport }] = await Promise.all([
+      access.supabase.rpc(
+        "current_user_has_company_permission",
+        {
+          requested_company_id: access.companyId,
 
-        requested_permission: "leave.finalize",
-      },
-    )
+          requested_permission: "leave.finalize",
+        },
+      ),
+
+      access.supabase.rpc(
+        "current_user_has_company_permission",
+        {
+          requested_company_id: access.companyId,
+
+          requested_permission: "leave.export",
+        },
+      ),
+    ])
 
     if (!canViewTeam && !canCreate && !canManage) {
       return NextResponse.json(
@@ -251,6 +262,8 @@ export async function GET() {
           canManage,
 
           canFinalize: Boolean(canFinalize),
+
+          canExport: Boolean(canExport),
         },
       },
       { headers: responseHeaders },

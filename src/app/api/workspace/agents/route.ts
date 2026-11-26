@@ -187,6 +187,8 @@ async function getAccess() {
     { data: viewUsers, error: viewError },
 
     { data: viewCandidates, error: viewCandidatesError },
+
+    { data: exportAgents, error: exportError },
   ] = await Promise.all([
     supabase
 
@@ -215,6 +217,12 @@ async function getAccess() {
 
       requested_permission: "candidates.view",
     }),
+
+    supabase.rpc("current_user_has_company_permission", {
+      requested_company_id: membership.company_id,
+
+      requested_permission: "agents.export",
+    }),
   ])
 
   if (
@@ -222,6 +230,7 @@ async function getAccess() {
     manageError ||
     viewError ||
     viewCandidatesError ||
+    exportError ||
     !company
   ) {
     return { error: "Unable to verify agent access.", status: 503 as const }
@@ -294,6 +303,8 @@ async function getAccess() {
     canManage,
 
     canViewCandidates: isPrimaryAdmin || Boolean(viewCandidates),
+
+    canExport: isPrimaryAdmin || Boolean(exportAgents),
 
     canResetPasswords: isPrimaryAdmin,
   }
@@ -390,6 +401,8 @@ export async function GET() {
         canManageAgents: access.canManage,
 
         canViewCandidates: access.canViewCandidates,
+
+        canExport: access.canExport,
 
         canResetPasswords: access.canResetPasswords,
       },

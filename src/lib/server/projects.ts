@@ -53,7 +53,56 @@ export type ProjectAssignmentContext = {
 
   handlers: ProjectHandlerOption[]
 
+  staffHandlers: ProjectHandlerOption[]
+
   staff: ProjectStaffOption[]
+}
+
+export type ProjectHandlerAssignment = {
+  project_manager_user_id: string | null
+  project_handler_staff_id: string | null
+}
+
+export function resolveProjectHandlerSelection(
+  value: unknown,
+  context: ProjectAssignmentContext,
+): ProjectHandlerAssignment | null {
+  if (value === null || value === "") {
+    return {
+      project_manager_user_id: null,
+      project_handler_staff_id: null,
+    }
+  }
+
+  if (typeof value !== "string") return null
+
+  const separator = value.indexOf(":")
+  const kind = separator === -1 ? "member" : value.slice(0, separator)
+  const id = separator === -1 ? value : value.slice(separator + 1)
+
+  if (!id) return null
+
+  if (
+    kind === "member" &&
+    context.handlers.some((handler) => handler.id === id)
+  ) {
+    return {
+      project_manager_user_id: id,
+      project_handler_staff_id: null,
+    }
+  }
+
+  if (
+    kind === "staff" &&
+    context.staffHandlers.some((staff) => staff.id === id)
+  ) {
+    return {
+      project_manager_user_id: null,
+      project_handler_staff_id: id,
+    }
+  }
+
+  return null
 }
 
 function createAdminClient() {
@@ -313,6 +362,8 @@ export async function getProjectAssignmentContext(
 
       .eq("company_id", access.companyId)
 
+      .eq("status", "Active")
+
       .order("name"),
   ])
 
@@ -367,6 +418,21 @@ export async function getProjectAssignmentContext(
     })
     .sort((left, right) => left.name.localeCompare(right.name))
 
+  const assistantStaff = (staff ?? []).map((record) => ({
+    id: record.id,
+    name: record.name,
+    position: record.position ?? "",
+    status: record.status,
+  }))
+
+  const staffHandlers = (staff ?? [])
+    .filter((record) => !record.linked_user_id)
+    .map((record) => ({
+      id: record.id,
+      name: record.name,
+      position: record.position ?? "",
+    }))
+
   return {
     isChairman: company.primary_admin_user_id === access.userId,
 
@@ -374,22 +440,9 @@ export async function getProjectAssignmentContext(
 
     handlers,
 
-    staff: (staff ?? [])
-      .filter(
-        (record) =>
-          record.status === "Active" &&
-          Boolean(record.linked_user_id) &&
-          memberIds.includes(record.linked_user_id ?? ""),
-      )
-      .map((record) => ({
-      id: record.id,
+    staffHandlers,
 
-      name: record.name,
-
-      position: record.position,
-
-      status: record.status,
-      })),
+    staff: assistantStaff,
   }
 }
 

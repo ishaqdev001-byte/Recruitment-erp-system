@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { FileCheck2, Plane, TriangleAlert, UserRound, UserRoundX, UsersRound } from "lucide-react";
 import type { View, WorkspaceRole } from "../App";
+import AssignedProjectsWidget from "./AssignedProjectsWidget";
 
 // SVG donut chart
 function DonutChart({ segments }: { segments: { value: number; color: string; label: string }[] }) {
@@ -423,6 +424,8 @@ export default function Dashboard({ role, onNavigate }: { role: WorkspaceRole; o
               </div>
             ))}
           </div>
+
+          <AssignedProjectsWidget />
         </div>
       </div>
     </div>

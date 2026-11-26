@@ -64,6 +64,7 @@ type AgentPayload = {
   branches?: BranchRecord[]
   canManageAgents?: boolean
   canViewCandidates?: boolean
+  canExport?: boolean
   canResetPasswords?: boolean
   error?: string
 }
@@ -155,6 +156,7 @@ export default function Agents({
   const [resettingAgent, setResettingAgent] = useState<AgentRecord | null>(null)
   const [canManageAgents, setCanManageAgents] = useState(false)
   const [canViewCandidates, setCanViewCandidates] = useState(false)
+  const [canExport, setCanExport] = useState(false)
   const [canResetPasswords, setCanResetPasswords] = useState(false)
   const [createLogin, setCreateLogin] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
@@ -202,6 +204,7 @@ export default function Agents({
         setBranches(agentsPayload.branches ?? [])
         setCanManageAgents(agentsPayload.canManageAgents === true)
         setCanViewCandidates(agentsPayload.canViewCandidates === true)
+        setCanExport(agentsPayload.canExport === true)
         setCanResetPasswords(agentsPayload.canResetPasswords === true)
         setCandidates(candidateRows)
       } catch (loadError) {
@@ -276,6 +279,7 @@ export default function Agents({
     : null
 
   const exportAgents = async (format: "excel" | "pdf") => {
+    if (!canExport) return
     setExporting(format)
     setExportError("")
 
@@ -1325,7 +1329,7 @@ export default function Agents({
           <button
             type="button"
             onClick={() => void exportAgents("excel")}
-            disabled={loading || filtered.length === 0 || Boolean(exporting)}
+            disabled={loading || filtered.length === 0 || Boolean(exporting) || !canExport}
             className="inline-flex items-center gap-2 border px-3 py-2 text-sm font-600 disabled:opacity-50"
             style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
           >
@@ -1339,7 +1343,7 @@ export default function Agents({
           <button
             type="button"
             onClick={() => void exportAgents("pdf")}
-            disabled={loading || filtered.length === 0 || Boolean(exporting)}
+            disabled={loading || filtered.length === 0 || Boolean(exporting) || !canExport}
             className="inline-flex items-center gap-2 border px-3 py-2 text-sm font-600 disabled:opacity-50"
             style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
           >

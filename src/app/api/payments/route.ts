@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getInvoiceAccess } from "@/lib/server/invoices";
 import {
-  loadPayableVendors,
   loadPaymentLedger,
 } from "@/lib/server/payment-ledger";
 
@@ -15,7 +14,7 @@ export async function GET() {
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers: responseHeaders });
 
     const [
-      { transactions, projects, payableInvoices },
+      { transactions, projects },
       { data: canRecord, error: recordPermissionError },
       { data: canDelete, error: deletePermissionError },
     ] = await Promise.all([
@@ -33,8 +32,6 @@ export async function GET() {
       throw recordPermissionError ?? deletePermissionError;
     }
 
-    const payableVendors = canRecord ? await loadPayableVendors(access) : [];
-
     let candidates: { candidate_id: string; file_number: string; candidate_name: string }[] = [];
     if (canRecord) {
       const { data, error } = await access.supabase.rpc("list_finance_candidates", { requested_company_id: access.companyId });
@@ -50,8 +47,6 @@ export async function GET() {
       transactions,
       projects,
       candidates,
-      payableInvoices,
-      payableVendors,
       permissions: { canRecord: Boolean(canRecord), canDelete: Boolean(canDelete) },
       totals: {
         totalReceived: transactions.filter((transaction) => transaction.direction === "credit").reduce((sum, transaction) => sum + transaction.amount, 0),

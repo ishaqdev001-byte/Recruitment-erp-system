@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowDownToLine, ArrowLeft, Eye, FilePlus2, Search, X } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
+import PayableInvoicesWorkspace from "./PayableInvoicesWorkspace";
 import { matchesSearch } from "@/lib/search";
 
 type InvoiceStatus = "draft" | "sent" | "partially_paid" | "paid" | "overdue";
@@ -45,6 +46,7 @@ const money = (amount: number) => `UGX ${amount.toLocaleString("en-UG", { minimu
 const dateLabel = (value: string) => new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
 export default function InvoiceWorkspace() {
+  const [activePage, setActivePage] = useState<"current" | "payable">("current");
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
@@ -208,10 +210,22 @@ export default function InvoiceWorkspace() {
   return (
     <section className="flex h-full min-h-0 flex-col" aria-labelledby="invoices-title">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4" style={{ borderColor: "var(--border)" }}>
-        <div><h1 id="invoices-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Invoices</h1><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Employer billing and invoice tracking</p></div>
-        <button type="button" onClick={() => { resetCreateForm(); setError(""); setShowCreate(true); }} disabled={!canCreate || loading} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><FilePlus2 size={16} aria-hidden="true" />Create invoice</button>
+        <div><h1 id="invoices-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Invoices</h1><p className="mt-1 text-sm" style={{ color: "var(--muted-foreground)" }}>Candidate and employer billing with a separate provider-payables page</p></div>
+        {activePage === "current" && <button type="button" onClick={() => { resetCreateForm(); setError(""); setShowCreate(true); }} disabled={!canCreate || loading} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}><FilePlus2 size={16} aria-hidden="true" />Create invoice</button>}
       </header>
 
+      <div role="tablist" aria-label="Invoice pages" className="flex gap-1 border-b px-6" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
+        {[
+          { value: "current", label: "Current Invoices" },
+          { value: "payable", label: "Payable Invoices" },
+        ].map((tab) => (
+          <button key={tab.value} type="button" role="tab" aria-selected={activePage === tab.value} onClick={() => setActivePage(tab.value as "current" | "payable")} className="shrink-0 border-b-2 px-4 py-3 text-sm font-600" style={{ borderColor: activePage === tab.value ? "var(--primary)" : "transparent", color: activePage === tab.value ? "var(--primary)" : "var(--muted-foreground)" }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activePage === "payable" ? <PayableInvoicesWorkspace /> : <>
       <div className="grid grid-cols-2 border-b sm:grid-cols-4" style={{ borderColor: "var(--border)" }}>
         {[
           { label: "Total invoiced", value: money(totalInvoiced), color: "var(--foreground)" },
@@ -301,6 +315,7 @@ export default function InvoiceWorkspace() {
           <div className="flex gap-3"><button type="submit" disabled={saving || !paymentAmount || !paymentAccountId || Number(paymentAmount) > paymentInvoice.balance_due} className="flex-1 py-2 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Saving…" : "Save payment"}</button><button type="button" onClick={() => { setShowPayment(false); setPaymentInvoiceId(null); }} className="flex-1 border py-2 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Cancel</button></div>
         </form>
       </div>}
+      </>}
     </section>
   );
 }

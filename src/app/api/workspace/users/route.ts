@@ -1170,6 +1170,155 @@ export async function POST(request: Request) {
         { status: 503, headers: responseHeaders },
       )
 
+    if (body.action === "grant-linked-staff-access") {
+      if (!access.isPrimaryAdmin) {
+        return NextResponse.json(
+          { error: "Only the Chairman can grant company access to linked staff accounts." },
+          { status: 403, headers: responseHeaders },
+        )
+      }
+
+      const staffId =
+        typeof body.staffId === "string" ? body.staffId.trim() : ""
+      const roleId =
+        typeof body.roleId === "string" ? body.roleId.trim() : ""
+      const uuidPattern =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+      if (!uuidPattern.test(staffId) || !uuidPattern.test(roleId)) {
+        return NextResponse.json(
+          { error: "Choose an active linked staff member and a company role." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const { data: staff, error: staffError } = await admin
+        .from("company_staff_members")
+        .select("id, name, branch_id, status, linked_user_id")
+        .eq("company_id", access.companyId)
+        .eq("id", staffId)
+        .maybeSingle()
+
+      if (staffError) {
+        console.error("Linked staff access lookup failed", staffError)
+        throw staffError
+      }
+
+      if (
+        !staff ||
+        staff.status.trim().toLocaleLowerCase() !== "active" ||
+        !staff.linked_user_id
+      ) {
+        return NextResponse.json(
+          { error: "Choose an active staff record linked to an existing account." },
+          { status: 409, headers: responseHeaders },
+        )
+      }
+
+      const [
+        { data: existingMembership, error: membershipError },
+        { data: role, error: roleError },
+        { data: branches, error: branchError },
+        { data: linkedStaffRecords, error: linkedStaffError },
+      ] = await Promise.all([
+        admin
+          .from("company_memberships")
+          .select("user_id, status")
+          .eq("company_id", access.companyId)
+          .eq("user_id", staff.linked_user_id)
+          .maybeSingle(),
+        admin
+          .from("company_roles")
+          .select("id, name")
+          .eq("company_id", access.companyId)
+          .eq("id", roleId)
+          .maybeSingle(),
+        admin
+          .from("company_branches")
+          .select("id, is_main_branch, name")
+          .eq("company_id", access.companyId)
+          .eq("status", "active")
+          .order("is_main_branch", { ascending: false })
+          .order("name"),
+        admin
+          .from("company_staff_members")
+          .select("id")
+          .eq("company_id", access.companyId)
+          .eq("linked_user_id", staff.linked_user_id),
+      ])
+
+      if (membershipError || roleError || branchError || linkedStaffError) {
+        console.error(
+          "Linked staff access validation failed",
+          membershipError ?? roleError ?? branchError ?? linkedStaffError,
+        )
+        throw membershipError ?? roleError ?? branchError ?? linkedStaffError
+      }
+
+      if (existingMembership) {
+        return NextResponse.json(
+          { error: "This account already has a company membership. Manage its access from Users & Roles." },
+          { status: 409, headers: responseHeaders },
+        )
+      }
+
+      if (
+        linkedStaffRecords?.length !== 1 ||
+        linkedStaffRecords[0]?.id !== staff.id
+      ) {
+        return NextResponse.json(
+          { error: "This account is linked to multiple or changed staff records. Resolve the roster links before granting access." },
+          { status: 409, headers: responseHeaders },
+        )
+      }
+
+      if (!role || isPrimaryAdministratorRole(role.name)) {
+        return NextResponse.json(
+          { error: "Choose an eligible role from this company." },
+          { status: 400, headers: responseHeaders },
+        )
+      }
+
+      const branchId =
+        branches.find((branch) => branch.id === staff.branch_id)?.id ??
+        branches.find((branch) => branch.is_main_branch)?.id ??
+        branches[0]?.id
+
+      if (!branchId) {
+        return NextResponse.json(
+          { error: "Configure an active company branch before granting staff access." },
+          { status: 409, headers: responseHeaders },
+        )
+      }
+
+      const { error: insertError } = await admin
+        .from("company_memberships")
+        .insert({
+          company_id: access.companyId,
+          user_id: staff.linked_user_id,
+          role_id: role.id,
+          branch_id: branchId,
+          status: "active",
+        })
+
+      if (insertError?.code === "23505") {
+        return NextResponse.json(
+          { error: "This staff account was just added to the company. Refresh Users & Roles." },
+          { status: 409, headers: responseHeaders },
+        )
+      }
+
+      if (insertError) {
+        console.error("Linked staff company membership creation failed", insertError)
+        throw insertError
+      }
+
+      return NextResponse.json(
+        { success: true, staffName: staff.name, roleName: role.name },
+        { headers: responseHeaders },
+      )
+    }
+
     if (body.action === "link-agent-account") {
       const agentId = typeof body.agentId === "string" ? body.agentId : ""
 

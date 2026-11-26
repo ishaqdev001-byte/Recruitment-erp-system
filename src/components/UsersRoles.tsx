@@ -236,6 +236,8 @@ type WorkspaceData = {
 
   canManageRoles: boolean
 
+  canEditAgentDetails?: boolean
+
   branches?: BranchOption[]
 }
 
@@ -939,6 +941,13 @@ export default function UsersRoles({
 
   const [userActionPending, setUserActionPending] = useState("")
 
+  const [grantingStaffMembershipId, setGrantingStaffMembershipId] =
+    useState("")
+
+  const [linkedStaffRoleIds, setLinkedStaffRoleIds] = useState<
+    Record<string, string>
+  >({})
+
   const [error, setError] = useState("")
 
   const [notice, setNotice] = useState("")
@@ -992,6 +1001,8 @@ export default function UsersRoles({
             rolePermissions: result.rolePermissions ?? [],
 
             canManageRoles: Boolean(result.canManageRoles),
+
+            canEditAgentDetails: Boolean(result.canEditAgentDetails),
           })
 
           setSelectedRoleId((current) => current || result.roles[0]?.id || "")
@@ -2129,6 +2140,69 @@ export default function UsersRoles({
       )
     } finally {
       setSaving(false)
+    }
+  }
+
+  const staffWithoutCompanyMembership = staffMembers.filter(
+    (staff) =>
+      staff.status.trim().toLocaleLowerCase() === "active" &&
+      Boolean(staff.linkedUserId) &&
+      !data.users.some((user) => user.id === staff.linkedUserId),
+  )
+
+  const eligibleMembershipRoles = data.roles.filter(
+    (role) => !isPrimaryAdministratorRole(role.name),
+  )
+
+  const grantCompanyAccessToLinkedStaff = async (staff: StaffRecord) => {
+    const roleId = linkedStaffRoleIds[staff.id] ?? ""
+
+    if (!roleId) {
+      setError(`Choose a company role for ${staff.name} before granting access.`)
+      return
+    }
+
+    setGrantingStaffMembershipId(staff.id)
+    setError("")
+    setNotice("")
+
+    try {
+      const response = await fetch("/api/workspace/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "grant-linked-staff-access",
+          staffId: staff.id,
+          roleId,
+        }),
+      })
+
+      const result = await readRoleMutationResponse<{
+        success?: boolean
+        staffName?: string
+        roleName?: string
+        error?: string
+      }>(response, `grant company access to ${staff.name}`)
+
+      if (!response.ok)
+        throw new Error(result.error ?? "Unable to grant company access.")
+
+      if (!result.success)
+        throw new Error("The server did not confirm the membership update.")
+
+      setLinkedStaffRoleIds((current) => ({ ...current, [staff.id]: "" }))
+      setNotice(
+        `${result.staffName ?? staff.name} now has immediate company access as ${result.roleName ?? "a company member"}.`,
+      )
+      setReloadKey((key) => key + 1)
+    } catch (grantError) {
+      setError(
+        grantError instanceof Error
+          ? grantError.message
+          : "Unable to grant company access.",
+      )
+    } finally {
+      setGrantingStaffMembershipId("")
     }
   }
 
@@ -3380,6 +3454,20 @@ export default function UsersRoles({
                 </form>
               )}
 
+              {data.canEditAgentDetails &&
+                staffWithoutCompanyMembership.length > 0 && (
+                  <div
+                    className="mb-4 rounded border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    {staffWithoutCompanyMembership.length} active staff
+                    account{staffWithoutCompanyMembership.length === 1 ? "" : "s"}{" "}
+                    are linked to login accounts but do not have company access.
+                    Choose a role in the Linked user column to grant access
+                    immediately.
+                  </div>
+                )}
+
               <div className="overflow-x-auto">
                 <div className="app-table-scroll">
                   <table className="w-full min-w-225 text-sm">
@@ -3532,7 +3620,74 @@ export default function UsersRoles({
                           >
                             {data.users.find(
                               (user) => user.id === member.linkedUserId,
-                            )?.email ?? "Not linked"}
+                            )?.email ??
+                              (member.linkedUserId ? (
+                                <div className="space-y-2">
+                                  <span>
+                                    Linked account has no company membership
+                                  </span>
+                                  {data.canEditAgentDetails &&
+                                    staffWithoutCompanyMembership.some(
+                                      (staff) => staff.id === member.id,
+                                    ) && (
+                                      <div className="flex flex-col gap-2">
+                                        <select
+                                          aria-label={`Role for ${member.name}`}
+                                          value={
+                                            linkedStaffRoleIds[member.id] ?? ""
+                                          }
+                                          onChange={(event) =>
+                                            setLinkedStaffRoleIds((current) => ({
+                                              ...current,
+                                              [member.id]: event.target.value,
+                                            }))
+                                          }
+                                          disabled={Boolean(
+                                            grantingStaffMembershipId,
+                                          )}
+                                          className="w-full rounded border px-2 py-1.5 text-xs"
+                                          style={fieldStyle}
+                                        >
+                                          <option value="">Choose a role</option>
+                                          {eligibleMembershipRoles.map(
+                                            (role) => (
+                                              <option
+                                                key={role.id}
+                                                value={role.id}
+                                              >
+                                                {role.name}
+                                              </option>
+                                            ),
+                                          )}
+                                        </select>
+                                        <button
+                                          type="button"
+                                          disabled={
+                                            !linkedStaffRoleIds[member.id] ||
+                                            Boolean(grantingStaffMembershipId)
+                                          }
+                                          onClick={() =>
+                                            void grantCompanyAccessToLinkedStaff(
+                                              member,
+                                            )
+                                          }
+                                          className="rounded border px-2 py-1.5 text-xs font-600 disabled:opacity-50"
+                                          style={{
+                                            borderColor: "var(--primary)",
+                                            color: "var(--primary)",
+                                          }}
+                                        >
+                                          {grantingStaffMembershipId ===
+                                          member.id
+                                            ? "Granting access…"
+                                            : "Grant access"}
+                                        </button>
+                                      </div>
+                                    )}
+                                </div>
+                              ) : (
+                                "Not linked"
+                              ))}
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">

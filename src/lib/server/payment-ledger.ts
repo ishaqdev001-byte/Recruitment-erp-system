@@ -490,5 +490,5 @@ export async function loadPaymentLedger(access: Access) {
     }),
   )
 
-  return { transactions, projects, payableInvoices }
+  return { transactions, projects }
 }

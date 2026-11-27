@@ -941,12 +941,10 @@ export default function UsersRoles({
 
   const [userActionPending, setUserActionPending] = useState("")
 
-  const [grantingStaffMembershipId, setGrantingStaffMembershipId] =
-    useState("")
+  const [grantingStaffMembershipId, setGrantingStaffMembershipId] = useState("")
 
-  const [linkedStaffRoleIds, setLinkedStaffRoleIds] = useState<
-    Record<string, string>
-  >({})
+  const [linkedStaffRoleIds, setLinkedStaffRoleIds] =
+    useState<Record<string, string>>({})
 
   const [error, setError] = useState("")
 
@@ -1266,6 +1264,8 @@ export default function UsersRoles({
           invitationEmailSent?: boolean
 
           invitationEmailWarning?: string
+
+          existingAccount?: boolean
         }
 
         if (!response.ok)
@@ -1292,7 +1292,9 @@ export default function UsersRoles({
           )
         } else {
           setNotice(
-            "Invitation sent. The user can set their password from the email link.",
+            result.existingAccount
+              ? "Invitation sent. The user can accept it with their existing account; their password will not change."
+              : "Invitation sent. The user can set their password from the email link.",
           )
         }
       }
@@ -1765,9 +1767,9 @@ export default function UsersRoles({
 
       "unlink-account": `Unlink ${user.name}'s staff account from this company? Their company access will be disabled and their staff record marked inactive. Their access to other companies will not change.`,
 
-      "relink-account": `Send a password setup invitation to ${email?.trim()}? This changes the login email for this account across all companies. Access to this company remains disabled until the invitation is accepted.`,
+      "relink-account": `Send a password setup invitation to ${email?.trim()}? The link will be valid for 30 minutes. This changes the login email for this account across all companies. Access to this company remains disabled until the invitation is accepted.`,
 
-      "resend-invite": `Send a fresh invitation link to ${user.email}? The new link will be valid for one hour.`,
+      "resend-invite": `Send a fresh invitation link to ${user.email}? The new link will be valid for 30 minutes.`,
 
       "revoke-invite": `Revoke the pending invitation for ${user.name}? Their account will remain listed, and their Staff-page record will be kept for a future invitation.`,
 
@@ -1813,25 +1815,31 @@ export default function UsersRoles({
         }),
       })
 
-      const result = (await response.json()) as { error?: string }
+      const result = (await response.json()) as {
+        error?: string
+
+        warning?: string
+      }
 
       if (!response.ok)
         throw new Error(result.error ?? "Unable to update this user.")
 
       setNotice(
-        action === "change-role"
-          ? `Role updated for ${user.name}.`
-          : action === "unlink-account"
-            ? `${user.name}'s staff account was unlinked and company access disabled.`
-            : action === "relink-account"
-              ? `A new password setup link was sent to ${email?.trim()}.`
-              : action === "resend-invite"
-                ? `A fresh invitation link was sent to ${user.email}.`
-                : action === "set-status"
-                  ? `Access updated for ${user.name}.`
-                  : action === "revoke-invite"
-                    ? `Invitation revoked for ${user.name}. Their account remains listed and their staff record is available for reassignment.`
-                    : `${user.name} removed from this company.`,
+        action === "resend-invite" && result.warning
+          ? result.warning
+          : action === "change-role"
+            ? `Role updated for ${user.name}.`
+            : action === "unlink-account"
+              ? `${user.name}'s staff account was unlinked and company access disabled.`
+              : action === "relink-account"
+                ? `A new password setup link was sent to ${email?.trim()}.`
+                : action === "resend-invite"
+                  ? `A fresh invitation link was sent to ${user.email}.`
+                  : action === "set-status"
+                    ? `Access updated for ${user.name}.`
+                    : action === "revoke-invite"
+                      ? `Invitation revoked for ${user.name}. Their account remains listed and their staff record is available for reassignment.`
+                      : `${user.name} removed from this company.`,
       )
 
       if (action === "relink-account") {
@@ -2158,7 +2166,9 @@ export default function UsersRoles({
     const roleId = linkedStaffRoleIds[staff.id] ?? ""
 
     if (!roleId) {
-      setError(`Choose a company role for ${staff.name} before granting access.`)
+      setError(
+        `Choose a company role for ${staff.name} before granting access.`,
+      )
       return
     }
 
@@ -3460,9 +3470,9 @@ export default function UsersRoles({
                     className="mb-4 rounded border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm"
                     style={{ color: "var(--foreground)" }}
                   >
-                    {staffWithoutCompanyMembership.length} active staff
-                    account{staffWithoutCompanyMembership.length === 1 ? "" : "s"}{" "}
-                    are linked to login accounts but do not have company access.
+                    {staffWithoutCompanyMembership.length} active staff account
+                    {staffWithoutCompanyMembership.length === 1 ? "" : "s"} are
+                    linked to login accounts but do not have company access.
                     Choose a role in the Linked user column to grant access
                     immediately.
                   </div>
@@ -3637,10 +3647,12 @@ export default function UsersRoles({
                                             linkedStaffRoleIds[member.id] ?? ""
                                           }
                                           onChange={(event) =>
-                                            setLinkedStaffRoleIds((current) => ({
-                                              ...current,
-                                              [member.id]: event.target.value,
-                                            }))
+                                            setLinkedStaffRoleIds(
+                                              (current) => ({
+                                                ...current,
+                                                [member.id]: event.target.value,
+                                              }),
+                                            )
                                           }
                                           disabled={Boolean(
                                             grantingStaffMembershipId,
@@ -3648,7 +3660,9 @@ export default function UsersRoles({
                                           className="w-full rounded border px-2 py-1.5 text-xs"
                                           style={fieldStyle}
                                         >
-                                          <option value="">Choose a role</option>
+                                          <option value="">
+                                            Choose a role
+                                          </option>
                                           {eligibleMembershipRoles.map(
                                             (role) => (
                                               <option

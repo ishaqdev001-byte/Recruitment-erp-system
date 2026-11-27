@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js"
+import { createClient, type User } from "@supabase/supabase-js"
 
 import nodemailer from "nodemailer"
 
@@ -566,6 +566,8 @@ async function sendWorkspaceInvitationEmail(options: {
   roleName: string
 
   actionLink: string
+
+  requiresPasswordSetup?: boolean
 }) {
   const transport = nodemailer.createTransport({
     host: options.smtp.host,
@@ -596,6 +598,13 @@ async function sendWorkspaceInvitationEmail(options: {
   const roleName = escapeEmailHtml(options.roleName)
 
   const actionLink = escapeEmailHtml(options.actionLink)
+  const passwordSetupRequired = options.requiresPasswordSetup !== false
+  const nextStepText = passwordSetupRequired
+    ? "Accept the invitation and set up your password:"
+    : "Accept the invitation using your existing account. Your current password will not change:"
+  const nextStepHtml = passwordSetupRequired
+    ? "Accept the invitation and set up your password:"
+    : "Accept the invitation using your existing account. Your current password will not change:"
 
   try {
     const delivery = await transport.sendMail({
@@ -605,9 +614,9 @@ async function sendWorkspaceInvitationEmail(options: {
 
       subject: `You are invited to join ${options.companyName}`,
 
-      text: `Hello ${options.fullName},\n\nYou have been invited to join ${options.companyName} as ${options.roleName}.\n\nAccept the invitation and set up your password: ${options.actionLink}\n\nIf you were not expecting this invitation, you can ignore this message.`,
+      text: `Hello ${options.fullName},\n\nYou have been invited to join ${options.companyName} as ${options.roleName}.\n\n${nextStepText} ${options.actionLink}\n\nIf you were not expecting this invitation, you can ignore this message.`,
 
-      html: `<h2>You have been invited to join ${companyName}</h2><p>Hello ${fullName},</p><p>You have been invited to join <strong>${companyName}</strong> as <strong>${roleName}</strong>.</p><p>Accept the invitation and set up your password:</p><p><a href="${actionLink}">Accept invitation</a></p><p>If you were not expecting this invitation, you can ignore this message.</p>`,
+      html: `<h2>You have been invited to join ${companyName}</h2><p>Hello ${fullName},</p><p>You have been invited to join <strong>${companyName}</strong> as <strong>${roleName}</strong>.</p><p>${nextStepHtml}</p><p><a href="${actionLink}">Accept invitation</a></p><p>If you were not expecting this invitation, you can ignore this message.</p>`,
     })
 
     if (delivery.accepted.length === 0 || delivery.rejected.length > 0) {
@@ -839,6 +848,8 @@ export async function GET() {
 
       membershipsResult,
 
+      pendingInvitationsResult,
+
       permissionsResult,
 
       companyResult,
@@ -859,6 +870,13 @@ export async function GET() {
 
       membershipsQuery,
 
+      admin
+        .from("workspace_invitations")
+        .select("user_id")
+        .eq("company_id", access.companyId)
+        .is("accepted_at", null)
+        .gt("expires_at", new Date().toISOString()),
+
       admin.from("permissions").select("code, description").order("code"),
 
       admin
@@ -877,6 +895,7 @@ export async function GET() {
     if (
       rolesResult.error ||
       membershipsResult.error ||
+      pendingInvitationsResult.error ||
       permissionsResult.error ||
       companyResult.error ||
       branchesResult.error
@@ -886,6 +905,7 @@ export async function GET() {
 
         rolesResult.error ??
           membershipsResult.error ??
+          pendingInvitationsResult.error ??
           permissionsResult.error ??
           companyResult.error ??
           branchesResult.error,
@@ -996,6 +1016,12 @@ export async function GET() {
       (authUsers?.users ?? []).map((authUser) => [authUser.id, authUser]),
     )
 
+    const pendingInvitationUserIds = new Set(
+      (pendingInvitationsResult.data ?? []).map(
+        (invitation) => invitation.user_id,
+      ),
+    )
+
     const roleNameById = new Map(
       (rolesResult.data ?? []).map((roleRecord) => [
         roleRecord.id,
@@ -1042,7 +1068,8 @@ export async function GET() {
       const isPendingInvite = Boolean(
         authUser &&
           (authUser.app_metadata?.workspace_invite_pending === true ||
-            !authUser.confirmed_at),
+            !authUser.confirmed_at ||
+            pendingInvitationUserIds.has(membership.user_id)),
       )
 
       return {
@@ -1173,15 +1200,17 @@ export async function POST(request: Request) {
     if (body.action === "grant-linked-staff-access") {
       if (!access.isPrimaryAdmin) {
         return NextResponse.json(
-          { error: "Only the Chairman can grant company access to linked staff accounts." },
+          {
+            error:
+              "Only the Chairman can grant company access to linked staff accounts.",
+          },
           { status: 403, headers: responseHeaders },
         )
       }
 
       const staffId =
         typeof body.staffId === "string" ? body.staffId.trim() : ""
-      const roleId =
-        typeof body.roleId === "string" ? body.roleId.trim() : ""
+      const roleId = typeof body.roleId === "string" ? body.roleId.trim() : ""
       const uuidPattern =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -1210,7 +1239,10 @@ export async function POST(request: Request) {
         !staff.linked_user_id
       ) {
         return NextResponse.json(
-          { error: "Choose an active staff record linked to an existing account." },
+          {
+            error:
+              "Choose an active staff record linked to an existing account.",
+          },
           { status: 409, headers: responseHeaders },
         )
       }
@@ -1257,7 +1289,10 @@ export async function POST(request: Request) {
 
       if (existingMembership) {
         return NextResponse.json(
-          { error: "This account already has a company membership. Manage its access from Users & Roles." },
+          {
+            error:
+              "This account already has a company membership. Manage its access from Users & Roles.",
+          },
           { status: 409, headers: responseHeaders },
         )
       }
@@ -1267,7 +1302,10 @@ export async function POST(request: Request) {
         linkedStaffRecords[0]?.id !== staff.id
       ) {
         return NextResponse.json(
-          { error: "This account is linked to multiple or changed staff records. Resolve the roster links before granting access." },
+          {
+            error:
+              "This account is linked to multiple or changed staff records. Resolve the roster links before granting access.",
+          },
           { status: 409, headers: responseHeaders },
         )
       }
@@ -1286,7 +1324,10 @@ export async function POST(request: Request) {
 
       if (!branchId) {
         return NextResponse.json(
-          { error: "Configure an active company branch before granting staff access." },
+          {
+            error:
+              "Configure an active company branch before granting staff access.",
+          },
           { status: 409, headers: responseHeaders },
         )
       }
@@ -1303,13 +1344,19 @@ export async function POST(request: Request) {
 
       if (insertError?.code === "23505") {
         return NextResponse.json(
-          { error: "This staff account was just added to the company. Refresh Users & Roles." },
+          {
+            error:
+              "This staff account was just added to the company. Refresh Users & Roles.",
+          },
           { status: 409, headers: responseHeaders },
         )
       }
 
       if (insertError) {
-        console.error("Linked staff company membership creation failed", insertError)
+        console.error(
+          "Linked staff company membership creation failed",
+          insertError,
+        )
         throw insertError
       }
 
@@ -3935,31 +3982,33 @@ export async function POST(request: Request) {
             { status: 500, headers: responseHeaders },
           )
 
-        const { error: previousInvitationDeleteError } = await admin
-
+        const {
+          data: previousInvitations,
+          error: previousInvitationQueryError,
+        } = await admin
           .from("workspace_invitations")
-
-          .delete()
-
+          .select("id")
           .eq("company_id", access.companyId)
-
           .eq("user_id", userId)
-
           .is("accepted_at", null)
 
-        if (previousInvitationDeleteError) {
+        if (previousInvitationQueryError) {
           console.error(
-            "Previous workspace invitation links could not be revoked",
+            "Previous workspace invitations could not be verified",
 
-            previousInvitationDeleteError,
+            previousInvitationQueryError,
           )
 
           return NextResponse.json(
-            { error: "Unable to revoke the previous invitation link." },
+            { error: "Unable to verify the previous invitation link." },
 
             { status: 500, headers: responseHeaders },
           )
         }
+
+        const previousInvitationIds = (previousInvitations ?? []).map(
+          (invitation) => invitation.id,
+        )
 
         const invitationId = crypto.randomUUID()
 
@@ -4187,6 +4236,10 @@ export async function POST(request: Request) {
             roleName: targetRoleName ?? "team member",
 
             actionLink,
+
+            requiresPasswordSetup:
+              authUser.user.app_metadata?.workspace_invite_pending === true ||
+              authUser.user.app_metadata?.workspace_account_unlinked === true,
           })
         } catch (emailError) {
           if (relinkedStaffId) {
@@ -4256,11 +4309,32 @@ export async function POST(request: Request) {
           )
         }
 
-        return NextResponse.json(
-          { success: true },
+        if (previousInvitationIds.length > 0) {
+          const { error: previousInvitationDeleteError } = await admin
+            .from("workspace_invitations")
+            .delete()
+            .in("id", previousInvitationIds)
 
-          { headers: responseHeaders },
-        )
+          if (previousInvitationDeleteError) {
+            console.error(
+              "Previous invitation links could not be revoked after resend",
+              previousInvitationDeleteError,
+            )
+
+            return NextResponse.json(
+              {
+                success: true,
+                warning:
+                  "The fresh invitation was sent, but an older link could not be revoked and may also remain usable until it expires.",
+              },
+              { headers: responseHeaders },
+            )
+          }
+        }
+
+        return NextResponse.json({ success: true }, {
+          headers: responseHeaders,
+        })
       }
 
       if (body.action === "change-role") {
@@ -5523,106 +5597,248 @@ export async function POST(request: Request) {
           },
         })
 
-      const inviteActionLink = inviteData?.properties?.action_link
+      let invitationUser = inviteData?.user ?? null
+      let inviteActionLink = inviteData?.properties?.action_link ?? ""
+      let existingAccount = false
 
-      if (inviteError || !inviteData.user || !inviteActionLink) {
-        if (inviteData?.user?.id) {
+      if (inviteError) {
+        const duplicateAccountError =
+          /already|exists|registered/i.test(inviteError.message) ||
+          inviteError.code === "email_exists"
+
+        if (!duplicateAccountError) {
+          return NextResponse.json(
+            {
+              error:
+                inviteError.message ||
+                "Unable to generate the invitation link.",
+            },
+            { status: 400, headers: responseHeaders },
+          )
+        }
+
+        let existingUser: User | null = null
+        let page = 1
+
+        while (!existingUser) {
+          const { data: usersPage, error: usersError } =
+            await admin.auth.admin.listUsers({ page, perPage: 1000 })
+
+          if (usersError) {
+            console.error("Existing Auth account lookup failed", usersError)
+            return NextResponse.json(
+              { error: "Unable to verify the existing email account." },
+              { status: 503, headers: responseHeaders },
+            )
+          }
+
+          const users = usersPage.users ?? []
+          existingUser =
+            users.find((user) => user.email?.toLowerCase() === email) ?? null
+
+          if (existingUser || users.length < 1000) break
+          page += 1
+        }
+
+        if (!existingUser) {
+          return NextResponse.json(
+            {
+              error:
+                "Supabase reports that this email is already registered, but the account could not be located. Contact support before changing or deleting the account.",
+            },
+            { status: 409, headers: responseHeaders },
+          )
+        }
+
+        const { data: existingMembership, error: existingMembershipError } =
+          await admin
+            .from("company_memberships")
+            .select("status")
+            .eq("company_id", access.companyId)
+            .eq("user_id", existingUser.id)
+            .maybeSingle()
+
+        if (existingMembershipError) {
+          console.error(
+            "Existing account company-membership lookup failed",
+            existingMembershipError,
+          )
+          return NextResponse.json(
+            { error: "Unable to verify this account's company access." },
+            { status: 503, headers: responseHeaders },
+          )
+        }
+
+        if (existingMembership) {
+          const { data: latestInvitation, error: latestInvitationError } =
+            await admin
+              .from("workspace_invitations")
+              .select("accepted_at")
+              .eq("company_id", access.companyId)
+              .eq("user_id", existingUser.id)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle()
+
+          if (latestInvitationError) {
+            console.error(
+              "Existing account invitation lookup failed",
+              latestInvitationError,
+            )
+            return NextResponse.json(
+              { error: "Unable to verify this account's invitation." },
+              { status: 503, headers: responseHeaders },
+            )
+          }
+
+          if (
+            existingMembership.status === "active" &&
+            latestInvitation &&
+            !latestInvitation.accepted_at
+          ) {
+            return NextResponse.json(
+              {
+                error:
+                  "This user is already listed in Users & Roles. Use Resend invite to send a fresh link.",
+              },
+              { status: 409, headers: responseHeaders },
+            )
+          }
+
+          return NextResponse.json(
+            {
+              error:
+                existingMembership.status === "disabled" &&
+                existingUser.app_metadata?.workspace_account_unlinked === true
+                  ? "This staff account is unlinked. Use Relink account in Users & Roles instead."
+                  : "This account already has a membership in this company. Manage or resend it from Users & Roles.",
+            },
+            { status: 409, headers: responseHeaders },
+          )
+        }
+
+        const hasPendingInvite =
+          existingUser.app_metadata?.workspace_invite_pending === true
+
+        if (
+          existingUser.app_metadata?.workspace_account_unlinked === true ||
+          hasPendingInvite
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "This account already has a pending invitation or staff relink. Complete or resend that invitation before adding it to another company.",
+            },
+            { status: 409, headers: responseHeaders },
+          )
+        }
+
+        const { data: existingLinkData, error: existingLinkError } =
+          await admin.auth.admin.generateLink({
+            type: "magiclink",
+            email,
+            options: { redirectTo: redirectUrl.toString() },
+          })
+
+        inviteActionLink = existingLinkData?.properties?.action_link ?? ""
+        if (existingLinkError || !inviteActionLink) {
+          console.error(
+            "Existing account invitation link generation failed",
+            existingLinkError,
+          )
+          return NextResponse.json(
+            {
+              error:
+                "Unable to generate a sign-in link for the existing account. No account data was changed; please try again.",
+            },
+            { status: 502, headers: responseHeaders },
+          )
+        }
+
+        invitationUser = existingUser
+        existingAccount = true
+      } else if (!invitationUser || !inviteActionLink) {
+        if (invitationUser?.id) {
           const { error: cleanupError } = await admin.auth.admin.deleteUser(
-            inviteData.user.id,
+            invitationUser.id,
           )
 
           if (cleanupError)
             console.error(
-              "Failed to remove account after invitation link generation failed",
-
+              "Failed to remove newly created account after invitation link generation failed",
               cleanupError,
             )
         }
 
-        const duplicateAccountError =
-          inviteError?.message.toLowerCase().includes("already") ?? false
-
         return NextResponse.json(
-          {
-            error:
-              (duplicateAccountError
-                ? "An account with this email already exists. If it is listed in Users & Roles, use Resend invite to send a fresh link."
-                : inviteError?.message) ??
-              "Unable to generate the invitation link.",
-          },
-
-          { status: 400, headers: responseHeaders },
+          { error: "Unable to generate the invitation link." },
+          { status: 502, headers: responseHeaders },
         )
       }
 
-      const userId = inviteData.user.id
-
-      const { error: invitationMetadataError } =
-        await admin.auth.admin.updateUserById(userId, {
-          app_metadata: {
-            ...inviteData.user.app_metadata,
-
-            invitation_company_id: access.companyId,
-
-            workspace_invite_pending: true,
-
-            workspace_user_type: userTypeSelection.userType,
-          },
-        })
-
-      if (invitationMetadataError) {
-        await admin.auth.admin.deleteUser(userId)
-
+      if (!invitationUser) {
         return NextResponse.json(
-          {
-            error:
-              "The invitation account could not be assigned to its company. No email was sent; please try again.",
-          },
-
-          { status: 500, headers: responseHeaders },
+          { error: "Unable to verify the invited account." },
+          { status: 502, headers: responseHeaders },
         )
       }
 
-      const { error: profileError } = await admin
+      const userId = invitationUser.id
 
-        .from("profiles")
+      if (!existingAccount) {
+        const { error: invitationMetadataError } =
+          await admin.auth.admin.updateUserById(userId, {
+            app_metadata: {
+              ...invitationUser.app_metadata,
+              invitation_company_id: access.companyId,
+              workspace_invite_pending: true,
+              workspace_user_type: userTypeSelection.userType,
+            },
+          })
 
-        .upsert({
-          id: userId,
-
-          display_name: accountName,
-
-          phone: accountPhone,
-
-          branch: branchName,
-        })
-
-      if (profileError) {
-        console.error(
-          "Workspace invitation profile creation failed",
-
-          profileError,
-        )
-
-        const { error: cleanupError } =
+        if (invitationMetadataError) {
           await admin.auth.admin.deleteUser(userId)
 
-        if (cleanupError) {
-          console.error(
-            "Failed to remove invited account after profile creation failed",
-
-            cleanupError,
+          return NextResponse.json(
+            {
+              error:
+                "The invitation account could not be assigned to its company. No email was sent; please try again.",
+            },
+            { status: 500, headers: responseHeaders },
           )
         }
 
-        return NextResponse.json(
-          {
-            error:
-              "The invited user's profile could not be saved. No email was sent; please try again.",
-          },
+        const { error: profileError } = await admin.from("profiles").upsert({
+          id: userId,
+          display_name: accountName,
+          phone: accountPhone,
+          branch: branchName,
+        })
 
-          { status: 500, headers: responseHeaders },
-        )
+        if (profileError) {
+          console.error(
+            "Workspace invitation profile creation failed",
+            profileError,
+          )
+
+          const { error: cleanupError } =
+            await admin.auth.admin.deleteUser(userId)
+
+          if (cleanupError) {
+            console.error(
+              "Failed to remove invited account after profile creation failed",
+              cleanupError,
+            )
+          }
+
+          return NextResponse.json(
+            {
+              error:
+                "The invited user's profile could not be saved. No email was sent; please try again.",
+            },
+            { status: 500, headers: responseHeaders },
+          )
+        }
       }
 
       const { error: membershipError } = await admin
@@ -5648,15 +5864,16 @@ export async function POST(request: Request) {
           membershipError,
         )
 
-        const { error: cleanupError } =
-          await admin.auth.admin.deleteUser(userId)
+        if (!existingAccount) {
+          const { error: cleanupError } =
+            await admin.auth.admin.deleteUser(userId)
 
-        if (cleanupError) {
-          console.error(
-            "Failed to remove invited account after membership assignment failed",
-
-            cleanupError,
-          )
+          if (cleanupError) {
+            console.error(
+              "Failed to remove invited account after membership assignment failed",
+              cleanupError,
+            )
+          }
         }
 
         return NextResponse.json(
@@ -5669,9 +5886,11 @@ export async function POST(request: Request) {
         )
       }
 
+      let invitedStaffRecordId: string | null = null
+
       if (userTypeSelection.userType === "staff") {
         try {
-          await createOrLinkInvitedStaffRecord(
+          invitedStaffRecordId = await createOrLinkInvitedStaffRecord(
             admin,
 
             access.companyId,
@@ -5689,15 +5908,22 @@ export async function POST(request: Request) {
         } catch (staffError) {
           console.error("Invited staff record creation failed", staffError)
 
-          const { error: cleanupError } =
-            await admin.auth.admin.deleteUser(userId)
+          await admin
+            .from("company_memberships")
+            .delete()
+            .eq("company_id", access.companyId)
+            .eq("user_id", userId)
 
-          if (cleanupError)
-            console.error(
-              "Failed to remove account after staff setup failed",
+          if (!existingAccount) {
+            const { error: cleanupError } =
+              await admin.auth.admin.deleteUser(userId)
 
-              cleanupError,
-            )
+            if (cleanupError)
+              console.error(
+                "Failed to remove account after staff setup failed",
+                cleanupError,
+              )
+          }
 
           return NextResponse.json(
             {
@@ -5745,11 +5971,19 @@ export async function POST(request: Request) {
           }
         }
 
-        const { error: cleanupError } =
-          await admin.auth.admin.deleteUser(userId)
+        await admin
+          .from("company_memberships")
+          .delete()
+          .eq("company_id", access.companyId)
+          .eq("user_id", userId)
 
-        if (cleanupError)
-          console.error("Invited account cleanup failed", cleanupError)
+        if (!existingAccount) {
+          const { error: cleanupError } =
+            await admin.auth.admin.deleteUser(userId)
+
+          if (cleanupError)
+            console.error("Invited account cleanup failed", cleanupError)
+        }
 
         return NextResponse.json(
           {
@@ -5776,9 +6010,69 @@ export async function POST(request: Request) {
           roleName: role.name,
 
           actionLink: inviteActionLink,
+
+          requiresPasswordSetup:
+            !existingAccount ||
+            invitationUser.app_metadata?.workspace_invite_pending === true,
         })
       } catch (emailError) {
         console.error("Workspace invitation email delivery failed", emailError)
+
+        if (existingAccount) {
+          if (invitedStaffRecordId) {
+            const { error: staffRollbackError } = existingStaffId
+              ? await admin
+                  .from("company_staff_members")
+                  .update({ linked_user_id: null })
+                  .eq("company_id", access.companyId)
+                  .eq("id", invitedStaffRecordId)
+                  .eq("linked_user_id", userId)
+              : await admin
+                  .from("company_staff_members")
+                  .delete()
+                  .eq("company_id", access.companyId)
+                  .eq("id", invitedStaffRecordId)
+                  .eq("linked_user_id", userId)
+
+            if (staffRollbackError)
+              console.error(
+                "Existing-account staff invitation rollback failed",
+                staffRollbackError,
+              )
+          }
+
+          const [membershipRollback, invitationRollback] = await Promise.all([
+            admin
+              .from("company_memberships")
+              .delete()
+              .eq("company_id", access.companyId)
+              .eq("user_id", userId),
+            admin
+              .from("workspace_invitations")
+              .delete()
+              .eq("id", invitationId)
+              .eq("user_id", userId),
+          ])
+
+          if (membershipRollback.error)
+            console.error(
+              "Existing-account membership invitation rollback failed",
+              membershipRollback.error,
+            )
+          if (invitationRollback.error)
+            console.error(
+              "Existing-account invitation record rollback failed",
+              invitationRollback.error,
+            )
+
+          return NextResponse.json(
+            {
+              error:
+                "The invitation email could not be delivered. The existing account and its password were left unchanged; check SMTP settings and try again.",
+            },
+            { status: 502, headers: responseHeaders },
+          )
+        }
 
         invitationEmailWarning =
           "The account was created, but the invitation email could not be delivered. Check the server SMTP settings, then use Resend invite in Users & Roles."
@@ -5805,6 +6099,8 @@ export async function POST(request: Request) {
           },
 
           invitationEmailSent: !invitationEmailWarning,
+
+          existingAccount,
 
           ...(invitationEmailWarning ? { invitationEmailWarning } : {}),
         },
@@ -6010,7 +6306,10 @@ export async function POST(request: Request) {
 
       if (existing) {
         return NextResponse.json(
-          { error: "A user with this email address already exists." },
+          {
+            error:
+              "This email already has an account. Use the email invitation option to add the existing account without changing its password.",
+          },
 
           { status: 409, headers: responseHeaders },
         )

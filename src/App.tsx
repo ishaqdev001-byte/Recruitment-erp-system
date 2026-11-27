@@ -82,6 +82,11 @@
 // Restore last active view after invitation acceptance
 
 // Restore last active view after forced password change
+// Initialize performance monitoring for the entire app
+// Setup performance observers to track page load, API calls, and interactions
+
+// Log optimization info
+// Cleanup performance monitoring if needed
 
 import {
   useCallback,
@@ -163,7 +168,13 @@ const PageLoading = () => (
 )
 
 async function removeBrowserPushSubscription() {
-  if (!("serviceWorker" in navigator)) return
+  if (
+    !(
+      "serviceWorker" in
+      navigator
+    )
+  )
+    return
 
   const registration = await navigator.serviceWorker.getRegistration("/")
 
@@ -505,7 +516,6 @@ const viewPreloaders: Partial<Record<View, () => Promise<unknown>>> = {
       import("./components/settings/CaseHandlerSettings"),
 
       import("./components/settings/AssistantStaffSettings"),
-
     ]),
 }
 
@@ -682,9 +692,14 @@ const formatInitials = (value: string) =>
 
     .slice(0, 2)
 
-    .map((part) => part[0]?.toUpperCase() ?? "")
+    .map(
+      (part) =>
+        part[0]?.toUpperCase() ??
+        "",
+    )
 
-    .join("") || "R"
+    .join("") ||
+  "R"
 
 const IDLE_LOCK_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -695,14 +710,20 @@ const toCompanySlug = (name: string) =>
 
     .replace(/[^a-z0-9]+/g, "-")
 
-    .replace(/^-+|-+$/g, "") || "company"
+    .replace(/^-+|-+$/g, "") ||
+  "company"
 
 function getDefaultViewByPermissions(
   permissions: string[],
 
   roleName?: string,
 ): View {
-  if (isPrimaryAdministratorRole(roleName ?? "")) {
+  if (
+    isPrimaryAdministratorRole(
+      roleName ??
+        "",
+    )
+  ) {
     return "dashboard"
   }
 
@@ -736,21 +757,31 @@ function canAccessSessionView(
 ) {
   if (!workspaceSession) return false
 
-  if (view === "agent-invoices" && workspaceSession.role === "Chairman") {
-    return false
-  }
-
   if (
-    view === "human-resources" &&
-    workspaceSession.role !== "Chairman" &&
-    workspaceSession.isLinkedStaff !== true
+    view ===
+      "agent-invoices" &&
+    workspaceSession.role ===
+      "Chairman"
   ) {
     return false
   }
 
   if (
-    view === "expense-requests" &&
-    workspaceSession.role !== "Administration Officer" &&
+    view ===
+      "human-resources" &&
+    workspaceSession.role !==
+      "Chairman" &&
+    workspaceSession.isLinkedStaff !==
+      true
+  ) {
+    return false
+  }
+
+  if (
+    view ===
+      "expense-requests" &&
+    workspaceSession.role !==
+      "Administration Officer" &&
     workspaceSession.isLinkedStaff
   ) {
     return true
@@ -776,10 +807,15 @@ async function loadCompanyPermissionCodes(companyId: string) {
     !response.ok ||
     !Array.isArray(payload.permissionCodes) ||
     !payload.permissionCodes.every(
-      (code): code is string => typeof code === "string",
+      (code): code is string =>
+        typeof code ===
+        "string",
     )
   ) {
-    throw new Error(payload.error ?? "Unable to load company permissions.")
+    throw new Error(
+      payload.error ??
+        "Unable to load company permissions.",
+    )
   }
 
   return payload.permissionCodes
@@ -890,7 +926,9 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   if (!companyRecord || !roleRecord)
     throw new Error("Your company membership is incomplete.")
 
-  const isPrimaryAdmin = companyRecord.primary_admin_user_id === user.id
+  const isPrimaryAdmin =
+    companyRecord.primary_admin_user_id ===
+    user.id
 
   const permissionRequest = isPrimaryAdmin
     ? loadCompanyPermissionCodes(companyRecord.id)
@@ -907,7 +945,10 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
         .then(({ data, error }) => {
           if (error) throw new Error("Unable to load your permissions.")
 
-          return (data ?? [])
+          return (
+            data ??
+            []
+          )
 
             .map((rp) => rp.permission_code)
 
@@ -919,7 +960,8 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
             .filter(
               (permission) =>
-                permission !== "agent_finance.view" ||
+                permission !==
+                  "agent_finance.view" ||
                 (isRecruitmentAgentRole(roleRecord.name) &&
                   roleAccessSettings(
                     roleRecord.access_settings,
@@ -998,7 +1040,11 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
   ]
 
   const role =
-    knownRoles.find((candidateRole) => candidateRole === roleRecord.name) ??
+    knownRoles.find(
+      (candidateRole) =>
+        candidateRole ===
+        roleRecord.name,
+    ) ??
     roleRecord.name as WorkspaceRole
 
   const branchValue = membership.branch as unknown as {
@@ -1011,10 +1057,13 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
   const branchRecord = Array.isArray(branchValue) ? branchValue[0] : branchValue
 
-  const branchName = branchRecord?.name ?? "Main Branch"
+  const branchName =
+    branchRecord?.name ??
+    "Main Branch"
 
   const isMainBranchUser =
-    companyRecord.primary_admin_user_id === user.id ||
+    companyRecord.primary_admin_user_id ===
+      user.id ||
     !branchRecord ||
     Boolean(branchRecord.is_main_branch)
 
@@ -1025,26 +1074,44 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
     slug: companyRecord.slug,
 
-    registrationNumber: companyRecord.registration_number ?? "",
+    registrationNumber:
+      companyRecord.registration_number ??
+      "",
 
-    country: companyRecord.country ?? "",
+    country:
+      companyRecord.country ??
+      "",
 
-    city: companyRecord.city ?? "",
+    city:
+      companyRecord.city ??
+      "",
 
-    officeAddress: companyRecord.office_address ?? "",
+    officeAddress:
+      companyRecord.office_address ??
+      "",
 
-    phone: companyRecord.phone ?? "",
+    phone:
+      companyRecord.phone ??
+      "",
 
-    email: companyRecord.email ?? "",
+    email:
+      companyRecord.email ??
+      "",
 
-    website: companyRecord.website ?? "",
+    website:
+      companyRecord.website ??
+      "",
 
-    logo: companyRecord.logo_url ?? "",
+    logo:
+      companyRecord.logo_url ??
+      "",
 
     status:
-      companyRecord.status === "trial"
+      companyRecord.status ===
+      "trial"
         ? "Trial"
-        : companyRecord.status === "active"
+        : companyRecord.status ===
+            "active"
           ? "Active"
           : "Pending Verification",
 
@@ -1067,7 +1134,9 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
     title: role,
 
-    email: user.email ?? "",
+    email:
+      user.email ??
+      "",
 
     phone: String(userProfile?.phone ?? user.user_metadata?.phone ?? ""),
 
@@ -1111,7 +1180,9 @@ async function resolveUserWorkspace(user: User, targetCompanyId?: string) {
 
       onboarded: true,
 
-      branchId: membership.branch_id ?? null,
+      branchId:
+        membership.branch_id ??
+        null,
 
       branchName,
 
@@ -1175,7 +1246,9 @@ async function provisionPendingCompanyRegistration(
     },
 
     body: JSON.stringify({
-      resendWelcomeEmail: options.resendWelcomeEmail ?? false,
+      resendWelcomeEmail:
+        options.resendWelcomeEmail ??
+        false,
 
       logoDataUrl: readPendingCompanyLogo(),
     }),
@@ -1190,7 +1263,8 @@ async function provisionPendingCompanyRegistration(
 
   if (!response.ok || !result.companyId) {
     throw new Error(
-      result.error ?? "Unable to finish setting up your company workspace.",
+      result.error ??
+        "Unable to finish setting up your company workspace.",
     )
   }
 
@@ -1211,7 +1285,9 @@ async function provisionPendingCompanyRegistration(
 
     welcomeEmailSent: Boolean(result.welcomeEmailSent),
 
-    welcomeEmailRecipientCount: result.welcomeEmailRecipientCount ?? 0,
+    welcomeEmailRecipientCount:
+      result.welcomeEmailRecipientCount ??
+      0,
 
     welcomeEmailError: result.welcomeEmailError,
   }
@@ -1227,15 +1303,50 @@ function readPendingCompanyLogo() {
 
     const parsed: unknown = JSON.parse(pendingLogo)
 
-    if (!parsed || typeof parsed !== "object" || !("dataUrl" in parsed))
+    if (
+      !parsed ||
+      typeof parsed !==
+        "object" ||
+      !(
+        "dataUrl" in
+        parsed
+      )
+    )
       return null
 
-    return typeof parsed.dataUrl === "string" ? parsed.dataUrl : null
+    return typeof parsed.dataUrl ===
+      "string"
+      ? parsed.dataUrl
+      : null
   } catch (error) {
     console.error("Unable to read the pending company logo.", error)
 
     return null
   }
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  errorMessage: string,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(
+      () => reject(new Error(errorMessage)),
+      timeoutMs,
+    )
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutId)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timeoutId)
+        reject(error)
+      },
+    )
+  })
 }
 
 export default function App() {
@@ -1356,6 +1467,14 @@ export default function App() {
 
   const [inviteRoleName, setInviteRoleName] = useState("")
 
+  const [inviteRequiresPasswordSetup, setInviteRequiresPasswordSetup] =
+    useState(true)
+
+  const [inviteLoading, setInviteLoading] = useState(false)
+
+  const [inviteVerificationPhase, setInviteVerificationPhase] =
+    useState<"sign-in" | "company" | null>(null)
+
   const [invitePassword, setInvitePassword] = useState("")
 
   const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("")
@@ -1396,10 +1515,15 @@ export default function App() {
     (nextView: View) => {
       if (
         session &&
-        session.role !== "Chairman" &&
-        session.isLinkedStaff === true &&
-        (hrPersonalDetailsComplete !== true || hrProfileUpdateRequired) &&
-        nextView !== "human-resources"
+        session.role !==
+          "Chairman" &&
+        session.isLinkedStaff ===
+          true &&
+        (hrPersonalDetailsComplete !==
+          true ||
+          hrProfileUpdateRequired) &&
+        nextView !==
+          "human-resources"
       ) {
         setView("human-resources")
 
@@ -1415,13 +1539,8 @@ export default function App() {
 
     [hrPersonalDetailsComplete, hrProfileUpdateRequired, session],
   )
-
-  // Initialize performance monitoring for the entire app
   useEffect(() => {
-    // Setup performance observers to track page load, API calls, and interactions
     setupPerformanceObserver()
-
-    // Log optimization info
     console.log(
       "%c🚀 Performance Optimization Active",
       "color: #10b981; font-weight: bold; font-size: 14px",
@@ -1435,9 +1554,7 @@ export default function App() {
       "color: #f59e0b; font-size: 11px",
     )
 
-    return () => {
-      // Cleanup performance monitoring if needed
-    }
+    return () => {}
   }, [])
 
   const respondToHrProfileReminder = async (
@@ -1783,7 +1900,12 @@ export default function App() {
           hashParams.get("access_token") && hashParams.get("refresh_token"),
         )
 
-      if (inviteLink) setAuthView("invite")
+      if (inviteLink) {
+        setAuthView("invite")
+        setInviteLoading(true)
+        setInviteVerificationPhase("sign-in")
+        setInviteError("")
+      }
 
       if (recoveryLink) {
         setAuthView("reset-password")
@@ -1811,11 +1933,18 @@ export default function App() {
         let authError: Error | null = null
 
         try {
+          const userRequest = supabase.auth.getUser()
+          const authResult = inviteLink
+            ? await withTimeout(
+                userRequest,
+                15_000,
+                "Sign-in verification timed out. Check your connection and reload this page. If it continues, ask the administrator for a fresh invitation.",
+              )
+            : await userRequest
           const {
             data: { user: authenticatedUser },
-
             error,
-          } = await supabase.auth.getUser()
+          } = authResult
 
           user = authenticatedUser
 
@@ -1916,46 +2045,83 @@ export default function App() {
           }
 
           const showInvitation = async (invitationId: string) => {
+            setInviteLoading(true)
+            setInviteVerificationPhase("company")
+            setInviteId("")
+            setInviteCompanyId("")
+            setInviteCompanyName("")
+            setInviteRoleName("")
+            setInviteRequiresPasswordSetup(true)
+            setInviteError("")
             setInviteEmail(user.email ?? "")
 
             setAuthView("invite")
 
-            const invitationResponse = await fetch(
-              `/api/workspace/invitations/${encodeURIComponent(invitationId)}`,
-
-              { cache: "no-store" },
+            const controller = new AbortController()
+            const timeoutId = window.setTimeout(
+              () => controller.abort(),
+              15_000,
             )
 
-            const invitation = (await invitationResponse.json()) as {
-              invitationId?: string
+            try {
+              const invitationResponse = await fetch(
+                `/api/workspace/invitations/${encodeURIComponent(invitationId)}`,
 
-              companyId?: string
-
-              companyName?: string
-
-              roleName?: string
-
-              error?: string
-            }
-
-            if (!invitationResponse.ok || !invitation.companyId) {
-              setInviteError(
-                invitation.error ??
-                  "This invitation is invalid or has expired. Ask for a new invitation.",
+                { cache: "no-store", signal: controller.signal },
               )
 
-              return
+              const invitation = (await invitationResponse.json()) as {
+                invitationId?: string
+
+                companyId?: string
+
+                companyName?: string
+
+                roleName?: string
+
+                requiresPasswordSetup?: boolean
+
+                error?: string
+              }
+
+              if (
+                !invitationResponse.ok ||
+                !invitation.companyId ||
+                !invitation.invitationId
+              ) {
+                setInviteError(
+                  invitation.error ??
+                    "This invitation is invalid or has expired. Ask for a new invitation.",
+                )
+
+                return
+              }
+
+              setInviteId(invitation.invitationId)
+
+              setInviteCompanyId(invitation.companyId)
+
+              setInviteCompanyName(invitation.companyName ?? "")
+
+              setInviteRoleName(invitation.roleName ?? "")
+
+              setInviteRequiresPasswordSetup(
+                invitation.requiresPasswordSetup !== false,
+              )
+
+              setInviteError("")
+            } catch (error) {
+              console.error("Invitation verification request failed", error)
+              setInviteError(
+                controller.signal.aborted
+                  ? "Company verification timed out. Check your connection and reload this page. If it continues, ask the administrator for a fresh invitation."
+                  : "Unable to verify this invitation right now. Check your connection and reload this page to try again.",
+              )
+            } finally {
+              window.clearTimeout(timeoutId)
+              setInviteLoading(false)
+              setInviteVerificationPhase(null)
             }
-
-            setInviteId(invitation.invitationId ?? currentInviteId)
-
-            setInviteCompanyId(invitation.companyId)
-
-            setInviteCompanyName(invitation.companyName ?? "")
-
-            setInviteRoleName(invitation.roleName ?? "")
-
-            setInviteError("")
           }
 
           if (inviteLink) {
@@ -2058,8 +2224,11 @@ export default function App() {
         }
       } catch (error) {
         if (!cancelled && error instanceof Error) {
-          if (inviteLink) setInviteError(error.message)
-          else if (recoveryLink)
+          if (inviteLink) {
+            setInviteError(error.message)
+            setInviteLoading(false)
+            setInviteVerificationPhase(null)
+          } else if (recoveryLink)
             setResetPasswordError(
               error.message === "Auth session missing!"
                 ? "This password reset link is invalid or expired. Request a new one from the login screen."
@@ -2069,7 +2238,13 @@ export default function App() {
             setLoginError(error.message)
         }
       } finally {
-        if (!cancelled) setAuthLoading(false)
+        if (!cancelled) {
+          setAuthLoading(false)
+          if (inviteLink) {
+            setInviteLoading(false)
+            setInviteVerificationPhase(null)
+          }
+        }
       }
     }
 
@@ -3562,23 +3737,18 @@ export default function App() {
 
     setInviteError("")
 
-    if (invitePassword.length < 8) {
-      setInviteError("Choose a password with at least 8 characters.")
-
-      return
-    }
-
-    if (invitePassword !== invitePasswordConfirm) {
-      setInviteError("The passwords do not match.")
-
-      return
-    }
-
     if (!inviteCompanyId) {
       setInviteError(
-        "This invitation has no valid company assignment. Ask the company administrator to resend it.",
+        inviteLoading
+          ? "Please wait while we verify your company assignment."
+          : "This invitation has no valid company assignment. Ask the company administrator to resend it.",
       )
 
+      return
+    }
+
+    if (!inviteId) {
+      setInviteError("Please wait until this invitation has been verified.")
       return
     }
 
@@ -3604,7 +3774,11 @@ export default function App() {
         { cache: "no-store" },
       )
 
-      const validation = (await validationResponse.json()) as { error?: string }
+      const validation = (await validationResponse.json()) as {
+        error?: string
+
+        requiresPasswordSetup?: boolean
+      }
 
       if (!validationResponse.ok)
         throw new Error(
@@ -3612,12 +3786,27 @@ export default function App() {
             "This invitation is invalid or has expired. Ask for a new invitation.",
         )
 
-      const { data, error } = await supabase.auth.updateUser({
-        password: invitePassword,
-      })
+      const requiresPasswordSetup = validation.requiresPasswordSetup !== false
+      let invitationUser = user
 
-      if (error || !data.user)
-        throw new Error(error?.message ?? "Unable to set your password.")
+      if (requiresPasswordSetup) {
+        if (invitePassword.length < 8) {
+          throw new Error("Choose a password with at least 8 characters.")
+        }
+
+        if (invitePassword !== invitePasswordConfirm) {
+          throw new Error("The passwords do not match.")
+        }
+
+        const { data, error } = await supabase.auth.updateUser({
+          password: invitePassword,
+        })
+
+        if (error || !data.user)
+          throw new Error(error?.message ?? "Unable to set your password.")
+
+        invitationUser = data.user
+      }
 
       const acceptanceResponse = await fetch(
         `/api/workspace/invitations/${encodeURIComponent(inviteId)}`,
@@ -3633,7 +3822,10 @@ export default function App() {
             "This invitation expired before it could be completed. Ask for a new invitation.",
         )
 
-      const workspace = await resolveUserWorkspace(data.user, inviteCompanyId)
+      const workspace = await resolveUserWorkspace(
+        invitationUser,
+        inviteCompanyId,
+      )
 
       setCompanies([workspace.company])
 
@@ -4327,8 +4519,13 @@ export default function App() {
         onResetPassword={handlePasswordReset}
         resetPasswordEmail={resetPasswordEmail}
         inviteEmail={inviteEmail}
+        inviteId={inviteId}
+        inviteCompanyId={inviteCompanyId}
         inviteCompanyName={inviteCompanyName}
         inviteRoleName={inviteRoleName}
+        inviteRequiresPasswordSetup={inviteRequiresPasswordSetup}
+        inviteLoading={inviteLoading}
+        inviteVerificationPhase={inviteVerificationPhase}
         invitePassword={invitePassword}
         invitePasswordConfirm={invitePasswordConfirm}
         inviteError={inviteError}
@@ -4917,9 +5114,19 @@ function AuthenticationExperience({
 
   inviteEmail,
 
+  inviteId,
+
+  inviteCompanyId,
+
   inviteCompanyName,
 
   inviteRoleName,
+
+  inviteRequiresPasswordSetup,
+
+  inviteLoading,
+
+  inviteVerificationPhase,
 
   invitePassword,
 
@@ -4989,9 +5196,19 @@ function AuthenticationExperience({
 
   inviteEmail: string
 
+  inviteId: string
+
+  inviteCompanyId: string
+
   inviteCompanyName: string
 
   inviteRoleName: string
+
+  inviteRequiresPasswordSetup: boolean
+
+  inviteLoading: boolean
+
+  inviteVerificationPhase: "sign-in" | "company" | null
 
   invitePassword: string
 
@@ -5146,13 +5363,17 @@ function AuthenticationExperience({
             className="mt-2 text-2xl font-700"
             style={{ color: "var(--foreground)" }}
           >
-            Set up your password
+            {inviteRequiresPasswordSetup
+              ? "Set up your password"
+              : "Accept your invitation"}
           </h1>
           <p
             className="mt-2 text-sm"
             style={{ color: "var(--muted-foreground)" }}
           >
-            Your invitation is for this company and position.
+            {inviteRequiresPasswordSetup
+              ? "Your invitation is for this company and position."
+              : "This account already has a password. Accepting this invitation will not change it."}
           </p>
           <dl
             className="mt-4 divide-y border-y"
@@ -5169,7 +5390,10 @@ function AuthenticationExperience({
                 className="text-right text-sm font-600"
                 style={{ color: "var(--foreground)" }}
               >
-                {inviteCompanyName || "Verifying invitation…"}
+                {inviteCompanyName ||
+                  (inviteVerificationPhase === "sign-in"
+                    ? "Verifying sign-in…"
+                    : "Verifying invitation…")}
               </dd>
             </div>
             <div className="flex justify-between gap-4 py-3">
@@ -5183,7 +5407,10 @@ function AuthenticationExperience({
                 className="text-right text-sm font-600"
                 style={{ color: "var(--foreground)" }}
               >
-                {inviteRoleName || "Verifying invitation…"}
+                {inviteRoleName ||
+                  (inviteVerificationPhase === "sign-in"
+                    ? "Waiting for sign-in…"
+                    : "Verifying invitation…")}
               </dd>
             </div>
           </dl>
@@ -5200,40 +5427,58 @@ function AuthenticationExperience({
             </p>
           )}
           <form onSubmit={onAcceptInvitation} className="mt-5 space-y-4">
-            <label
-              className="block text-xs font-700 uppercase tracking-wider"
-              style={{ color: "var(--muted-foreground)" }}
-            >
-              New password
-              <input
-                required
-                minLength={8}
-                type="password"
-                autoComplete="new-password"
-                value={invitePassword}
-                onChange={(event) => onInvitePasswordChange(event.target.value)}
-                className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
-                style={formInputStyle}
-              />
-            </label>
-            <label
-              className="block text-xs font-700 uppercase tracking-wider"
-              style={{ color: "var(--muted-foreground)" }}
-            >
-              Confirm password
-              <input
-                required
-                minLength={8}
-                type="password"
-                autoComplete="new-password"
-                value={invitePasswordConfirm}
-                onChange={(event) =>
-                  onInvitePasswordConfirmChange(event.target.value)
-                }
-                className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
-                style={formInputStyle}
-              />
-            </label>
+            {inviteRequiresPasswordSetup && (
+              <>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  New password
+                  <input
+                    required
+                    minLength={8}
+                    type="password"
+                    autoComplete="new-password"
+                    disabled={
+                      inviteLoading ||
+                      !inviteCompanyId ||
+                      !inviteId ||
+                      inviteSaving
+                    }
+                    value={invitePassword}
+                    onChange={(event) =>
+                      onInvitePasswordChange(event.target.value)
+                    }
+                    className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                    style={formInputStyle}
+                  />
+                </label>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Confirm password
+                  <input
+                    required
+                    minLength={8}
+                    type="password"
+                    autoComplete="new-password"
+                    disabled={
+                      inviteLoading ||
+                      !inviteCompanyId ||
+                      !inviteId ||
+                      inviteSaving
+                    }
+                    value={invitePasswordConfirm}
+                    onChange={(event) =>
+                      onInvitePasswordConfirmChange(event.target.value)
+                    }
+                    className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                    style={formInputStyle}
+                  />
+                </label>
+              </>
+            )}
             {inviteError && (
               <div
                 role="alert"
@@ -5242,9 +5487,22 @@ function AuthenticationExperience({
                 {inviteError}
               </div>
             )}
+            {inviteLoading && (
+              <p
+                role="status"
+                className="text-sm"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                {inviteVerificationPhase === "sign-in"
+                  ? "Verifying the sign-in link. This usually takes a few seconds."
+                  : "Checking the company and role assigned to this invitation."}
+              </p>
+            )}
             <button
               type="submit"
-              disabled={inviteSaving}
+              disabled={
+                inviteLoading || inviteSaving || !inviteCompanyId || !inviteId
+              }
               className="w-full px-4 py-3 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50"
               style={{
                 background: "var(--primary)",
@@ -5252,7 +5510,15 @@ function AuthenticationExperience({
                 color: "var(--primary-foreground)",
               }}
             >
-              {inviteSaving ? "Setting password…" : "Set password and continue"}
+              {inviteLoading
+                ? "Verifying invitation…"
+                : inviteSaving
+                  ? inviteRequiresPasswordSetup
+                    ? "Setting password…"
+                    : "Accepting invitation…"
+                  : inviteRequiresPasswordSetup
+                    ? "Set password and continue"
+                    : "Accept invitation"}
             </button>
           </form>
         </div>

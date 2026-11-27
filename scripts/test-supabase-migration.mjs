@@ -309,6 +309,15 @@ const workspaceInvitationOneHourExpiryMigration = await readFile(
   "utf8",
 )
 
+const workspaceInvitationThirtyMinuteExpiryMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20261127112731_workspace_invitation_thirty_minute_expiry.sql",
+    import.meta.url,
+  ),
+
+  "utf8",
+)
+
 const invitedMemberWorkspaceAccessMigration = await readFile(
   new URL(
     "../supabase/migrations/202610240001_invited_member_workspace_access.sql",
@@ -889,6 +898,10 @@ try {
   await database.exec(workspaceInvitationOneHourExpiryMigration)
 
   await database.exec(workspaceInvitationOneHourExpiryMigration)
+
+  await database.exec(workspaceInvitationThirtyMinuteExpiryMigration)
+
+  await database.exec(workspaceInvitationThirtyMinuteExpiryMigration)
 
   await database.exec(invitedMemberWorkspaceAccessMigration)
 
@@ -2070,7 +2083,32 @@ try {
     [invitationId],
   )
 
-  assert.equal(invitationExpiry.rows[0].lifetime_seconds, 3600)
+  assert.equal(invitationExpiry.rows[0].lifetime_seconds, 1800)
+
+  await database.exec(
+    "alter table public.workspace_invitations drop constraint workspace_invitations_check",
+  )
+
+  await database.query(
+    `update public.workspace_invitations
+      set expires_at = created_at + interval '45 minutes'
+      where id = $1`,
+    [invitationId],
+  )
+
+  await database.exec(workspaceInvitationThirtyMinuteExpiryMigration)
+
+  const shortenedInvitationExpiry = await database.query(
+    `select extract(epoch from expires_at - created_at)::integer as lifetime_seconds
+      from public.workspace_invitations where id = $1`,
+    [invitationId],
+  )
+
+  assert.equal(
+    shortenedInvitationExpiry.rows[0].lifetime_seconds,
+    1800,
+    "existing invitations are shortened to the 30-minute expiry",
+  )
 
   await database.exec("reset role; set role authenticated")
 

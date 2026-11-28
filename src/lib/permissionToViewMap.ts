@@ -111,6 +111,7 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "tasks.create": new Set(["tasks"]),
   "tasks.edit": new Set(["tasks"]),
   "tasks.delete": new Set(["tasks"]),
+  "tasks.reassign": new Set(["tasks"]),
 
   // Communications permissions
   "communications.email.read": new Set(["communications"]),

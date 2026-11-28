@@ -14,11 +14,13 @@ export async function GET() {
       canCreate,
       canEdit,
       canDelete,
+      canReassign,
       canSendSmsResult,
     ] = await Promise.all([
       hasTaskPermission(access, "tasks.create"),
       hasTaskPermission(access, "tasks.edit"),
       hasTaskPermission(access, "tasks.delete"),
+      hasTaskPermission(access, "tasks.reassign"),
       access.supabase.rpc("current_user_has_company_permission", {
         requested_company_id: access.companyId,
         requested_permission: "communications.sms.send",
@@ -31,14 +33,15 @@ export async function GET() {
     if (companyError) throw companyError;
     const isChairman = company?.primary_admin_user_id === access.userId;
     const admin = createTaskAdminClient();
-    if (isChairman && !admin) {
+    const canManageCompanyTasks = isChairman || canReassign;
+    if (canManageCompanyTasks && !admin) {
       return NextResponse.json({ error: "Company-wide task oversight requires server-side membership verification to be configured." }, { status: 503, headers });
     }
-    const companyQueryClient = isChairman && admin ? admin : access.supabase;
+    const companyQueryClient = canManageCompanyTasks && admin ? admin : access.supabase;
     const [{ data: visibleLists, error: listError }, { data: visibleTasks, error: taskError }] = await Promise.all([
       companyQueryClient.from("task_lists").select("id, name, position, created_at")
         .eq("company_id", access.companyId).order("position").order("name"),
-      isChairman
+      canManageCompanyTasks
         ? companyQueryClient.from("tasks").select("*").eq("company_id", access.companyId)
           .order("is_starred", { ascending: false }).order("due_at", { ascending: true, nullsFirst: false }).order("created_at", { ascending: false })
         : companyQueryClient.from("tasks").select("*").eq("company_id", access.companyId)
@@ -100,6 +103,7 @@ export async function GET() {
         canCreate,
         canEdit,
         canDelete,
+        canReassign,
         canAssign: canCreate && Boolean(admin),
         canSendSms: !canSendSmsResult.error && Boolean(canSendSmsResult.data),
         isChairman,

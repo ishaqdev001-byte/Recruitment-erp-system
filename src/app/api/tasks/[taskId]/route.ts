@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTaskAccess, hasTaskPermission, isIsoDateTime, isUuid, nextRecurringDate } from "@/lib/server/tasks";
+import { createTaskAdminClient, getTaskAccess, hasTaskPermission, isIsoDateTime, isUuid, nextRecurringDate } from "@/lib/server/tasks";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
@@ -22,10 +22,13 @@ export async function POST(request: Request, context: { params: Promise<{ taskId
         return NextResponse.json({ error: "Enter a whole-number progress percentage from 0 to 100 and a note of up to 2,000 characters." }, { status: 400, headers });
       }
       const { data: task, error: taskError } = await access.supabase.from("tasks")
-        .select("id, assigned_to").eq("id", taskId).eq("company_id", access.companyId).maybeSingle();
+        .select("id, assigned_to, is_completed, is_cancelled").eq("id", taskId).eq("company_id", access.companyId).maybeSingle();
       if (taskError) throw taskError;
       if (!task || task.assigned_to !== access.userId) {
         return NextResponse.json({ error: "Only the assigned task owner can submit progress updates." }, { status: 403, headers });
+      }
+      if (task.is_completed || task.is_cancelled) {
+        return NextResponse.json({ error: "Progress cannot be added to a completed or cancelled task." }, { status: 400, headers });
       }
       const { data: report, error: reportError } = await access.supabase.from("task_progress_reports")
         .insert({
@@ -42,6 +45,37 @@ export async function POST(request: Request, context: { params: Promise<{ taskId
         return NextResponse.json({ error: "Unable to submit the task progress report." }, { status: 400, headers });
       }
       return NextResponse.json({ report }, { status: 201, headers });
+    }
+
+    if (body?.action === "complete") {
+      const { data: task, error: taskError } = await access.supabase.from("tasks")
+        .select("id, assigned_to, assigned_at, is_completed, is_cancelled")
+        .eq("id", taskId).eq("company_id", access.companyId).maybeSingle();
+      if (taskError) throw taskError;
+      if (!task || task.assigned_to !== access.userId) {
+        return NextResponse.json({ error: "Only the assigned task owner can complete this task." }, { status: 403, headers });
+      }
+      if (task.is_completed || task.is_cancelled) {
+        return NextResponse.json({ error: "This task is already closed." }, { status: 400, headers });
+      }
+      const { data: latestReport, error: reportError } = await access.supabase.from("task_progress_reports")
+        .select("reported_by, progress_percent")
+        .eq("company_id", access.companyId).eq("task_id", taskId)
+        .gte("created_at", task.assigned_at)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (reportError) throw reportError;
+      if (latestReport?.reported_by !== access.userId || latestReport.progress_percent !== 100) {
+        return NextResponse.json({ error: "Submit a 100% progress update with a comment before completing this task." }, { status: 400, headers });
+      }
+      const admin = createTaskAdminClient();
+      if (!admin) return NextResponse.json({ error: "Task completion is unavailable because server-side task updates are not configured." }, { status: 503, headers });
+      const { data: completedTask, error: completionError } = await admin.from("tasks").update({ is_completed: true })
+        .eq("id", taskId).eq("company_id", access.companyId)
+        .eq("assigned_to", access.userId).eq("is_completed", false).eq("is_cancelled", false)
+        .select("*").maybeSingle();
+      if (completionError) throw completionError;
+      if (!completedTask) return NextResponse.json({ error: "This task was closed before it could be completed." }, { status: 409, headers });
+      return NextResponse.json({ task: completedTask }, { headers });
     }
 
     const { data: task, error: taskError } = await access.supabase.from("tasks")
@@ -70,15 +104,63 @@ export async function PATCH(request: Request, context: { params: Promise<{ taskI
   try {
     const access = await getTaskAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
-    if (!await hasTaskPermission(access, "tasks.edit")) return NextResponse.json({ error: "You do not have permission to edit tasks." }, { status: 403, headers });
     const { taskId } = await context.params;
     if (!isUuid(taskId)) return NextResponse.json({ error: "Task not found." }, { status: 404, headers });
 
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Enter valid task details." }, { status: 400, headers });
-    const { data: current, error: currentError } = await access.supabase.from("tasks").select("*")
+    const assignmentAction = "assignedTo" in body || "isCancelled" in body;
+    const canEdit = await hasTaskPermission(access, "tasks.edit");
+    const canReassign = await hasTaskPermission(access, "tasks.reassign");
+    if (!canEdit && !assignmentAction) return NextResponse.json({ error: "You do not have permission to edit tasks." }, { status: 403, headers });
+    if (assignmentAction && Object.keys(body).some((key) => !["assignedTo", "isCancelled"].includes(key))) {
+      return NextResponse.json({ error: "Reassignment or cancellation must be submitted as a separate task action." }, { status: 400, headers });
+    }
+
+    const admin = assignmentAction ? createTaskAdminClient() : null;
+    if (assignmentAction && !admin) return NextResponse.json({ error: "Task assignment management is unavailable because server-side task updates are not configured." }, { status: 503, headers });
+    const taskClient = admin ?? access.supabase;
+    const { data: current, error: currentError } = await taskClient.from("tasks").select("*")
       .eq("id", taskId).eq("company_id", access.companyId).maybeSingle();
-    if (currentError || !current) return NextResponse.json({ error: "Task not found." }, { status: 404, headers });
+    if (currentError) throw currentError;
+    if (!current) return NextResponse.json({ error: "Task not found." }, { status: 404, headers });
+
+    if (assignmentAction) {
+      if (current.created_by !== access.userId && !canReassign) {
+        return NextResponse.json({ error: "Only the task creator or a user with tasks.reassign can reassign or cancel this task." }, { status: 403, headers });
+      }
+      if ("assignedTo" in body) {
+        if (!isUuid(body.assignedTo)) return NextResponse.json({ error: "Choose an active company member to assign this task to." }, { status: 400, headers });
+        if (current.is_completed || current.is_cancelled) return NextResponse.json({ error: "Completed or cancelled tasks cannot be reassigned." }, { status: 400, headers });
+        if (body.assignedTo === current.assigned_to) return NextResponse.json({ task: current }, { headers });
+        const { data: membership, error: membershipError } = await admin!.from("company_memberships")
+          .select("user_id").eq("company_id", access.companyId)
+          .eq("user_id", body.assignedTo).eq("status", "active").maybeSingle();
+        if (membershipError) throw membershipError;
+        if (!membership) return NextResponse.json({ error: "Choose an active member of this company." }, { status: 400, headers });
+        const { data: reassignedTask, error: reassignmentError } = await admin!.from("tasks").update({
+          assigned_to: body.assignedTo,
+          assigned_at: new Date().toISOString(),
+          assignment_acknowledged_at: null,
+          last_progress_reminder_at: null,
+          last_overdue_reminder_at: null,
+        }).eq("id", taskId).eq("company_id", access.companyId)
+          .eq("is_completed", false).eq("is_cancelled", false).select("*").maybeSingle();
+        if (reassignmentError) throw reassignmentError;
+        if (!reassignedTask) return NextResponse.json({ error: "This task was closed before it could be reassigned." }, { status: 409, headers });
+        return NextResponse.json({ task: reassignedTask }, { headers });
+      }
+      if (body.isCancelled !== true) return NextResponse.json({ error: "Choose a valid cancellation action." }, { status: 400, headers });
+      if (current.is_completed) return NextResponse.json({ error: "Completed tasks cannot be cancelled." }, { status: 400, headers });
+      const { data: cancelledTask, error: cancellationError } = await admin!.from("tasks").update({ is_cancelled: true })
+        .eq("id", taskId).eq("company_id", access.companyId)
+        .eq("is_completed", false).eq("is_cancelled", false).select("*").maybeSingle();
+      if (cancellationError) throw cancellationError;
+      if (!cancelledTask && !current.is_cancelled) return NextResponse.json({ error: "This task could not be cancelled." }, { status: 409, headers });
+      return NextResponse.json({ task: cancelledTask ?? current }, { headers });
+    }
+
+    if (!canEdit) return NextResponse.json({ error: "You do not have permission to edit tasks." }, { status: 403, headers });
     if (current.created_by !== access.userId && current.assigned_to !== access.userId) {
       return NextResponse.json({ error: "You can only manage tasks created for you." }, { status: 403, headers });
     }
@@ -138,6 +220,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ taskI
     }
     if ("isCompleted" in body) {
       if (typeof body.isCompleted !== "boolean") return NextResponse.json({ error: "Choose a valid completion state." }, { status: 400, headers });
+      if (body.isCompleted && current.is_cancelled) return NextResponse.json({ error: "Cancelled tasks cannot be completed." }, { status: 400, headers });
+      if (body.isCompleted && current.assigned_to === access.userId && current.created_by !== access.userId) {
+        const { data: latestReport, error: reportError } = await access.supabase.from("task_progress_reports")
+          .select("reported_by, progress_percent")
+          .eq("company_id", access.companyId).eq("task_id", taskId)
+          .gte("created_at", current.assigned_at)
+          .order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (reportError) throw reportError;
+        if (latestReport?.reported_by !== access.userId || latestReport.progress_percent !== 100) {
+          return NextResponse.json({ error: "Submit a 100% progress update with a comment before completing this task." }, { status: 400, headers });
+        }
+      }
       update.is_completed = body.isCompleted;
     }
     if (Object.keys(update).length === 0) return NextResponse.json({ task: current }, { headers });

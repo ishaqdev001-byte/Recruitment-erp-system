@@ -14,10 +14,12 @@ type TaskRecord = {
   reminder_at: string | null;
   assigned_to: string | null;
   created_by: string;
+  assigned_at: string;
   priority: Priority;
   recurrence: Recurrence;
   sms_reminder_enabled: boolean;
   is_completed: boolean;
+  is_cancelled: boolean;
   is_starred: boolean;
   created_at: string;
   progressReports?: TaskProgressReport[];
@@ -37,7 +39,7 @@ type TaskPayload = {
   lists?: TaskList[];
   members?: Member[];
   currentUserId?: string;
-  permissions?: { canCreate?: boolean; canEdit?: boolean; canDelete?: boolean; canAssign?: boolean; canSendSms?: boolean; isChairman?: boolean };
+  permissions?: { canCreate?: boolean; canEdit?: boolean; canDelete?: boolean; canAssign?: boolean; canReassign?: boolean; canSendSms?: boolean; isChairman?: boolean };
   error?: string;
 };
 type TaskDraft = {
@@ -85,6 +87,10 @@ function dueLabel(value: string | null) {
   return `${overdue ? "Overdue · " : "Due "}${date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
 }
 
+function latestAssignedProgress(task: TaskRecord) {
+  return task.progressReports?.find((report) => Date.parse(report.created_at) >= Date.parse(task.assigned_at));
+}
+
 export default function TaskWorkspace() {
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [lists, setLists] = useState<TaskList[]>([]);
@@ -94,6 +100,7 @@ export default function TaskWorkspace() {
   const [canDelete, setCanDelete] = useState(false);
   const [canSendSms, setCanSendSms] = useState(false);
   const [canAssign, setCanAssign] = useState(false);
+  const [canReassign, setCanReassign] = useState(false);
   const [isChairman, setIsChairman] = useState(false);
   const [currentUserId, setCurrentUserId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -101,7 +108,7 @@ export default function TaskWorkspace() {
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [activeListId, setActiveListId] = useState("");
-  const [filter, setFilter] = useState<"open" | "completed" | "starred" | "all">("open");
+  const [filter, setFilter] = useState<"open" | "completed" | "cancelled" | "starred" | "all">("open");
   const [scope, setScope] = useState<TaskScope>("todo");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -113,6 +120,8 @@ export default function TaskWorkspace() {
   const [listName, setListName] = useState("");
   const [progressPercent, setProgressPercent] = useState("0");
   const [progressNote, setProgressNote] = useState("");
+  const [showReassignForm, setShowReassignForm] = useState(false);
+  const [reassignTo, setReassignTo] = useState("");
   const [notificationPermission, setNotificationPermission] = useState("unsupported");
   const acknowledgementRequests = useRef(new Set<string>());
 
@@ -132,6 +141,7 @@ export default function TaskWorkspace() {
         setCanDelete(Boolean(payload.permissions?.canDelete));
         setCanSendSms(Boolean(payload.permissions?.canSendSms));
         setCanAssign(Boolean(payload.permissions?.canAssign));
+        setCanReassign(Boolean(payload.permissions?.canReassign));
         setIsChairman(Boolean(payload.permissions?.isChairman));
         setCurrentUserId(payload.currentUserId ?? "");
         setActiveListId((current) => (payload.lists ?? []).some((list) => list.id === current) ? current : payload.lists?.[0]?.id ?? "");
@@ -153,6 +163,8 @@ export default function TaskWorkspace() {
 
   const activeList = lists.find((list) => list.id === activeListId) ?? null;
   const selected = tasks.find((task) => task.id === selectedId) ?? null;
+  const selectedProgress = selected ? latestAssignedProgress(selected) : undefined;
+  const canViewCompanyOverview = isChairman || canReassign;
   const inScope = (task: TaskRecord) => {
     if (scope === "company") return true;
     if (scope === "todo") return task.created_by === currentUserId && (task.assigned_to ?? task.created_by) === currentUserId;
@@ -161,12 +173,17 @@ export default function TaskWorkspace() {
   };
   const listTasks = tasks.filter((task) => (activeListId === "all" || task.list_id === activeListId) && inScope(task));
   const matches = (task: TaskRecord) => {
-    const filterMatch = filter === "all" || (filter === "completed" ? task.is_completed : filter === "starred" ? task.is_starred : !task.is_completed);
+    const filterMatch = filter === "all"
+      || (filter === "completed" ? task.is_completed
+        : filter === "cancelled" ? task.is_cancelled
+          : filter === "starred" ? task.is_starred && !task.is_cancelled
+            : !task.is_completed && !task.is_cancelled);
     return filterMatch && matchesSearch(search, task.title, task.notes);
   };
   const visibleTasks = listTasks.filter((task) => !task.parent_task_id && matches(task));
   const completedCount = listTasks.filter((task) => task.is_completed).length;
-  const openCount = listTasks.filter((task) => !task.is_completed).length;
+  const openCount = listTasks.filter((task) => !task.is_completed && !task.is_cancelled).length;
+  const cancelledCount = listTasks.filter((task) => task.is_cancelled).length;
 
   const openCreate = (parentTaskId = "", assignedTo = currentUserId) => {
     setEditingId(null);
@@ -177,6 +194,7 @@ export default function TaskWorkspace() {
   };
 
   const openTask = (task: TaskRecord) => {
+    setShowReassignForm(false);
     if (scope !== "company" || activeListId !== "all") setActiveListId(task.list_id);
     if (scope !== "company") {
       setScope(task.assigned_to === currentUserId && task.created_by !== currentUserId
@@ -186,7 +204,7 @@ export default function TaskWorkspace() {
           : "todo");
     }
     setSelectedId(task.id);
-    setProgressPercent(String(task.progressReports?.[0]?.progress_percent ?? 0));
+    setProgressPercent(String(latestAssignedProgress(task)?.progress_percent ?? 0));
     setProgressNote("");
     if (task.assigned_to !== currentUserId || task.created_by === currentUserId || acknowledgementRequests.current.has(task.id)) return;
     acknowledgementRequests.current.add(task.id);
@@ -308,6 +326,7 @@ export default function TaskWorkspace() {
   };
 
   const updateTask = async (task: TaskRecord, values: Record<string, unknown>) => {
+    setSaving(true);
     setError("");
     try {
       const response = await fetch(`/api/tasks/${encodeURIComponent(task.id)}`, {
@@ -319,8 +338,43 @@ export default function TaskWorkspace() {
       if (!response.ok) throw new Error(payload.error ?? "Unable to update this task.");
       window.dispatchEvent(new Event("task-reminders-changed"));
       setReloadKey((key) => key + 1);
+      return true;
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Unable to update this task.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveReassignment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selected || !reassignTo) return;
+    if (await updateTask(selected, { assignedTo: reassignTo })) setShowReassignForm(false);
+  };
+
+  const cancelSelectedTask = async () => {
+    if (!selected || !window.confirm(`Cancel "${selected.title}"? This will stop its reminders.`)) return;
+    await updateTask(selected, { isCancelled: true });
+  };
+
+  const completeAssignedTask = async (task: TaskRecord) => {
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/tasks/${encodeURIComponent(task.id)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "complete" }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to complete this task.");
+      window.dispatchEvent(new Event("task-reminders-changed"));
+      setReloadKey((key) => key + 1);
+    } catch (completionError) {
+      setError(completionError instanceof Error ? completionError.message : "Unable to complete this task.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -379,7 +433,7 @@ export default function TaskWorkspace() {
       <header className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 sm:px-6" style={{ borderColor: "var(--border)" }}>
         <div className="min-w-0">
           <h1 id="tasks-title" className="text-xl font-700" style={{ color: "var(--foreground)" }}>Tasks</h1>
-          <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{openCount} open · {completedCount} completed{lists.length > 0 ? ` · ${lists.length} lists` : ""}</p>
+          <p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{openCount} open · {completedCount} completed · {cancelledCount} cancelled{lists.length > 0 ? ` · ${lists.length} lists` : ""}</p>
         </div>
         <div className="flex items-center gap-2">
           {canCreate && scope !== "company" && <button type="button" onClick={() => { setEditingList(null); setListName(""); setShowListForm(true); }} title="Create task list" aria-label="Create task list" className="inline-flex h-9 w-9 items-center justify-center border sm:hidden" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><ListPlus size={16} aria-hidden="true" /></button>}
@@ -398,12 +452,12 @@ export default function TaskWorkspace() {
             {scope !== "company" && <button type="button" aria-label="Create task list" title="Create task list" disabled={!canCreate} onClick={() => { setEditingList(null); setListName(""); setShowListForm(true); }} className="p-1 disabled:opacity-40" style={{ color: "var(--muted-foreground)" }}><ListPlus size={16} aria-hidden="true" /></button>}
           </div>
           <nav className="space-y-0.5 px-2">
-          {isChairman && <button type="button" onClick={() => { setScope("company"); setActiveListId("all"); setSelectedId(null); }} className="flex w-full items-center justify-between px-2.5 py-2 text-left text-xs font-600" style={{ background: scope === "company" ? "var(--secondary)" : "transparent", color: scope === "company" ? "var(--primary)" : "var(--muted-foreground)" }}>
-            <span className="truncate">Company overview</span><span className="mono ml-2 text-[10px]">{tasks.filter((task) => !task.is_completed).length}</span>
+          {canViewCompanyOverview && <button type="button" onClick={() => { setScope("company"); setActiveListId("all"); setSelectedId(null); }} className="flex w-full items-center justify-between px-2.5 py-2 text-left text-xs font-600" style={{ background: scope === "company" ? "var(--secondary)" : "transparent", color: scope === "company" ? "var(--primary)" : "var(--muted-foreground)" }}>
+            <span className="truncate">Company overview</span><span className="mono ml-2 text-[10px]">{tasks.filter((task) => !task.is_completed && !task.is_cancelled).length}</span>
           </button>}
             {lists.map((list) => (
-            <button key={list.id} type="button" onClick={() => { setActiveListId(list.id); if (isChairman) setScope("company"); setSelectedId(null); }} className="flex w-full items-center justify-between px-2.5 py-2 text-left text-xs font-600" style={{ background: activeListId === list.id && (scope === "company" || !isChairman) ? "var(--secondary)" : "transparent", color: activeListId === list.id && (scope === "company" || !isChairman) ? "var(--primary)" : "var(--muted-foreground)" }}>
-                <span className="truncate">{list.name}</span><span className="mono ml-2 text-[10px]">{tasks.filter((task) => task.list_id === list.id && inScope(task) && !task.is_completed).length}</span>
+            <button key={list.id} type="button" onClick={() => { setActiveListId(list.id); if (canViewCompanyOverview) setScope("company"); setSelectedId(null); }} className="flex w-full items-center justify-between px-2.5 py-2 text-left text-xs font-600" style={{ background: activeListId === list.id && (scope === "company" || !canViewCompanyOverview) ? "var(--secondary)" : "transparent", color: activeListId === list.id && (scope === "company" || !canViewCompanyOverview) ? "var(--primary)" : "var(--muted-foreground)" }}>
+                <span className="truncate">{list.name}</span><span className="mono ml-2 text-[10px]">{tasks.filter((task) => task.list_id === list.id && inScope(task) && !task.is_completed && !task.is_cancelled).length}</span>
               </button>
             ))}
           </nav>
@@ -416,7 +470,7 @@ export default function TaskWorkspace() {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3 sm:px-6" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
             <select aria-label="Task list" value={activeListId} onChange={(event) => { setActiveListId(event.target.value); setSelectedId(null); }} className="min-w-0 max-w-48 border px-2.5 py-2 text-sm sm:hidden" style={inputStyle}>
-              {isChairman && <option value="all">All company lists</option>}
+              {canViewCompanyOverview && <option value="all">All company lists</option>}
               {lists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
             </select>
             <div role="tablist" aria-label="Task category" className="flex gap-1 overflow-x-auto">
@@ -424,12 +478,12 @@ export default function TaskWorkspace() {
                 { id: "todo", label: "To-do List" },
                 { id: "assigned_to_me", label: "Assigned to me" },
                 { id: "assigned_by_me", label: "Assigned by me" },
-                ...(isChairman ? [{ id: "company" as const, label: "Company overview" }] : []),
+                ...(canViewCompanyOverview ? [{ id: "company" as const, label: "Company overview" }] : []),
               ] as const).map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={scope === tab.id} onClick={() => { setScope(tab.id); if (tab.id === "company") setActiveListId("all"); else if (activeListId === "all") setActiveListId(lists[0]?.id ?? ""); setSelectedId(null); }} className="shrink-0 border-b-2 px-2.5 py-2 text-xs font-600" style={{ borderColor: scope === tab.id ? "var(--primary)" : "transparent", color: scope === tab.id ? "var(--primary)" : "var(--muted-foreground)" }}>{tab.label}</button>)}
             </div>
             <label className="flex min-w-36 flex-1 items-center gap-2 border px-3" style={{ background: "var(--secondary)", borderColor: "var(--border)" }}><Search size={15} aria-hidden="true" style={{ color: "var(--muted-foreground)" }} /><input aria-label="Search tasks" placeholder="Search tasks" value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" style={{ color: "var(--foreground)" }} /></label>
             <div role="tablist" aria-label="Filter tasks" className="flex gap-1 overflow-x-auto">
-              {([{ id: "open", label: "Open" }, { id: "starred", label: "Starred" }, { id: "completed", label: "Completed" }, { id: "all", label: "All" }] as const).map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={filter === tab.id} onClick={() => setFilter(tab.id)} className="shrink-0 border-b-2 px-2.5 py-2 text-xs font-600" style={{ borderColor: filter === tab.id ? "var(--primary)" : "transparent", color: filter === tab.id ? "var(--primary)" : "var(--muted-foreground)" }}>{tab.label}</button>)}
+              {([{ id: "open", label: "Open" }, { id: "starred", label: "Starred" }, { id: "completed", label: "Completed" }, { id: "cancelled", label: "Cancelled" }, { id: "all", label: "All" }] as const).map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={filter === tab.id} onClick={() => setFilter(tab.id)} className="shrink-0 border-b-2 px-2.5 py-2 text-xs font-600" style={{ borderColor: filter === tab.id ? "var(--primary)" : "transparent", color: filter === tab.id ? "var(--primary)" : "var(--muted-foreground)" }}>{tab.label}</button>)}
             </div>
           </div>
 
@@ -442,8 +496,8 @@ export default function TaskWorkspace() {
               {visibleTasks.map((task) => {
                 const subtasks = listTasks.filter((child) => child.parent_task_id === task.id && matches(child));
                 return <div key={task.id}>
-                  <TaskRow task={task} memberName={members.find((member) => member.id === task.assigned_to)?.name} selected={selectedId === task.id} readOnly={scope === "company"}                   progressPercent={task.progressReports?.[0]?.progress_percent} onSelect={() => selectedId === task.id ? setSelectedId(null) : openTask(task)} onComplete={() => void updateTask(task, { isCompleted: !task.is_completed })} onStar={() => void updateTask(task, { isStarred: !task.is_starred })} />
-                  {subtasks.length > 0 && <div className="ml-8 border-l sm:ml-12" style={{ borderColor: "var(--border)" }}>{subtasks.map((child) => <TaskRow key={child.id} task={child} memberName={members.find((member) => member.id === child.assigned_to)?.name} selected={selectedId === child.id} readOnly={scope === "company"} progressPercent={child.progressReports?.[0]?.progress_percent} onSelect={() => selectedId === child.id ? setSelectedId(null) : openTask(child)} onComplete={() => void updateTask(child, { isCompleted: !child.is_completed })} onStar={() => void updateTask(child, { isStarred: !child.is_starred })} />)}</div>}
+                  <TaskRow task={task} memberName={members.find((member) => member.id === task.assigned_to)?.name} selected={selectedId === task.id} readOnly={scope === "company"} canComplete={!task.is_cancelled && (task.created_by === currentUserId || task.assigned_to === currentUserId && latestAssignedProgress(task)?.progress_percent === 100)} progressPercent={latestAssignedProgress(task)?.progress_percent} onSelect={() => selectedId === task.id ? setSelectedId(null) : openTask(task)} onComplete={() => void updateTask(task, { isCompleted: !task.is_completed })} onStar={() => void updateTask(task, { isStarred: !task.is_starred })} />
+                  {subtasks.length > 0 && <div className="ml-8 border-l sm:ml-12" style={{ borderColor: "var(--border)" }}>{subtasks.map((child) => <TaskRow key={child.id} task={child} memberName={members.find((member) => member.id === child.assigned_to)?.name} selected={selectedId === child.id} readOnly={scope === "company"} canComplete={!child.is_cancelled && (child.created_by === currentUserId || child.assigned_to === currentUserId && latestAssignedProgress(child)?.progress_percent === 100)} progressPercent={latestAssignedProgress(child)?.progress_percent} onSelect={() => selectedId === child.id ? setSelectedId(null) : openTask(child)} onComplete={() => void updateTask(child, { isCompleted: !child.is_completed })} onStar={() => void updateTask(child, { isStarred: !child.is_starred })} />)}</div>}
                 </div>;
               })}
             </div>
@@ -458,17 +512,19 @@ export default function TaskWorkspace() {
               ["Assigned by", members.find((member) => member.id === selected.created_by)?.name ?? "Staff member"],
               ["Due", selected.due_at ? new Date(selected.due_at).toLocaleString() : "No due date"],
               ["Assigned to", members.find((member) => member.id === selected.assigned_to)?.name ?? "Unassigned"],
+              ["Status", selected.is_cancelled ? "Cancelled" : selected.is_completed ? "Completed" : "Open"],
               ["Priority", selected.priority],
               ["Repeats", recurrenceLabels[selected.recurrence]],
               ["Reminder", selected.reminder_at ? new Date(selected.reminder_at).toLocaleString() : "None"],
             ].map(([label, value]) => <div key={label}><div className="text-[10px] font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>{label}</div><div className="mt-1 text-sm" style={{ color: "var(--foreground)" }}>{value}</div></div>)}
             {selected.notes && <div><div className="text-[10px] font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Notes</div><p className="mt-1 whitespace-pre-wrap text-sm" style={{ color: "var(--foreground)" }}>{selected.notes}</p></div>}
+            {selected.is_cancelled && <p className="border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">This task was cancelled. No further reminders will be sent.</p>}
             <section className="border-t pt-4" style={{ borderColor: "var(--border)" }}>
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-[10px] font-700 uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>Progress history</h3>
-                <span className="text-sm font-700" style={{ color: "var(--primary)" }}>{selected.progressReports?.[0]?.progress_percent ?? 0}%</span>
+                <span className="text-sm font-700" style={{ color: "var(--primary)" }}>{selectedProgress?.progress_percent ?? 0}%</span>
               </div>
-              {scope !== "company" && selected.assigned_to === currentUserId && <form onSubmit={(event) => void submitProgress(event)} className="mt-3 space-y-2">
+              {scope !== "company" && !selected.is_completed && !selected.is_cancelled && selected.assigned_to === currentUserId && <form onSubmit={(event) => void submitProgress(event)} className="mt-3 space-y-2">
                 <label className="block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>Progress percentage
                   <input required type="number" min={0} max={100} step={1} value={progressPercent} onChange={(event) => setProgressPercent(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm" style={inputStyle} />
                 </label>
@@ -477,6 +533,11 @@ export default function TaskWorkspace() {
                 </label>
                 <button type="submit" disabled={saving} className="w-full px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Submitting..." : "Submit progress update"}</button>
               </form>}
+              {!selected.is_completed && !selected.is_cancelled
+                && selected.assigned_to === currentUserId
+                && selectedProgress?.reported_by === currentUserId
+                && selectedProgress?.progress_percent === 100
+                && <button type="button" onClick={() => void completeAssignedTask(selected)} disabled={saving} className="mt-3 inline-flex w-full items-center justify-center gap-2 px-3 py-2 text-xs font-700 disabled:opacity-50" style={{ background: "#17845b", color: "white" }}><CircleCheck size={15} aria-hidden="true" />{saving ? "Completing..." : "Mark as complete"}</button>}
               <ol className="mt-3 space-y-3">
                 {(selected.progressReports ?? []).map((report) => <li key={report.id} className="border-l-2 pl-3" style={{ borderColor: "var(--primary)" }}>
                   <div className="flex items-center justify-between gap-2 text-xs">
@@ -489,10 +550,24 @@ export default function TaskWorkspace() {
                 {!(selected.progressReports ?? []).length && <li className="text-xs" style={{ color: "var(--muted-foreground)" }}>No progress updates have been submitted.</li>}
               </ol>
             </section>
+            {showReassignForm && <form onSubmit={(event) => void saveReassignment(event)} className="space-y-2 border-t pt-4" style={{ borderColor: "var(--border)" }}>
+              <label className="block text-xs font-600" style={{ color: "var(--muted-foreground)" }}>Reassign to an active company member
+                <select required value={reassignTo} onChange={(event) => setReassignTo(event.target.value)} className="mt-1 w-full border px-3 py-2 text-sm" style={inputStyle}>
+                  <option value="">Choose a member</option>
+                  {members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                </select>
+              </label>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setShowReassignForm(false)} className="flex-1 border px-3 py-2 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}>Keep current assignee</button>
+                <button type="submit" disabled={saving || !reassignTo} className="flex-1 px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>{saving ? "Reassigning..." : "Confirm reassignment"}</button>
+              </div>
+            </form>}
             <div className="flex flex-wrap gap-2 border-t pt-4" style={{ borderColor: "var(--border)" }}>
               {scope !== "company" && canEdit && <button type="button" onClick={() => openEdit(selected)} className="inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-sm font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Pencil size={14} aria-hidden="true" />Edit</button>}
               {scope !== "company" && canCreate && !selected.parent_task_id && <button type="button" onClick={() => openCreate(selected.id)} className="inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-sm font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}><Plus size={14} aria-hidden="true" />Subtask</button>}
               {scope !== "company" && canEdit && <button type="button" aria-label="Delete task" title="Delete task" onClick={() => void deleteTask(selected)} className="border p-2" style={{ borderColor: "var(--border)", color: "#bd3d3d" }}><Trash2 size={15} aria-hidden="true" /></button>}
+              {(selected.created_by === currentUserId || canReassign) && !selected.is_completed && !selected.is_cancelled && <button type="button" onClick={() => { setReassignTo(selected.assigned_to ?? ""); setShowReassignForm((visible) => !visible); }} className="inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-xs font-600" style={{ borderColor: "var(--border)", color: "var(--foreground)" }}>{showReassignForm ? "Hide reassignment" : "Reassign"}</button>}
+              {(selected.created_by === currentUserId || canReassign) && !selected.is_completed && !selected.is_cancelled && <button type="button" onClick={() => void cancelSelectedTask()} disabled={saving} className="inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-xs font-600 disabled:opacity-50" style={{ borderColor: "#bd3d3d80", color: "#bd3d3d" }}>Cancel task</button>}
             </div>
           </div>
         </aside>}
@@ -530,23 +605,24 @@ export default function TaskWorkspace() {
   );
 }
 
-function TaskRow({ task, memberName, selected, readOnly = false, progressPercent, onSelect, onComplete, onStar }: {
+function TaskRow({ task, memberName, selected, readOnly = false, canComplete, progressPercent, onSelect, onComplete, onStar }: {
   task: TaskRecord;
   memberName?: string;
   selected: boolean;
   readOnly?: boolean;
+  canComplete: boolean;
   progressPercent?: number;
   onSelect: () => void;
   onComplete: () => void;
   onStar: () => void;
 }) {
-  const isOverdue = !task.is_completed && task.due_at !== null && Date.parse(task.due_at) < Date.now();
+  const isOverdue = !task.is_completed && !task.is_cancelled && task.due_at !== null && Date.parse(task.due_at) < Date.now();
   return <div className="flex items-start gap-3 px-4 py-3 sm:px-6" style={{ background: selected ? "var(--secondary)" : "transparent" }}>
-    <button type="button" disabled={readOnly} onClick={onComplete} aria-label={task.is_completed ? "Mark task incomplete" : "Mark task complete"} title={readOnly ? "Company overview is read-only" : task.is_completed ? "Mark incomplete" : "Mark complete"} className="mt-0.5 shrink-0 disabled:cursor-default" style={{ color: task.is_completed ? "#17845b" : "var(--muted-foreground)" }}>{task.is_completed ? <CircleCheck size={19} aria-hidden="true" /> : <span className="block h-4.5 w-4.5 rounded-full border" style={{ borderColor: "var(--border)" }} />}</button>
+    <button type="button" disabled={readOnly || !canComplete || task.is_cancelled} onClick={onComplete} aria-label={task.is_cancelled ? "Task cancelled" : task.is_completed ? "Mark task incomplete" : "Mark task complete"} title={readOnly ? "Company overview is read-only" : task.is_cancelled ? "Cancelled tasks cannot be completed" : !canComplete ? "Assigned tasks require a 100% progress update before completion" : task.is_completed ? "Mark incomplete" : "Mark complete"} className="mt-0.5 shrink-0 disabled:cursor-default" style={{ color: task.is_completed ? "#17845b" : "var(--muted-foreground)" }}>{task.is_completed ? <CircleCheck size={19} aria-hidden="true" /> : <span className="block h-4.5 w-4.5 rounded-full border" style={{ borderColor: "var(--border)" }} />}</button>
     <div className="min-w-0 flex-1">
-      <button type="button" onClick={onSelect} className={`block max-w-full text-left text-sm font-600 ${task.is_completed ? "line-through opacity-60" : ""}`} style={{ color: "var(--foreground)" }}>{task.title}</button>
+      <button type="button" onClick={onSelect} className={`block max-w-full text-left text-sm font-600 ${task.is_completed || task.is_cancelled ? "line-through opacity-60" : ""}`} style={{ color: "var(--foreground)" }}>{task.title}</button>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]" style={{ color: "var(--muted-foreground)" }}>
-        <span className="inline-flex items-center gap-1" style={{ color: isOverdue ? "#bd3d3d" : "var(--muted-foreground)" }}><CalendarClock size={12} aria-hidden="true" />{dueLabel(task.due_at)}</span>
+        <span className="inline-flex items-center gap-1" style={{ color: isOverdue ? "#bd3d3d" : "var(--muted-foreground)" }}><CalendarClock size={12} aria-hidden="true" />{task.is_cancelled ? "Cancelled" : dueLabel(task.due_at)}</span>
         <span className="font-600" style={{ color: priorityColor[task.priority] }}>{task.priority}</span>
         {memberName && <span>{memberName}</span>}
         {progressPercent !== undefined && <span className="font-600" style={{ color: "var(--primary)" }}>Progress {progressPercent}%</span>}

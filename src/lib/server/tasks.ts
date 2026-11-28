@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { sendCompanySms } from "@/lib/server/sms-billing";
 import { normalizeUgandanPhone } from "@/lib/server/smsug";
 
-export type TaskPermission = "tasks.view" | "tasks.create" | "tasks.edit" | "tasks.delete";
+export type TaskPermission = "tasks.view" | "tasks.create" | "tasks.edit" | "tasks.delete" | "tasks.reassign";
 export type TaskSupabase = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 export type TaskAccess =
   | { supabase: TaskSupabase; companyId: string; userId: string }
@@ -43,7 +43,13 @@ export async function hasTaskPermission(access: TaskAccess, permission: TaskPerm
     requested_company_id: access.companyId,
     requested_permission: permission,
   });
-  return !error && Boolean(data);
+  if (!error && data) return true;
+
+  const { data: company, error: companyError } = await access.supabase.from("companies")
+    .select("primary_admin_user_id")
+    .eq("id", access.companyId)
+    .maybeSingle();
+  return !companyError && company?.primary_admin_user_id === access.userId;
 }
 
 export function isUuid(value: unknown): value is string {
@@ -62,6 +68,7 @@ export async function dispatchDueTaskReminders(access: Extract<TaskAccess, { sup
       .eq("company_id", access.companyId)
       .or(`created_by.eq.${access.userId},assigned_to.eq.${access.userId}`)
       .eq("is_completed", false)
+      .eq("is_cancelled", false)
       .not("reminder_at", "is", null)
       .lte("reminder_at", now)
       .limit(100),
@@ -130,7 +137,7 @@ export async function dispatchQueuedTaskSms(companyId?: string, recipientId?: st
 
     if (reminder.notification_type === "acknowledgement_reminder") {
       const { data: task, error: taskError } = await admin.from("tasks")
-        .select("assignment_acknowledged_at, is_completed")
+        .select("assignment_acknowledged_at, assigned_to, created_by, is_completed, is_cancelled")
         .eq("id", reminder.task_id).eq("company_id", reminder.company_id).maybeSingle();
       if (taskError || !task) {
         console.error("Unable to verify task acknowledgement before SMS delivery", taskError);
@@ -140,11 +147,31 @@ export async function dispatchQueuedTaskSms(companyId?: string, recipientId?: st
         if (error) console.error("Unable to record task SMS verification failure", error);
         continue;
       }
-      if (task.assignment_acknowledged_at || task.is_completed) {
+      if (task.assignment_acknowledged_at || task.is_completed || task.is_cancelled || task.assigned_to !== reminder.recipient_id) {
         const { error } = await admin.from("task_notifications")
           .update({ sms_status: "not_requested" })
           .eq("id", reminder.id).eq("company_id", reminder.company_id);
         if (error) console.error("Unable to cancel acknowledged task SMS reminder", error);
+        continue;
+      }
+    }
+    if (reminder.notification_type !== "acknowledgement_reminder") {
+      const { data: task, error: taskError } = await admin.from("tasks")
+        .select("assigned_to, created_by, is_completed, is_cancelled")
+        .eq("id", reminder.task_id).eq("company_id", reminder.company_id).maybeSingle();
+      if (taskError || !task) {
+        console.error("Unable to verify task status before SMS delivery", taskError);
+        const { error } = await admin.from("task_notifications")
+          .update({ sms_status: "failed", sms_error: "Unable to verify task status before SMS delivery." })
+          .eq("id", reminder.id).eq("company_id", reminder.company_id);
+        if (error) console.error("Unable to record task SMS verification failure", error);
+        continue;
+      }
+      if (task.is_completed || task.is_cancelled || (task.assigned_to ?? task.created_by) !== reminder.recipient_id) {
+        const { error } = await admin.from("task_notifications")
+          .update({ sms_status: "not_requested" })
+          .eq("id", reminder.id).eq("company_id", reminder.company_id);
+        if (error) console.error("Unable to cancel obsolete task SMS reminder", error);
         continue;
       }
     }

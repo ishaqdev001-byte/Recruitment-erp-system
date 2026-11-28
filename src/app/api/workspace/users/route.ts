@@ -34,6 +34,25 @@ function createAdminClient() {
   })
 }
 
+async function findAuthUserByEmail(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  email: string,
+) {
+  for (let page = 1; ; page += 1) {
+    const { data, error } = await admin.auth.admin.listUsers({
+      page,
+      perPage: 1000,
+    })
+    if (error) throw error
+
+    const match = data.users.find(
+      (user) => user.email?.toLocaleLowerCase() === email,
+    )
+    if (match) return match
+    if (data.users.length < 1000) return null
+  }
+}
+
 type UserTypeSelection = {
   userType: "member"
 
@@ -3582,7 +3601,7 @@ export async function POST(request: Request) {
 
           .from("company_staff_members")
 
-          .select("id, name, status, linked_user_id")
+          .select("id, name, status, branch_id, linked_user_id")
 
           .eq("company_id", access.companyId)
 
@@ -3605,17 +3624,454 @@ export async function POST(request: Request) {
             { status: 409, headers: responseHeaders },
           )
 
-        const isPendingRelink = appMetadata.workspace_invite_pending === true
-
-        if (
-          email === authUser.user.email.toLocaleLowerCase() &&
-          !isPendingRelink
-        )
-          return NextResponse.json(
-            { error: "Enter the new email address for this staff account." },
-
-            { status: 400, headers: responseHeaders },
+        let accountWithEmail: User | null
+        try {
+          accountWithEmail = await findAuthUserByEmail(admin, email)
+        } catch (lookupError) {
+          console.error(
+            "Existing staff relink email lookup failed",
+            lookupError,
           )
+          return NextResponse.json(
+            { error: "Unable to verify the requested login email." },
+            { status: 503, headers: responseHeaders },
+          )
+        }
+
+        if (accountWithEmail && accountWithEmail.id !== userId) {
+          if (!access.isPrimaryAdmin) {
+            return NextResponse.json(
+              {
+                error:
+                  "Only the Chairman can relink a staff record to an existing account.",
+              },
+              { status: 403, headers: responseHeaders },
+            )
+          }
+
+          if (body.passwordMode === "default-password") {
+            return NextResponse.json(
+              {
+                error:
+                  "That email belongs to an existing account. Its password cannot be changed through staff relinking; use the account's password recovery flow if needed.",
+              },
+              { status: 409, headers: responseHeaders },
+            )
+          }
+
+          if (!accountWithEmail.email_confirmed_at) {
+            return NextResponse.json(
+              {
+                error:
+                  "That account has not confirmed its email address yet. The account owner must verify it before it can be linked.",
+              },
+              { status: 409, headers: responseHeaders },
+            )
+          }
+
+          const targetMetadata = accountWithEmail.app_metadata ?? {}
+          const targetStaffId =
+            typeof targetMetadata.workspace_staff_member_id === "string"
+              ? targetMetadata.workspace_staff_member_id
+              : ""
+          const targetRelinkCompanyId =
+            typeof targetMetadata.workspace_relink_company_id === "string"
+              ? targetMetadata.workspace_relink_company_id
+              : ""
+          const isSameStaffRelink =
+            targetMetadata.workspace_account_unlinked === true &&
+            targetStaffId === staffId &&
+            targetRelinkCompanyId === access.companyId
+          if (
+            (targetMetadata.workspace_account_unlinked === true &&
+              !isSameStaffRelink) ||
+            (targetMetadata.workspace_invite_pending === true &&
+              !isSameStaffRelink) ||
+            (targetStaffId && targetStaffId !== staffId)
+          ) {
+            return NextResponse.json(
+              {
+                error:
+                  "That account is already being relinked or assigned to another staff profile. Complete that account's existing link first.",
+              },
+              { status: 409, headers: responseHeaders },
+            )
+          }
+
+          const [
+            { data: targetMembership, error: targetMembershipError },
+            { data: linkedStaffRecords, error: linkedStaffError },
+            { data: sourceRole, error: sourceRoleError },
+          ] = await Promise.all([
+            admin
+              .from("company_memberships")
+              .select("user_id, status, role_id, branch_id")
+              .eq("company_id", access.companyId)
+              .eq("user_id", accountWithEmail.id)
+              .maybeSingle(),
+            admin
+              .from("company_staff_members")
+              .select("id, name")
+              .eq("company_id", access.companyId)
+              .eq("linked_user_id", accountWithEmail.id)
+              .limit(2),
+            admin
+              .from("company_roles")
+              .select("id, name")
+              .eq("company_id", access.companyId)
+              .eq("id", membership.role_id)
+              .maybeSingle(),
+          ])
+
+          const lookupError =
+            targetMembershipError ?? linkedStaffError ?? sourceRoleError
+          if (lookupError) {
+            console.error("Existing account relink checks failed", lookupError)
+            return NextResponse.json(
+              {
+                error:
+                  "Unable to verify the existing account's company assignment.",
+              },
+              { status: 503, headers: responseHeaders },
+            )
+          }
+
+          if (accountWithEmail.id === company.primary_admin_user_id) {
+            return NextResponse.json(
+              {
+                error:
+                  "The primary company administrator account cannot be reassigned to another staff profile.",
+              },
+              { status: 403, headers: responseHeaders },
+            )
+          }
+
+          if (linkedStaffRecords?.length) {
+            const existingStaffName = linkedStaffRecords[0].name
+            return NextResponse.json(
+              {
+                error: `That account is already linked to ${existingStaffName}. Unlink that staff profile before assigning it to ${staff.name}.`,
+              },
+              { status: 409, headers: responseHeaders },
+            )
+          }
+
+          const targetMembershipRole = targetMembership
+            ? await admin
+                .from("company_roles")
+                .select("name")
+                .eq("company_id", access.companyId)
+                .eq("id", targetMembership.role_id)
+                .maybeSingle()
+            : null
+          if (targetMembershipRole?.error) {
+            console.error(
+              "Existing account role lookup failed",
+              targetMembershipRole.error,
+            )
+            return NextResponse.json(
+              {
+                error: "Unable to verify the existing account's company role.",
+              },
+              { status: 503, headers: responseHeaders },
+            )
+          }
+
+          const existingRoleName = targetMembershipRole?.data?.name
+          if (
+            accountWithEmail.id === company.primary_admin_user_id ||
+            (existingRoleName && isPrimaryAdministratorRole(existingRoleName))
+          ) {
+            return NextResponse.json(
+              {
+                error:
+                  "A protected company administrator account cannot be reassigned to another staff profile.",
+              },
+              { status: 403, headers: responseHeaders },
+            )
+          }
+
+          if (!sourceRole || isPrimaryAdministratorRole(sourceRole.name)) {
+            return NextResponse.json(
+              {
+                error:
+                  "The disabled staff account does not have an eligible company role.",
+              },
+              { status: 409, headers: responseHeaders },
+            )
+          }
+
+          const originalSourceMetadata = appMetadata
+          const originalTargetMetadata = targetMetadata
+          const originalMembership = targetMembership
+          let membershipCreated = false
+          let membershipUpdated = false
+
+          if (targetMembership) {
+            const { data: updatedMembership, error: updateMembershipError } =
+              await admin
+                .from("company_memberships")
+                .update({
+                  role_id: membership.role_id,
+                  branch_id: staff.branch_id,
+                  status: "active",
+                })
+                .eq("company_id", access.companyId)
+                .eq("user_id", accountWithEmail.id)
+                .select("user_id")
+                .maybeSingle()
+            if (updateMembershipError || !updatedMembership) {
+              console.error(
+                "Existing account company membership update failed",
+                updateMembershipError,
+              )
+              return NextResponse.json(
+                {
+                  error:
+                    "Unable to apply the disabled staff account's company role.",
+                },
+                { status: 503, headers: responseHeaders },
+              )
+            }
+            membershipUpdated = true
+          } else {
+            const { error: insertMembershipError } = await admin
+              .from("company_memberships")
+              .insert({
+                company_id: access.companyId,
+                user_id: accountWithEmail.id,
+                role_id: membership.role_id,
+                branch_id: staff.branch_id,
+                status: "active",
+              })
+            if (insertMembershipError) {
+              console.error(
+                "Existing account company membership creation failed",
+                insertMembershipError,
+              )
+              return NextResponse.json(
+                {
+                  error: "Unable to add the existing account to this company.",
+                },
+                {
+                  status: insertMembershipError.code === "23505" ? 409 : 503,
+                  headers: responseHeaders,
+                },
+              )
+            }
+            membershipCreated = true
+          }
+
+          const rollbackTargetMembership = async () => {
+            if (membershipCreated) {
+              const { error } = await admin
+                .from("company_memberships")
+                .delete()
+                .eq("company_id", access.companyId)
+                .eq("user_id", accountWithEmail.id)
+              if (error)
+                console.error(
+                  "Existing account membership rollback failed",
+                  error,
+                )
+              return !error
+            }
+            if (membershipUpdated && originalMembership) {
+              const { error } = await admin
+                .from("company_memberships")
+                .update({
+                  role_id: originalMembership.role_id,
+                  branch_id: originalMembership.branch_id,
+                  status: originalMembership.status,
+                })
+                .eq("company_id", access.companyId)
+                .eq("user_id", accountWithEmail.id)
+              if (error)
+                console.error(
+                  "Existing account membership rollback failed",
+                  error,
+                )
+              return !error
+            }
+            return true
+          }
+
+          const { data: linkedStaff, error: staffLinkError } = await admin
+            .from("company_staff_members")
+            .update({
+              linked_user_id: accountWithEmail.id,
+              status: "Active",
+              updated_by: access.userId,
+            })
+            .eq("company_id", access.companyId)
+            .eq("id", staffId)
+            .eq("status", "Inactive")
+            .is("linked_user_id", null)
+            .select("id")
+            .maybeSingle()
+
+          if (staffLinkError || !linkedStaff) {
+            const membershipRestored = await rollbackTargetMembership()
+            console.error(
+              "Existing account staff relink failed",
+              staffLinkError,
+            )
+            return NextResponse.json(
+              {
+                error: membershipRestored
+                  ? "Unable to link the existing account to this staff profile."
+                  : "Staff linking failed and the company membership could not be restored. Contact support.",
+              },
+              { status: 409, headers: responseHeaders },
+            )
+          }
+
+          const targetMetadataUpdate = isSameStaffRelink
+            ? {
+                ...targetMetadata,
+                workspace_account_unlinked: false,
+                workspace_invite_pending: false,
+                workspace_invite_revoked: false,
+                workspace_staff_member_id: staffId,
+                workspace_user_type: "staff",
+                workspace_relink_requested_by: null,
+                workspace_relink_company_id: null,
+              }
+            : null
+          const targetMetadataResult = targetMetadataUpdate
+            ? await admin.auth.admin.updateUserById(accountWithEmail.id, {
+                app_metadata: targetMetadataUpdate,
+              })
+            : { error: null }
+          const targetMetadataError = targetMetadataResult.error
+          if (targetMetadataError) {
+            const { error: staffRollbackError } = await admin
+              .from("company_staff_members")
+              .update({ linked_user_id: null, status: "Inactive" })
+              .eq("company_id", access.companyId)
+              .eq("id", staffId)
+              .eq("linked_user_id", accountWithEmail.id)
+            const membershipRestored = await rollbackTargetMembership()
+            if (staffRollbackError)
+              console.error(
+                "Existing account staff rollback failed",
+                staffRollbackError,
+              )
+            console.error(
+              "Existing account staff metadata update failed",
+              targetMetadataError,
+            )
+            return NextResponse.json(
+              {
+                error:
+                  staffRollbackError || !membershipRestored
+                    ? "The link could not be completed and its changes could not be fully restored. Contact support."
+                    : "Unable to prepare the existing account for staff access.",
+              },
+              { status: 503, headers: responseHeaders },
+            )
+          }
+
+          const sourceMetadataUpdate = {
+            ...originalSourceMetadata,
+            workspace_account_unlinked: false,
+            ...(originalSourceMetadata.workspace_staff_member_id === staffId
+              ? { workspace_staff_member_id: null }
+              : {}),
+            ...(originalSourceMetadata.workspace_relink_company_id ===
+            access.companyId
+              ? {
+                  workspace_invite_pending: false,
+                  workspace_invite_revoked: false,
+                  workspace_relink_requested_by: null,
+                  workspace_relink_company_id: null,
+                }
+              : {}),
+          }
+          const { error: sourceMetadataError } =
+            await admin.auth.admin.updateUserById(userId, {
+              app_metadata: sourceMetadataUpdate,
+            })
+          if (sourceMetadataError) {
+            const targetMetadataRollback = targetMetadataUpdate
+              ? await admin.auth.admin.updateUserById(accountWithEmail.id, {
+                  app_metadata: originalTargetMetadata,
+                })
+              : { error: null }
+            const targetMetadataRollbackError = targetMetadataRollback.error
+            const { error: staffRollbackError } = await admin
+              .from("company_staff_members")
+              .update({ linked_user_id: null, status: "Inactive" })
+              .eq("company_id", access.companyId)
+              .eq("id", staffId)
+              .eq("linked_user_id", accountWithEmail.id)
+            const membershipRestored = await rollbackTargetMembership()
+            if (targetMetadataRollbackError)
+              console.error(
+                "Existing account metadata rollback failed",
+                targetMetadataRollbackError,
+              )
+            if (staffRollbackError)
+              console.error(
+                "Existing account staff rollback failed",
+                staffRollbackError,
+              )
+            console.error(
+              "Original staff account metadata cleanup failed",
+              sourceMetadataError,
+            )
+            return NextResponse.json(
+              {
+                error:
+                  targetMetadataRollbackError ||
+                  staffRollbackError ||
+                  !membershipRestored
+                    ? "The link failed and could not be fully rolled back. Contact support."
+                    : "Unable to finish clearing the previous account's staff link.",
+              },
+              { status: 503, headers: responseHeaders },
+            )
+          }
+
+          const [oldInvitationCleanup, targetInvitationCleanup] =
+            await Promise.all([
+              admin
+                .from("workspace_invitations")
+                .delete()
+                .eq("company_id", access.companyId)
+                .eq("user_id", userId)
+                .is("accepted_at", null),
+              admin
+                .from("workspace_invitations")
+                .delete()
+                .eq("company_id", access.companyId)
+                .eq("user_id", accountWithEmail.id)
+                .is("accepted_at", null),
+            ])
+          const invitationCleanupError =
+            oldInvitationCleanup.error ?? targetInvitationCleanup.error
+          if (invitationCleanupError)
+            console.error(
+              "Existing account staff invitation cleanup failed",
+              invitationCleanupError,
+            )
+
+          return NextResponse.json(
+            {
+              success: true,
+              linkedExistingAccount: true,
+              email: accountWithEmail.email,
+              role: sourceRole.name,
+              ...(invitationCleanupError
+                ? {
+                    warning:
+                      "The account was linked, but an older invitation could not be removed. Ask the linked user to ignore any obsolete invitation.",
+                  }
+                : {}),
+            },
+            { headers: responseHeaders },
+          )
+        }
 
         if (body.passwordMode === "default-password") {
           const password =
@@ -3634,7 +4090,10 @@ export async function POST(request: Request) {
             .maybeSingle()
 
           if (profileReadError) {
-            console.error("Staff relink profile lookup failed", profileReadError)
+            console.error(
+              "Staff relink profile lookup failed",
+              profileReadError,
+            )
             return NextResponse.json(
               { error: "Unable to prepare the first-login password change." },
               { status: 500, headers: responseHeaders },
@@ -3643,10 +4102,9 @@ export async function POST(request: Request) {
 
           const { error: profileWriteError } = await admin
             .from("profiles")
-            .upsert(
-              { id: userId, must_change_password: true },
-              { onConflict: "id" },
-            )
+            .upsert({ id: userId, must_change_password: true }, {
+              onConflict: "id",
+            })
 
           if (profileWriteError) {
             console.error(
@@ -3706,14 +4164,15 @@ export async function POST(request: Request) {
             )
           }
 
-          const { data: activatedMembership, error: activationError } = await admin
-            .from("company_memberships")
-            .update({ status: "active" })
-            .eq("company_id", access.companyId)
-            .eq("user_id", userId)
-            .eq("status", "disabled")
-            .select("user_id")
-            .maybeSingle()
+          const { data: activatedMembership, error: activationError } =
+            await admin
+              .from("company_memberships")
+              .update({ status: "active" })
+              .eq("company_id", access.companyId)
+              .eq("user_id", userId)
+              .eq("status", "disabled")
+              .select("user_id")
+              .maybeSingle()
 
           if (activationError || !activatedMembership) {
             const { error: staffRollbackError } = await admin
@@ -3746,9 +4205,8 @@ export async function POST(request: Request) {
             )
           }
 
-          const { error: authUpdateError } = await admin.auth.admin.updateUserById(
-            userId,
-            {
+          const { error: authUpdateError } =
+            await admin.auth.admin.updateUserById(userId, {
               email,
               password,
               email_confirm: true,
@@ -3760,8 +4218,7 @@ export async function POST(request: Request) {
                 workspace_relink_requested_by: null,
                 workspace_relink_company_id: null,
               },
-            },
-          )
+            })
 
           if (authUpdateError) {
             const { error: membershipRollbackError } = await admin
@@ -3789,7 +4246,10 @@ export async function POST(request: Request) {
                 membershipRollbackError,
               )
             if (staffRollbackError)
-              console.error("Staff relink record rollback failed", staffRollbackError)
+              console.error(
+                "Staff relink record rollback failed",
+                staffRollbackError,
+              )
             console.error("Staff relink auth update failed", authUpdateError)
 
             return NextResponse.json(

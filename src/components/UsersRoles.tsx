@@ -1779,7 +1779,7 @@ export default function UsersRoles({
       "relink-account":
         passwordMode === "default-password"
           ? `Set the default password and immediately restore ${user.name}'s access? They will have to choose a new password at first login. This changes the login email for this account across all companies.`
-          : `Send a password setup invitation to ${email?.trim()}? The link will be valid for 30 minutes. This changes the login email for this account across all companies. Access to this company remains disabled until the invitation is accepted.`,
+          : `Relink ${user.name} using ${email?.trim()}? If that email already belongs to a confirmed account, the Chairman will link that account to this staff record, retain its password and other-company access, and apply this staff assignment's company role and branch. Otherwise, the current account's login email changes across its company memberships and a 30-minute password setup invitation is sent.`,
 
       "resend-invite": `Send a fresh invitation link to ${user.email}? The new link will be valid for 30 minutes.`,
 
@@ -1847,6 +1847,10 @@ export default function UsersRoles({
         error?: string
 
         warning?: string
+
+        linkedExistingAccount?: boolean
+
+        role?: string
       }
 
       if (!response.ok)
@@ -1859,9 +1863,11 @@ export default function UsersRoles({
             : action === "unlink-account"
               ? `${user.name}'s staff account was unlinked and company access disabled.`
               : action === "relink-account"
-                ? passwordMode === "default-password"
-                  ? `${user.name} was relinked. They must change the default password at first login.`
-                  : `A new password setup link was sent to ${email?.trim()}.`
+                ? result.linkedExistingAccount
+                  ? `Existing account ${email?.trim()} is now linked to ${user.name} as ${result.role ?? "company staff"}. The account password and access to other companies were not changed.`
+                  : passwordMode === "default-password"
+                    ? `${user.name} was relinked. They must change the default password at first login.`
+                    : `A new password setup link was sent to ${email?.trim()}.`
                 : action === "resend-invite"
                   ? `A fresh invitation link was sent to ${user.email}.`
                   : action === "set-status"
@@ -2944,18 +2950,25 @@ export default function UsersRoles({
                                   onChange={(event) =>
                                     setRelinkEmail(event.target.value)
                                   }
-                                  placeholder="New login email"
+                                  placeholder="Login email"
                                   className="w-48 rounded border px-2 py-1 text-xs"
                                   style={fieldStyle}
                                 />
+                                <span
+                                  className="basis-full text-[11px]"
+                                  style={{ color: "var(--muted-foreground)" }}
+                                >
+                                  If this email already has a confirmed account,
+                                  the Chairman can link that account without
+                                  changing its password.
+                                </span>
                                 <select
                                   aria-label={`Password setup method for ${user.name}`}
                                   value={relinkPasswordMode}
                                   onChange={(event) => {
                                     setRelinkPasswordMode(
-                                      event.target.value as
-                                        | "email-link"
-                                        | "default-password",
+                                      event.target
+                                        .value as "email-link" | "default-password",
                                     )
                                     setRelinkDefaultPassword("")
                                   }}

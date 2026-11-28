@@ -64,11 +64,24 @@ export async function generateMetadata({
     ]
       .filter((part): part is string => Boolean(part?.trim()))
       .join(", ");
-    const title = `${company.name} | Company Login`;
-    const description = location
-      ? `Sign in to ${company.name}'s recruitment workspace in ${location}.`
-      : `Sign in to ${company.name}'s recruitment workspace.`;
+    
+    // Build dynamic title and description
+    const companyName = company.name || "Recruitment Portal";
+    const title = `${companyName} | Recruitment Dashboard`;
+    const shortDescription = location
+      ? `${companyName} recruitment operations in ${location}.`
+      : `${companyName} recruitment operations.`;
+    const fullDescription = location
+      ? `Access ${companyName}'s recruitment workspace. Manage candidates, track applications, and oversee deployment operations in ${location}. Powered by Kilax Smart Recruit.`
+      : `Access ${companyName}'s recruitment workspace. Manage candidates, track applications, and oversee deployment operations. Powered by Kilax Smart Recruit.`;
+    
+    // Determine logo URL
     let logoUrl = new URL("/branding/kilax-icon.svg", origin).toString();
+    let ogImageUrl = new URL(
+      `/api/companies/${encodeURIComponent(slug)}/og-image`,
+      origin
+    ).toString();
+    
     if (company.logo_url?.startsWith("data:image/")) {
       logoUrl = new URL(
         `/api/companies/${encodeURIComponent(slug)}/logo`,
@@ -77,37 +90,67 @@ export async function generateMetadata({
     } else if (company.logo_url?.startsWith("https://")) {
       logoUrl = company.logo_url;
     }
-    const loginUrl = new URL(
-      `/${encodeURIComponent(slug)}/login`,
+    
+    const companyUrl = new URL(
+      `/${encodeURIComponent(slug)}`,
       origin,
     ).toString();
 
     return {
       metadataBase: new URL(origin),
       title,
-      description,
-      alternates: { canonical: loginUrl },
+      description: fullDescription,
+      alternates: { canonical: companyUrl },
+      keywords: [
+        companyName,
+        "recruitment",
+        "candidate management",
+        "hiring",
+        location || "international recruitment",
+        "workforce management",
+      ].filter(Boolean),
       openGraph: {
-        title: company.name,
-        description,
-        url: loginUrl,
-        siteName: company.name,
         type: "website",
-        images: [{ url: logoUrl, alt: `${company.name} logo` }],
+        locale: "en_US",
+        url: companyUrl,
+        siteName: `${companyName} - Recruitment Portal`,
+        title: `${companyName} Recruitment Dashboard`,
+        description: fullDescription,
+        images: [
+          {
+            url: ogImageUrl,
+            width: 1200,
+            height: 630,
+            alt: `${companyName} Recruitment Portal`,
+            type: "image/svg+xml",
+          },
+        ],
       },
       twitter: {
-        card: "summary",
-        title: company.name,
-        description,
-        images: [logoUrl],
+        card: "summary_large_image",
+        title: `${companyName} Recruitment Portal`,
+        description: shortDescription,
+        images: [ogImageUrl],
+      },
+      robots: {
+        index: false, // Company workspaces should not be indexed by search engines
+        follow: false,
+        googleBot: {
+          index: false,
+          follow: false,
+        },
       },
     };
   } catch (error) {
     console.error("Error fetching company metadata:", error);
 
     return {
-      title: "Kilax Smart Recruit | Company Login",
-      description: "Sign in to your company's recruitment workspace",
+      title: "Kilax Smart Recruit | Company Workspace",
+      description: "Access your company's recruitment workspace powered by Kilax Smart Recruit",
+      robots: {
+        index: false,
+        follow: false,
+      },
     };
   }
 }

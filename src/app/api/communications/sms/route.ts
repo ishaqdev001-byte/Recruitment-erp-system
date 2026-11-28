@@ -1,11 +1,30 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { isValidSmsTitle, normalizeUgandanPhone, sendSmsUg } from "@/lib/server/smsug";
+import { getCompanySmsPricing, sendCompanySms } from "@/lib/server/sms-billing";
+import { isValidSmsTitle, normalizeUgandanPhone } from "@/lib/server/smsug";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-type SmsAccess = { supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>; companyId: string; userId: string; roleName: string };
+type SmsAccess = {
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  companyId: string;
+  userId: string;
+  roleName: string;
+  canSend: boolean;
+  canViewCredits: boolean;
+  canManageCredits: boolean;
+};
+
+function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
 
 function monthKeyInWorkspaceTimezone(date: Date) {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Africa/Kampala", year: "numeric", month: "2-digit" }).formatToParts(date);
@@ -29,29 +48,61 @@ async function getSmsAccess(): Promise<SmsAccess | { error: string; status: 401 
   const { data: membership, error: membershipError } = await supabase.from("company_memberships")
     .select("company_id, role_id").eq("user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   if (membershipError || !membership) return { error: "Active company membership not found.", status: 403 };
-  const { data: allowed, error: permissionError } = await supabase.rpc("current_user_has_company_permission", {
-    requested_company_id: membership.company_id,
-    requested_permission: "communications.sms.send",
-  });
-  if (permissionError || !allowed) return { error: "You do not have permission to send SMS. Ask an administrator to grant communications.sms.send." , status: 403 };
+  const [sendPermission, viewPermission, managePermission] = await Promise.all([
+    supabase.rpc("current_user_has_company_permission", {
+      requested_company_id: membership.company_id,
+      requested_permission: "communications.sms.send",
+    }),
+    supabase.rpc("current_user_has_company_permission", {
+      requested_company_id: membership.company_id,
+      requested_permission: "communications.sms.credit.view",
+    }),
+    supabase.rpc("current_user_has_company_permission", {
+      requested_company_id: membership.company_id,
+      requested_permission: "communications.sms.credit.manage",
+    }),
+  ]);
+  if (sendPermission.error || viewPermission.error || managePermission.error) {
+    return { error: "Unable to verify company SMS permissions.", status: 403 };
+  }
+  const canSend = Boolean(sendPermission.data);
+  const canManageCredits = Boolean(managePermission.data);
+  const canViewCredits = Boolean(viewPermission.data || canManageCredits);
+  if (!canSend && !canViewCredits) {
+    return { error: "You do not have permission to view SMS credit or send SMS.", status: 403 };
+  }
   const { data: role, error: roleError } = await supabase.from("company_roles").select("name")
     .eq("id", membership.role_id).eq("company_id", membership.company_id).maybeSingle();
   if (roleError || !role) return { error: "Your company role could not be resolved.", status: 403 };
   if (role.name.trim().toLowerCase() === "recruitment agent") {
     return { error: "Recruitment Agents can view only their agent notes in Communications.", status: 403 };
   }
-  return { supabase, companyId: membership.company_id, userId: user.id, roleName: role.name };
+  return {
+    supabase,
+    companyId: membership.company_id,
+    userId: user.id,
+    roleName: role.name,
+    canSend,
+    canViewCredits,
+    canManageCredits,
+  };
 }
 
 export async function GET(request: Request) {
   try {
     const access = await getSmsAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
-    const { data, error } = await access.supabase.from("sms_message_logs")
-      .select("id, title, message, contacts, contact_name, contact_type, provider_status, provider_error, provider_token, recipients, cost, balance, created_at")
-      .eq("company_id", access.companyId).order("created_at", { ascending: false }).limit(100);
-    if (error) throw error;
-    const canViewHistoricalUsage = /ceo|company owner|manager/i.test(access.roleName);
+    const admin = createAdminClient();
+    if (!admin) throw new Error("Company SMS billing is not configured on the server.");
+    let data: Array<Record<string, unknown>> = [];
+    if (access.canSend) {
+      const { data: messages, error } = await access.supabase.from("sms_message_logs")
+        .select("id, title, message, contacts, contact_name, contact_type, provider_status, provider_error, provider_token, recipients, cost, balance, request_id, created_at")
+        .eq("company_id", access.companyId).order("created_at", { ascending: false }).limit(100);
+      if (error) throw error;
+      data = (messages ?? []) as Array<Record<string, unknown>>;
+    }
+    const canViewHistoricalUsage = /ceo|company owner|manager/i.test(access.roleName) || access.canViewCredits;
     const currentMonth = monthKeyInWorkspaceTimezone(new Date());
     const availableMonths = Array.from({ length: canViewHistoricalUsage ? 4 : 1 }, (_, index) => {
       const month = shiftMonth(currentMonth, -index);
@@ -70,20 +121,86 @@ export async function GET(request: Request) {
     const start = startOfWorkspaceMonthUtc(selectedMonth);
     const end = startOfWorkspaceMonthUtc(nextMonth);
     const dailyCounts = Array.from({ length: daysInMonth }, () => 0);
-    for (let offset = 0; offset < 10000; offset += 1000) {
-      const { data: usageRows, error: usageError } = await access.supabase.from("sms_message_logs")
-        .select("created_at")
-        .eq("company_id", access.companyId).gte("created_at", start).lt("created_at", end)
-        .order("created_at", { ascending: true }).range(offset, offset + 999);
-      if (usageError) throw usageError;
-      for (const row of usageRows ?? []) {
-        const day = Number(new Intl.DateTimeFormat("en", { timeZone: "Africa/Kampala", day: "2-digit" }).format(new Date(row.created_at)));
-        if (day >= 1 && day <= daysInMonth) dailyCounts[day - 1] += 1;
-      }
-      if (!usageRows || usageRows.length < 1000) break;
+    const { data: usageRows, error: usageError } = await admin.from("company_sms_credit_ledger")
+      .select("created_at, recipient_count")
+      .eq("company_id", access.companyId)
+      .eq("entry_type", "sms_usage")
+      .eq("status", "settled")
+      .gte("created_at", start)
+      .lt("created_at", end)
+      .order("created_at", { ascending: true })
+      .limit(10000);
+    if (usageError) throw usageError;
+    for (const row of usageRows ?? []) {
+      const day = Number(new Intl.DateTimeFormat("en", { timeZone: "Africa/Kampala", day: "2-digit" }).format(new Date(row.created_at)));
+      if (day >= 1 && day <= daysInMonth) dailyCounts[day - 1] += row.recipient_count;
     }
     const usage = { month: selectedMonth, months: availableMonths, dailyCounts };
-    return NextResponse.json({ messages: data ?? [], configured: Boolean(process.env.SMSUG_API_KEY?.trim()), usage }, { headers });
+    let pricing: Awaited<ReturnType<typeof getCompanySmsPricing>> | null = null;
+    let pricingError: string | null = null;
+    try {
+      pricing = await getCompanySmsPricing(admin, access.companyId);
+    } catch (error) {
+      pricingError = error instanceof Error ? error.message : "SMS pricing is unavailable.";
+    }
+
+    let wallet: { currency: string; balance: number; reservedBalance: number } | null = null;
+    const ledgerByReference: Record<string, {
+      amount: number;
+      currency: string;
+      segment_count: number;
+      recipient_count: number;
+      status: string;
+    }> = {};
+    if (access.canViewCredits) {
+      const [walletResult, ledgerResult] = await Promise.all([
+        admin.from("company_sms_wallets")
+          .select("currency, balance, reserved_balance")
+          .eq("company_id", access.companyId)
+          .maybeSingle(),
+        admin.from("company_sms_credit_ledger")
+          .select("reference, amount, currency, segment_count, recipient_count, status")
+          .eq("company_id", access.companyId)
+          .eq("entry_type", "sms_usage")
+          .order("created_at", { ascending: false })
+          .limit(100),
+      ]);
+      if (walletResult.error || ledgerResult.error) throw walletResult.error ?? ledgerResult.error;
+      if (walletResult.data) {
+        wallet = {
+          currency: walletResult.data.currency,
+          balance: Number(walletResult.data.balance),
+          reservedBalance: Number(walletResult.data.reserved_balance),
+        };
+      }
+      for (const entry of ledgerResult.data ?? []) {
+        ledgerByReference[entry.reference] = {
+          amount: Number(entry.amount),
+          currency: entry.currency,
+          segment_count: entry.segment_count,
+          recipient_count: entry.recipient_count,
+          status: entry.status,
+        };
+      }
+    }
+
+    const messages = data.map((message) => ({
+      ...message,
+      billing: typeof message.request_id === "string" ? ledgerByReference[message.request_id] ?? null : null,
+    }));
+    return NextResponse.json({
+      messages,
+      configured: Boolean(process.env.SMSUG_API_KEY?.trim()),
+      usage,
+      canSend: access.canSend,
+      canViewCredits: access.canViewCredits,
+      canManageCredits: access.canManageCredits,
+      currency: pricing?.currency ?? wallet?.currency ?? null,
+      unitPrice: pricing?.unitPrice ?? null,
+      fxTimestamp: pricing?.timestamp ?? null,
+      pricingError,
+      balance: wallet ? wallet.balance - wallet.reservedBalance : null,
+    }, { headers });
   } catch (error) {
     console.error("SMS history request failed", error);
     return NextResponse.json({ error: "SMS history is unavailable." }, { status: 503, headers });
@@ -94,6 +211,9 @@ export async function POST(request: Request) {
   try {
     const access = await getSmsAccess();
     if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status, headers });
+    if (!access.canSend) {
+      return NextResponse.json({ error: "You do not have permission to send SMS." }, { status: 403, headers });
+    }
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     const requestId = typeof body?.requestId === "string" ? body.requestId : "";
     const title = typeof body?.title === "string" ? body.title.trim() : "";
@@ -137,7 +257,24 @@ export async function POST(request: Request) {
     }
     if (!claimed) return NextResponse.json({ error: "Unable to safely record this SMS request. No message was sent." }, { status: 503, headers });
 
-    const result = await sendSmsUg(title, message, contacts);
+    const admin = createAdminClient();
+    if (!admin) {
+      await access.supabase.from("sms_message_logs")
+        .update({ provider_status: "failed", provider_error: "Company SMS billing is not configured on the server." })
+        .eq("id", claimed.id)
+        .eq("company_id", access.companyId);
+      return NextResponse.json({ error: "Company SMS billing is not configured on the server." }, { status: 503, headers });
+    }
+    const result = await sendCompanySms({
+      admin,
+      companyId: access.companyId,
+      reference: requestId,
+      title,
+      message,
+      contacts,
+      source: "communications",
+      createdBy: access.userId,
+    });
     if (result.ok) {
       const { data: sent, error: updateError } = await access.supabase.from("sms_message_logs").update({
         provider_status: "sent",
@@ -148,10 +285,13 @@ export async function POST(request: Request) {
       }).eq("id", claimed.id).eq("company_id", access.companyId)
         .select("id, title, message, contacts, contact_name, contact_type, provider_status, provider_token, recipients, cost, balance, created_at").single();
       if (updateError) console.error("SMS sent but receipt update failed", updateError);
-      return NextResponse.json({ message: sent ?? { ...claimed, provider_status: "sent", provider_token: result.token, recipients: result.recipients, cost: result.cost, balance: result.balance } }, { status: 201, headers });
+      return NextResponse.json({
+        message: sent ?? { ...claimed, provider_status: "sent", provider_token: result.token, recipients: result.recipients, cost: result.cost, balance: result.balance },
+        billing: result.billing,
+      }, { status: 201, headers });
     }
 
-    const providerStatus = result.code === "sms_network_error" || result.code === "sms_not_configured" ? "unknown" : "failed";
+    const providerStatus = result.code === "sms_network_error" ? "unknown" : "failed";
     await access.supabase.from("sms_message_logs").update({ provider_status: providerStatus, provider_error: result.message })
       .eq("id", claimed.id).eq("company_id", access.companyId);
     return NextResponse.json({ error: result.message, code: result.code, retryAfter: result.retryAfter }, { status: result.status, headers });

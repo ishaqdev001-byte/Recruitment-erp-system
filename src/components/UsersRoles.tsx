@@ -908,6 +908,11 @@ export default function UsersRoles({
 
   const [relinkEmail, setRelinkEmail] = useState("")
 
+  const [relinkPasswordMode, setRelinkPasswordMode] =
+    useState<"email-link" | "default-password">("email-link")
+
+  const [relinkDefaultPassword, setRelinkDefaultPassword] = useState("")
+
   const [editingUserType, setEditingUserType] = useState<UserRecord | null>(
     null,
   )
@@ -1758,6 +1763,10 @@ export default function UsersRoles({
     roleId?: string,
 
     email?: string,
+
+    passwordMode: "email-link" | "default-password" = "email-link",
+
+    password?: string,
   ) => {
     const prompts: Partial<Record<typeof action, string>> = {
       "set-status":
@@ -1767,7 +1776,10 @@ export default function UsersRoles({
 
       "unlink-account": `Unlink ${user.name}'s staff account from this company? Their company access will be disabled and their staff record marked inactive. Their access to other companies will not change.`,
 
-      "relink-account": `Send a password setup invitation to ${email?.trim()}? The link will be valid for 30 minutes. This changes the login email for this account across all companies. Access to this company remains disabled until the invitation is accepted.`,
+      "relink-account":
+        passwordMode === "default-password"
+          ? `Set the default password and immediately restore ${user.name}'s access? They will have to choose a new password at first login. This changes the login email for this account across all companies.`
+          : `Send a password setup invitation to ${email?.trim()}? The link will be valid for 30 minutes. This changes the login email for this account across all companies. Access to this company remains disabled until the invitation is accepted.`,
 
       "resend-invite": `Send a fresh invitation link to ${user.email}? The new link will be valid for 30 minutes.`,
 
@@ -1782,6 +1794,16 @@ export default function UsersRoles({
 
     if (action === "relink-account" && !email?.trim()) {
       setError("Enter the new login email address.")
+
+      return
+    }
+
+    if (
+      action === "relink-account" &&
+      passwordMode === "default-password" &&
+      (password?.length ?? 0) < 8
+    ) {
+      setError("The default password must be at least 8 characters.")
 
       return
     }
@@ -1811,7 +1833,13 @@ export default function UsersRoles({
               }
             : {}),
 
-          ...(action === "relink-account" ? { email: email?.trim() } : {}),
+          ...(action === "relink-account"
+            ? {
+                email: email?.trim(),
+                passwordMode,
+                ...(passwordMode === "default-password" ? { password } : {}),
+              }
+            : {}),
         }),
       })
 
@@ -1825,27 +1853,32 @@ export default function UsersRoles({
         throw new Error(result.error ?? "Unable to update this user.")
 
       setNotice(
-        action === "resend-invite" && result.warning
-          ? result.warning
-          : action === "change-role"
+        result.warning ??
+          (action === "change-role"
             ? `Role updated for ${user.name}.`
             : action === "unlink-account"
               ? `${user.name}'s staff account was unlinked and company access disabled.`
               : action === "relink-account"
-                ? `A new password setup link was sent to ${email?.trim()}.`
+                ? passwordMode === "default-password"
+                  ? `${user.name} was relinked. They must change the default password at first login.`
+                  : `A new password setup link was sent to ${email?.trim()}.`
                 : action === "resend-invite"
                   ? `A fresh invitation link was sent to ${user.email}.`
                   : action === "set-status"
                     ? `Access updated for ${user.name}.`
                     : action === "revoke-invite"
                       ? `Invitation revoked for ${user.name}. Their account remains listed and their staff record is available for reassignment.`
-                      : `${user.name} removed from this company.`,
+                      : `${user.name} removed from this company.`),
       )
 
       if (action === "relink-account") {
         setRelinkingUserId("")
 
         setRelinkEmail("")
+
+        setRelinkDefaultPassword("")
+
+        setRelinkPasswordMode("email-link")
       }
 
       setReloadKey((key) => key + 1)
@@ -2894,9 +2927,13 @@ export default function UsersRoles({
                                     undefined,
 
                                     relinkEmail,
+
+                                    relinkPasswordMode,
+
+                                    relinkDefaultPassword,
                                   )
                                 }}
-                                className="flex items-center gap-2"
+                                className="flex flex-wrap items-center gap-2"
                               >
                                 <input
                                   type="email"
@@ -2911,6 +2948,45 @@ export default function UsersRoles({
                                   className="w-48 rounded border px-2 py-1 text-xs"
                                   style={fieldStyle}
                                 />
+                                <select
+                                  aria-label={`Password setup method for ${user.name}`}
+                                  value={relinkPasswordMode}
+                                  onChange={(event) => {
+                                    setRelinkPasswordMode(
+                                      event.target.value as
+                                        | "email-link"
+                                        | "default-password",
+                                    )
+                                    setRelinkDefaultPassword("")
+                                  }}
+                                  className="rounded border px-2 py-1 text-xs"
+                                  style={fieldStyle}
+                                >
+                                  <option value="email-link">
+                                    Email setup link
+                                  </option>
+                                  <option value="default-password">
+                                    Set default password
+                                  </option>
+                                </select>
+                                {relinkPasswordMode === "default-password" && (
+                                  <input
+                                    type="password"
+                                    required
+                                    minLength={8}
+                                    aria-label={`Default password for ${user.name}`}
+                                    autoComplete="new-password"
+                                    value={relinkDefaultPassword}
+                                    onChange={(event) =>
+                                      setRelinkDefaultPassword(
+                                        event.target.value,
+                                      )
+                                    }
+                                    placeholder="Default password (8+)"
+                                    className="w-44 rounded border px-2 py-1 text-xs"
+                                    style={fieldStyle}
+                                  />
+                                )}
                                 <button
                                   type="submit"
                                   disabled={userActionPending === user.id}
@@ -2921,7 +2997,9 @@ export default function UsersRoles({
                                     color: "var(--primary)",
                                   }}
                                 >
-                                  Send invite
+                                  {relinkPasswordMode === "default-password"
+                                    ? "Relink with password"
+                                    : "Send invite"}
                                 </button>
                                 <button
                                   type="button"
@@ -2930,6 +3008,10 @@ export default function UsersRoles({
                                     setRelinkingUserId("")
 
                                     setRelinkEmail("")
+
+                                    setRelinkDefaultPassword("")
+
+                                    setRelinkPasswordMode("email-link")
                                   }}
                                   className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                                   style={{
@@ -2951,6 +3033,10 @@ export default function UsersRoles({
                                   setRelinkEmail(
                                     user.status === "invited" ? user.email : "",
                                   )
+
+                                  setRelinkDefaultPassword("")
+
+                                  setRelinkPasswordMode("email-link")
                                 }}
                                 className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                                 style={{

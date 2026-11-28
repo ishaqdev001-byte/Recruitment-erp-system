@@ -174,7 +174,7 @@ export function setupPerformanceObserver() {
     // Measure Time to Interactive
     const navigationObserver = new PerformanceObserver((entryList) => {
       for (const entry of entryList.getEntries()) {
-        if (entry.name === "navigation") {
+        if (entry instanceof PerformanceNavigationTiming) {
           console.log(
             `[Perf] Page load complete: ${entry.loadEventEnd.toFixed(0)}ms`,
           )

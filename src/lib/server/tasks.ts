@@ -2,7 +2,8 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { normalizeUgandanPhone, sendSmsUg } from "@/lib/server/smsug";
+import { sendCompanySms } from "@/lib/server/sms-billing";
+import { normalizeUgandanPhone } from "@/lib/server/smsug";
 
 export type TaskPermission = "tasks.view" | "tasks.create" | "tasks.edit" | "tasks.delete";
 export type TaskSupabase = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -159,7 +160,15 @@ export async function dispatchQueuedTaskSms(companyId?: string, recipientId?: st
       continue;
     }
 
-    const result = await sendSmsUg("Task Reminder", `${reminder.title}: ${reminder.body}`.slice(0, 480), [phone]);
+    const result = await sendCompanySms({
+      admin,
+      companyId: reminder.company_id,
+      reference: reminder.id,
+      title: "Task Reminder",
+      message: `${reminder.title}: ${reminder.body}`.slice(0, 480),
+      contacts: [phone],
+      source: "task_reminder",
+    });
     if (result.ok) {
       const { error } = await admin.from("task_notifications").update({
         sms_status: "sent",

@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { isUuid } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { sendSmsUg, normalizeUgandanPhone } from "@/lib/server/smsug";
+import { sendCompanySms } from "@/lib/server/sms-billing";
+import { normalizeUgandanPhone } from "@/lib/server/smsug";
 
 export const runtime = "nodejs";
 
@@ -367,9 +368,19 @@ export async function POST(request: Request) {
         const country = project.country;
         const smsMessage = `Dear ${candidate.first_name}, your visa has been issued for ${position} for ${country}. Kindly clear your service charge at the earliest. From ${companyName}.`;
 
-        if (phone && process.env.SMSUG_API_KEY?.trim()) {
-          sendSmsUg(companyName.slice(0, 100), smsMessage, [phone]).catch((err) => {
-            console.error("Visa SMS send error", err);
+        if (phone && process.env.SMSUG_API_KEY?.trim() && admin) {
+          void sendCompanySms({
+            admin,
+            companyId: membership.company_id,
+            reference: crypto.randomUUID(),
+            title: companyName.slice(0, 100),
+            message: smsMessage,
+            contacts: [phone],
+            source: "candidate_stage",
+            createdBy: user.id,
+          }).then((result) => {
+            if (!result.ok) console.error("Visa SMS send failed", result.message);
+            else if (!result.billing.settled) console.error("Visa SMS was sent but its credit settlement is pending");
           });
           // Also queue in log for audit (fire-and-forget)
           if (admin) {

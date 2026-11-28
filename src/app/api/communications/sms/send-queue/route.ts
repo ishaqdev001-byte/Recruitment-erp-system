@@ -1,5 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { sendCompanySms } from "@/lib/server/sms-billing";
+import { normalizeUgandanPhone } from "@/lib/server/smsug";
 
 export const runtime = "nodejs";
 
@@ -21,41 +24,6 @@ function createAdminClient() {
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
 }
 
-async function sendSmsViaSmsug(phoneNumber: string, message: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  const apiKey = process.env.SMSUG_API_KEY;
-  if (!apiKey) {
-    console.error("SMSUG_API_KEY is not configured");
-    return { success: false, error: "SMS provider not configured" };
-  }
-
-  try {
-    const response = await fetch("https://api.smsug.com/send", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        phone: phoneNumber,
-        message: message,
-        sender: "RecruitOS", // Or company name if available
-      }),
-    });
-
-    const data = (await response.json()) as Record<string, unknown>;
-
-    if (!response.ok) {
-      const errorMessage = typeof data.error === "string" ? data.error : "Unknown SMSUG error";
-      return { success: false, error: errorMessage };
-    }
-
-    const messageId = typeof data.message_id === "string" ? data.message_id : String(data.message_id);
-    return { success: true, messageId };
-  } catch (error) {
-    return { success: false, error: `SMS send failed: ${String(error)}` };
-  }
-}
-
 async function processSmsQueue() {
   const admin = createAdminClient();
   if (!admin) {
@@ -67,7 +35,7 @@ async function processSmsQueue() {
     // Get pending SMS messages (limit to 50 per run)
     const { data: pendingSms, error: queryError } = await admin
       .from("sms_queue")
-      .select("id, recipient_phone, message, request_id, request_type")
+      .select("id, company_id, recipient_phone, message, request_id, request_type")
       .eq("status", "pending")
       .order("created_at")
       .limit(50);
@@ -89,19 +57,50 @@ async function processSmsQueue() {
 
     for (const sms of pendingSms) {
       try {
-        // Send SMS via SMSUG
-        const sendResult = await sendSmsViaSmsug(sms.recipient_phone, sms.message);
+        const { data: claimed, error: claimError } = await admin.from("sms_queue")
+          .update({ status: "sending", error_message: null })
+          .eq("id", sms.id)
+          .eq("status", "pending")
+          .select("id")
+          .maybeSingle();
+        if (claimError) {
+          console.error(`Failed to claim SMS queue record ${sms.id}:`, claimError);
+          continue;
+        }
+        if (!claimed) continue;
 
-        if (sendResult.success) {
+        const phone = normalizeUgandanPhone(sms.recipient_phone ?? "");
+        if (!phone) {
+          const { error: updateError } = await admin.from("sms_queue")
+            .update({ status: "failed", error_message: "Invalid Ugandan phone number." })
+            .eq("id", sms.id)
+            .eq("status", "sending");
+          if (updateError) console.error(`Failed to update SMS record ${sms.id}:`, updateError);
+          else failed++;
+          continue;
+        }
+
+        const sendResult = await sendCompanySms({
+          admin,
+          companyId: sms.company_id,
+          reference: sms.id,
+          title: "RecruitOS",
+          message: sms.message,
+          contacts: [phone],
+          source: "sms_queue",
+        });
+
+        if (sendResult.ok) {
           // Update status to sent
           const { error: updateError } = await admin
             .from("sms_queue")
             .update({
               status: "sent",
-              smsug_message_id: sendResult.messageId,
+              smsug_message_id: sendResult.token,
               sent_at: new Date().toISOString(),
             })
-            .eq("id", sms.id);
+            .eq("id", sms.id)
+            .eq("status", "sending");
 
           if (updateError) {
             console.warn(`Failed to update SMS record ${sms.id}:`, updateError);
@@ -113,10 +112,13 @@ async function processSmsQueue() {
           const { error: updateError } = await admin
             .from("sms_queue")
             .update({
-              status: "failed",
-              error_message: sendResult.error,
+              status: sendResult.code === "sms_network_error" ? "unknown" : "failed",
+              error_message: sendResult.code === "sms_network_error"
+                ? `SMS provider result is unknown; credit is reserved. ${sendResult.message}`
+                : sendResult.message,
             })
-            .eq("id", sms.id);
+            .eq("id", sms.id)
+            .eq("status", "sending");
 
           if (updateError) {
             console.warn(`Failed to update SMS failure record ${sms.id}:`, updateError);
@@ -144,9 +146,19 @@ async function processSmsQueue() {
 }
 
 export async function POST(request: Request) {
-  // Basic security check
+  const expectedSecret = process.env.SMS_QUEUE_DISPATCH_SECRET?.trim();
   const authHeader = request.headers.get("authorization");
-  if (!authHeader) {
+  const suppliedSecret = authHeader?.match(/^Bearer (.+)$/i)?.[1]?.trim();
+  if (!expectedSecret || expectedSecret.length < 32) {
+    console.error("SMS_QUEUE_DISPATCH_SECRET must be configured with at least 32 characters.");
+    return NextResponse.json({ error: "SMS queue dispatch is not configured." }, { status: 503, headers });
+  }
+  if (!suppliedSecret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
+  }
+  const expected = Buffer.from(expectedSecret);
+  const supplied = Buffer.from(suppliedSecret);
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
   }
 

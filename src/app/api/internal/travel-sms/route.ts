@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { sendSmsUg, normalizeUgandanPhone } from "@/lib/server/smsug";
+import { sendCompanySms } from "@/lib/server/sms-billing";
+import { normalizeUgandanPhone } from "@/lib/server/smsug";
 
 export const runtime = "nodejs";
 
@@ -50,7 +51,15 @@ export async function POST(request: NextRequest) {
   }
 
   // Send via SMSUG
-  const result = await sendSmsUg(row.sms_title, row.message, [phone]);
+  const result = await sendCompanySms({
+    admin,
+    companyId: row.company_id,
+    reference: row.id,
+    title: row.sms_title,
+    message: row.message,
+    contacts: [phone],
+    source: "candidate_travel",
+  });
 
   if (result.ok) {
     await admin.from("candidate_travel_sms_queue").update({
@@ -62,11 +71,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, token: result.token });
   }
 
-  const permanentFailure = !["sms_network_error", "sms_not_configured"].includes(result.code);
+  const permanentFailure = result.code !== "sms_network_error";
   await admin.from("candidate_travel_sms_queue").update({
-    status: permanentFailure ? "failed" : "queued", // retry network errors
+    status: permanentFailure ? "failed" : "unknown",
     provider_error: result.message,
-    sent_at: permanentFailure ? new Date().toISOString() : null,
+    sent_at: new Date().toISOString(),
   }).eq("id", rowId);
 
   return NextResponse.json({ error: result.message, code: result.code }, { status: result.status });

@@ -28,7 +28,9 @@ function buildCompanyExportDetails(
 ): string {
   const parts = [
     companyName,
-    details?.registrationNumber ? `Registration: ${details.registrationNumber}` : "",
+    details?.registrationNumber
+      ? `Registration: ${details.registrationNumber}`
+      : "",
     [details?.city, details?.country].filter(Boolean).join(", "),
     details?.officeAddress,
     details?.phone ? `Phone: ${details.phone}` : "",
@@ -43,7 +45,10 @@ export async function exportToExcel(config: ExportConfig): Promise<void> {
   const fileDate = exportDate.toISOString().slice(0, 10)
   const exportedAt = exportDate.toLocaleString()
   const footerText = `Exported by: ${config.exportedByName} | Exported: ${exportedAt}`
-  const companyExportDetails = buildCompanyExportDetails(config.companyName, config.companyDetails)
+  const companyExportDetails = buildCompanyExportDetails(
+    config.companyName,
+    config.companyDetails,
+  )
 
   const workbook = new ExcelJS.Workbook()
   workbook.creator = config.exportedByName
@@ -56,7 +61,9 @@ export async function exportToExcel(config: ExportConfig): Promise<void> {
   // Title
   worksheet.addRow([config.tableName])
   worksheet.addRow([companyExportDetails])
-  worksheet.addRow([`Table: ${config.tableName} | Filters: ${config.filterSummary}`])
+  worksheet.addRow([
+    `Table: ${config.tableName} | Filters: ${config.filterSummary}`,
+  ])
   worksheet.addRow([footerText])
   worksheet.addRow(["COMPANY CONFIDENTIAL"])
 
@@ -116,7 +123,10 @@ export async function exportToPdf(config: ExportConfig): Promise<void> {
   const exportDate = config.exportDate || new Date()
   const exportedAt = exportDate.toLocaleString()
   const footerText = `Exported by: ${config.exportedByName} | Exported: ${exportedAt}`
-  const companyExportDetails = buildCompanyExportDetails(config.companyName, config.companyDetails)
+  const companyExportDetails = buildCompanyExportDetails(
+    config.companyName,
+    config.companyDetails,
+  )
 
   const pdf = await PDFDocument.create()
   pdf.setTitle(config.tableName)
@@ -127,7 +137,9 @@ export async function exportToPdf(config: ExportConfig): Promise<void> {
 
   // Helper function to sanitize text
   const pdfSafeText = (value: string | number) =>
-    String(value).replace(/\s+/g, " ").replace(/[^\x20-\x7e]/g, "?")
+    String(value)
+      .replace(/\s+/g, " ")
+      .replace(/[^\x20-\x7e]/g, "?")
 
   // Helper function to wrap text
   const wrapText = (value: string, maxWidth: number, size: number) => {
@@ -301,7 +313,7 @@ export async function exportToPdf(config: ExportConfig): Promise<void> {
       y: pageHeight / 2,
       size: 60,
       font: bold,
-      angle: degrees(-45),
+      rotate: degrees(-45),
       opacity: 0.1,
       color: rgb(0.5, 0.5, 0.5),
     })
@@ -309,7 +321,9 @@ export async function exportToPdf(config: ExportConfig): Promise<void> {
 
   // Save and download
   const pdfBytes = await pdf.save()
-  const blob = new Blob([pdfBytes], { type: "application/pdf" })
+  const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength)
+  new Uint8Array(pdfBuffer).set(pdfBytes)
+  const blob = new Blob([pdfBuffer], { type: "application/pdf" })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement("a")
   anchor.href = url

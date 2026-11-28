@@ -1,7 +1,8 @@
 import { createClient } from "@supabase/supabase-js"
 import { NextResponse } from "next/server"
 
-import { normalizeUgandanPhone, sendSmsUg } from "@/lib/server/smsug"
+import { sendCompanySms } from "@/lib/server/sms-billing"
+import { normalizeUgandanPhone } from "@/lib/server/smsug"
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
@@ -26,6 +27,15 @@ function createAdminClient() {
 export async function POST(request: Request) {
   let smsSent = false
   let smsReceiptRecorded = false
+  let smsBilling: {
+    currency: string
+    amount: number
+    unitPrice: number
+    segments: number
+    recipients: number
+    availableBalance: number | null
+    settled: boolean
+  } | null = null
 
   try {
     const supabase = await createSupabaseServerClient()
@@ -306,12 +316,31 @@ export async function POST(request: Request) {
     }
 
     if (!alreadySent) {
-      const smsResult = await sendSmsUg(smsTitle, message, contacts as string[])
+      const billingAdmin = createAdminClient()
+      if (!billingAdmin) {
+        await supabase.from("sms_message_logs")
+          .update({ provider_status: "failed", provider_error: "Company SMS billing is not configured on the server." })
+          .eq("id", claimed!.id)
+          .eq("company_id", membership.company_id)
+        return NextResponse.json(
+          { error: "Company SMS billing is not configured on the server." },
+          { status: 503, headers },
+        )
+      }
+      const smsResult = await sendCompanySms({
+        admin: billingAdmin,
+        companyId: membership.company_id,
+        reference: body.requestId as string,
+        title: smsTitle,
+        message,
+        contacts: contacts as string[],
+        source: "candidate_bulk_sms",
+        createdBy: user.id,
+      })
 
       if (!smsResult.ok) {
         const providerStatus =
-          smsResult.code === "sms_network_error" ||
-          smsResult.code === "sms_not_configured"
+          smsResult.code === "sms_network_error"
             ? "unknown"
             : "failed"
 
@@ -346,6 +375,7 @@ export async function POST(request: Request) {
       }
 
       smsSent = true
+      smsBilling = smsResult.billing
       const { data: receipt, error: updateError } = await supabase
         .from("sms_message_logs")
 
@@ -654,11 +684,19 @@ export async function POST(request: Request) {
         continue
       }
 
-      const smsResult = await sendSmsUg("Agent Update", noteBody, [phone])
+      const smsResult = await sendCompanySms({
+        admin,
+        companyId: membership.company_id,
+        reference: claim.data.sms_request_id,
+        title: "Agent Update",
+        message: noteBody,
+        contacts: [phone],
+        source: "candidate_agent_update",
+        createdBy: user.id,
+      })
       const providerStatus = smsResult.ok
         ? "sent"
-        : smsResult.code === "sms_network_error" ||
-            smsResult.code === "sms_not_configured"
+        : smsResult.code === "sms_network_error"
           ? "unknown"
           : "failed"
       const { error: messageUpdateError } = await admin
@@ -716,6 +754,7 @@ export async function POST(request: Request) {
         {
           error: `The candidate SMS was sent, but some accountless agent messages need attention: ${agentMessageFailures.join(" ")}`,
           smsSent: true,
+          billing: smsBilling,
           retryable: true,
           agentsNotified: notesSent + agentSmsSent,
         },
@@ -728,6 +767,8 @@ export async function POST(request: Request) {
         ok: true,
 
         recipients: contacts.length,
+
+        billing: smsBilling,
 
         agentsNotified: notesSent + agentSmsSent,
 

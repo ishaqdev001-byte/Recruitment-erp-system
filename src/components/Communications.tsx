@@ -3,6 +3,7 @@ import { ArrowLeft, Mail, MessageSquare, MessagesSquare, StickyNote, X, type Luc
 import { SearchableSelect } from "./SearchableSelect";
 import SmsWorkspace from "@/components/SmsWorkspace";
 import WhatsAppWorkspace from "@/components/WhatsAppWorkspace";
+import { getSmsSegmentInfo } from "@/lib/sms-segments";
 
 type Channel = "Email" | "SMS" | "WhatsApp" | "Note";
 type ContactType = "Candidate" | "Employer" | "Agent" | "Staff" | "Other";
@@ -25,7 +26,7 @@ interface Message {
 }
 
 type SmsContact = { id: string; type: ContactType; name: string; phone: string };
-type SmsHistoryItem = { id: string; title: string; message: string; contacts: string[]; contact_name: string; contact_type: ContactType; provider_status: string; provider_error: string; provider_token: string | null; recipients: number | null; cost: number | null; balance: number | null; created_at: string };
+type SmsHistoryItem = { id: string; title: string; message: string; contacts: string[]; contact_name: string; contact_type: ContactType; provider_status: string; provider_error: string; provider_token: string | null; recipients: number | null; cost: number | null; balance: number | null; created_at: string; billing?: { amount: number; currency: string; segments: number; recipients: number; settled: boolean } };
 type MailProvider = "gmail" | "outlook";
 type MailFolder = "inbox" | "starred" | "sent" | "drafts";
 type Mailbox = { provider: MailProvider; email_address: string; connected_at: string; auth_type?: "oauth" | "imap_smtp" };
@@ -56,6 +57,8 @@ export default function Communications({ userName = "Team", companyName = "", us
   const [contacts, setContacts] = useState<SmsContact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [smsConfigured, setSmsConfigured] = useState<boolean | null>(null);
+  const [smsCurrency, setSmsCurrency] = useState<string | null>(null);
+  const [smsUnitPrice, setSmsUnitPrice] = useState<number | null>(null);
   const [composeChannel, setComposeChannel] = useState<Channel>("SMS");
   const [smsRecipientId, setSmsRecipientId] = useState("");
   const [manualContacts, setManualContacts] = useState("");
@@ -90,9 +93,11 @@ export default function Communications({ userName = "Team", companyName = "", us
   const loadSmsHistory = async () => {
     try {
       const response = await fetch("/api/communications/sms", { cache: "no-store" });
-      const payload = await response.json() as { messages?: SmsHistoryItem[]; configured?: boolean };
+      const payload = await response.json() as { messages?: SmsHistoryItem[]; configured?: boolean; currency?: string | null; unitPrice?: number | null };
       if (!response.ok) return;
       setSmsConfigured(Boolean(payload.configured));
+      setSmsCurrency(payload.currency ?? null);
+      setSmsUnitPrice(payload.unitPrice ?? null);
       const smsMessages: Message[] = (payload.messages ?? []).map((item) => ({
         id: `sms-${item.id}`,
         contact: item.contact_name,
@@ -328,10 +333,12 @@ export default function Communications({ userName = "Team", companyName = "", us
         fetch("/api/communications/sms", { cache: "no-store" }),
       ]);
       const contactsPayload = await contactsResponse.json() as { contacts?: SmsContact[]; error?: string };
-      const historyPayload = await historyResponse.json() as { configured?: boolean };
+      const historyPayload = await historyResponse.json() as { configured?: boolean; currency?: string | null; unitPrice?: number | null };
       if (!contactsResponse.ok) throw new Error(contactsPayload.error ?? "Unable to load SMS contacts.");
       setContacts(contactsPayload.contacts ?? []);
       setSmsConfigured(Boolean(historyPayload.configured));
+      setSmsCurrency(historyPayload.currency ?? null);
+      setSmsUnitPrice(historyPayload.unitPrice ?? null);
     } catch (error) {
       setSmsError(error instanceof Error ? error.message : "Unable to load SMS contacts.");
     } finally {
@@ -340,6 +347,13 @@ export default function Communications({ userName = "Team", companyName = "", us
   };
 
   const selectedSmsContact = contacts.find((contact) => contact.id === smsRecipientId) ?? null;
+  const smsRecipientCount = selectedSmsContact
+    ? 1
+    : new Set(manualContacts.split(/[\n,;]+/).map((value) => value.trim()).filter(Boolean)).size;
+  const smsSegmentInfo = getSmsSegmentInfo(smsBody);
+  const smsEstimatedCharge = smsUnitPrice === null
+    ? null
+    : smsUnitPrice * smsSegmentInfo.segments * smsRecipientCount;
 
   const sendSms = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -359,7 +373,7 @@ export default function Communications({ userName = "Team", companyName = "", us
           contactType: selectedSmsContact?.type ?? "Other",
         }),
       });
-      const payload = await response.json() as { error?: string; code?: string; status?: string; message?: SmsHistoryItem };
+      const payload = await response.json() as { error?: string; code?: string; status?: string; message?: SmsHistoryItem; billing?: SmsHistoryItem["billing"] };
       if (!response.ok) {
         if (payload.code !== "sms_network_error" && payload.status !== "unknown") setSmsRequestId(crypto.randomUUID());
         throw new Error(payload.error ?? "SMSUG could not send this message.");
@@ -375,7 +389,7 @@ export default function Communications({ userName = "Team", companyName = "", us
           subject: item.title,
           body: item.message,
           date: item.created_at ? new Date(item.created_at).toLocaleString() : new Date().toLocaleString(),
-          by: `SMSUG · ${item.recipients ?? 0} recipients${item.cost === null ? "" : ` · ${item.cost} units`}`,
+          by: `SMSUG · ${item.recipients ?? 0} recipients${item.cost === null ? "" : ` · ${item.cost} provider units`}${payload.billing ? ` · charged ${payload.billing.amount} ${payload.billing.currency}` : ""}`,
           status: "Sent",
           smsLog: true,
         };
@@ -590,7 +604,7 @@ export default function Communications({ userName = "Team", companyName = "", us
       {showCompose && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-3 sm:p-6">
           <form onSubmit={(event) => void (composeChannel === "Email" ? sendEmail(event) : sendSms(event))} className="my-auto max-h-[94dvh] w-full max-w-lg overflow-y-auto border p-5 sm:p-6" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-            <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>New communication</h2><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{composeChannel === "Email" ? "Send from your linked mailbox." : "SMS sends immediately through SMSUG."}</p></div><button type="button" aria-label="Close compose" onClick={() => setShowCompose(false)} className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
+            <div className="mb-5 flex items-start justify-between"><div><h2 className="text-lg font-700" style={{ color: "var(--foreground)" }}>New communication</h2><p className="mt-1 text-xs" style={{ color: "var(--muted-foreground)" }}>{composeChannel === "Email" ? "Send from your linked mailbox." : "SMSUG sends immediately; company SMS credit is charged per SMS segment."}</p></div><button type="button" aria-label="Close compose" onClick={() => setShowCompose(false)} className="p-1" style={{ color: "var(--muted-foreground)" }}><X size={18} aria-hidden="true" /></button></div>
             <div className="space-y-4">
               <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Channel</span><select value={composeChannel} onChange={(event) => setComposeChannel(event.target.value as Channel)} className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}><option>SMS</option><option>Email</option><option>WhatsApp</option><option>Note</option></select></label>
               {composeChannel === "SMS" ? <>
@@ -598,7 +612,7 @@ export default function Communications({ userName = "Team", companyName = "", us
                 <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Contact</span><SearchableSelect ariaLabel="Search SMS contact" value={smsRecipientId} onChange={setSmsRecipientId} disabled={contactsLoading} options={contacts.map((contact) => ({ value: contact.id, label: contact.name, description: `${contact.type} · ${contact.phone}`, searchText: `${contact.type} ${contact.phone}` }))} placeholder="Type a name or phone number" className="disabled:opacity-50" /></label>
                 {!selectedSmsContact && <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Ugandan phone number(s)</span><textarea required rows={2} value={manualContacts} onChange={(event) => setManualContacts(event.target.value)} placeholder="256772000111, 0701234567" className="w-full resize-y border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /><span className="mt-1 block text-[11px]" style={{ color: "var(--muted-foreground)" }}>Separate multiple numbers with commas or new lines. Up to 3,000 recipients.</span></label>}
                 <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>SMS title</span><input required maxLength={100} value={smsTitle} onChange={(event) => setSmsTitle(event.target.value)} placeholder="Payment reminder" className="w-full border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /><span className="mt-1 block text-[11px]" style={{ color: "var(--muted-foreground)" }}>Letters, numbers, spaces, and basic punctuation only.</span></label>
-                <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Message</span><textarea required rows={5} maxLength={480} value={smsBody} onChange={(event) => setSmsBody(event.target.value)} className="w-full resize-y border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /><span className="mt-1 flex justify-between text-[11px]" style={{ color: "var(--muted-foreground)" }}><span>{smsBody.length <= 160 ? "1 message unit" : smsBody.length <= 320 ? "2 message units" : "3 message units"} per recipient</span><span>{smsBody.length}/480</span></span></label>
+                <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Message</span><textarea required rows={5} maxLength={480} value={smsBody} onChange={(event) => setSmsBody(event.target.value)} className="w-full resize-y border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /><span className="mt-1 flex justify-between text-[11px]" style={{ color: "var(--muted-foreground)" }}><span>{smsSegmentInfo.segments} segment{smsSegmentInfo.segments === 1 ? "" : "s"} per recipient · {smsSegmentInfo.encoding} · {smsSegmentInfo.remainingCharacters} characters remaining</span><span>{smsBody.length}/480</span></span>{smsSegmentInfo.segments > 1 && <span className="mt-1 block text-[11px] text-amber-600">This message consumes multiple billable SMS segments per recipient.</span>}{smsEstimatedCharge !== null && smsCurrency && <span className="mt-1 block text-xs" style={{ color: "var(--foreground)" }}>Estimated company charge: {new Intl.NumberFormat(undefined, { style: "currency", currency: smsCurrency }).format(smsEstimatedCharge)} for {smsRecipientCount} recipient{smsRecipientCount === 1 ? "" : "s"}.</span>}</label>
               </> : composeChannel === "Email" ? <>
                 <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>Send from</span><select aria-label="Send from mailbox" value={activeMailProvider} onChange={(event) => setActiveMailProvider(event.target.value as MailProvider)} className="w-full border px-3 py-2.5 text-sm" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }}>{mailboxes.map((mailbox) => <option key={mailbox.provider} value={mailbox.provider}>{mailbox.provider === "gmail" ? "Gmail" : mailbox.auth_type === "imap_smtp" ? "IMAP/SMTP" : "Outlook"} · {mailbox.email_address}</option>)}</select></label>
                 <label className="block"><span className="mb-1 block text-xs font-700" style={{ color: "var(--muted-foreground)" }}>To</span><input required type="email" maxLength={320} value={mailTo} onChange={(event) => setMailTo(event.target.value)} placeholder="name@example.com" className="w-full border px-3 py-2.5 text-sm outline-none" style={{ background: "var(--secondary)", borderColor: "var(--border)", color: "var(--foreground)" }} /></label>

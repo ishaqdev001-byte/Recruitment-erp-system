@@ -39,7 +39,7 @@ function createAdminClient() {
 
 export async function GET() {
   try {
-    const access = await getWorkforceAccess()
+    const access = await getWorkforceAccess("leave")
 
     if ("error" in access)
       return NextResponse.json({ error: access.error }, {
@@ -56,23 +56,17 @@ export async function GET() {
     ])
 
     const [{ data: canFinalize }, { data: canExport }] = await Promise.all([
-      access.supabase.rpc(
-        "current_user_has_company_permission",
-        {
-          requested_company_id: access.companyId,
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
 
-          requested_permission: "leave.finalize",
-        },
-      ),
+        requested_permission: "leave.finalize",
+      }),
 
-      access.supabase.rpc(
-        "current_user_has_company_permission",
-        {
-          requested_company_id: access.companyId,
+      access.supabase.rpc("current_user_has_company_permission", {
+        requested_company_id: access.companyId,
 
-          requested_permission: "leave.export",
-        },
-      ),
+        requested_permission: "leave.export",
+      }),
     ])
 
     if (!canViewTeam && !canCreate && !canManage) {
@@ -284,7 +278,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const access = await getWorkforceAccess()
+    const access = await getWorkforceAccess("leave")
 
     if ("error" in access)
       return NextResponse.json({ error: access.error }, {
@@ -490,7 +484,7 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const access = await getWorkforceAccess()
+    const access = await getWorkforceAccess("leave")
 
     if ("error" in access)
       return NextResponse.json({ error: access.error }, {
@@ -510,8 +504,7 @@ export async function PATCH(request: Request) {
 
     const body: Record<string, unknown> = parsedBody
 
-    const leaveId =
-      typeof body.leaveId === "string" ? body.leaveId : ""
+    const leaveId = typeof body.leaveId === "string" ? body.leaveId : ""
 
     if (
       body.workflowKey === "leave" &&
@@ -571,7 +564,6 @@ export async function PATCH(request: Request) {
 
       { status: 409, headers: responseHeaders },
     )
-
   } catch (err) {
     console.error("Leave PATCH failed", err)
 

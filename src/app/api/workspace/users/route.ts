@@ -3617,6 +3617,230 @@ export async function POST(request: Request) {
             { status: 400, headers: responseHeaders },
           )
 
+        if (body.passwordMode === "default-password") {
+          const password =
+            typeof body.password === "string" ? body.password : ""
+
+          if (password.length < 8)
+            return NextResponse.json(
+              { error: "The default password must be at least 8 characters." },
+              { status: 400, headers: responseHeaders },
+            )
+
+          const { data: profile, error: profileReadError } = await admin
+            .from("profiles")
+            .select("must_change_password")
+            .eq("id", userId)
+            .maybeSingle()
+
+          if (profileReadError) {
+            console.error("Staff relink profile lookup failed", profileReadError)
+            return NextResponse.json(
+              { error: "Unable to prepare the first-login password change." },
+              { status: 500, headers: responseHeaders },
+            )
+          }
+
+          const { error: profileWriteError } = await admin
+            .from("profiles")
+            .upsert(
+              { id: userId, must_change_password: true },
+              { onConflict: "id" },
+            )
+
+          if (profileWriteError) {
+            console.error(
+              "Staff relink password-change requirement could not be enabled",
+              profileWriteError,
+            )
+            return NextResponse.json(
+              { error: "Unable to require a password change at first login." },
+              { status: 500, headers: responseHeaders },
+            )
+          }
+
+          const rollbackProfileFlag = async () => {
+            const result = profile
+              ? await admin
+                  .from("profiles")
+                  .update({
+                    must_change_password: profile.must_change_password ?? false,
+                  })
+                  .eq("id", userId)
+              : await admin.from("profiles").delete().eq("id", userId)
+
+            if (result.error) {
+              console.error(
+                "Staff relink password flag rollback failed",
+                result.error,
+              )
+              return false
+            }
+            return true
+          }
+
+          const { data: linkedStaff, error: linkError } = await admin
+            .from("company_staff_members")
+            .update({
+              linked_user_id: userId,
+              status: "Active",
+              updated_by: access.userId,
+            })
+            .eq("company_id", access.companyId)
+            .eq("id", staffId)
+            .eq("status", "Inactive")
+            .is("linked_user_id", null)
+            .select("id")
+            .maybeSingle()
+
+          if (linkError || !linkedStaff) {
+            const profileRestored = await rollbackProfileFlag()
+            console.error("Staff default-password relink failed", linkError)
+            return NextResponse.json(
+              {
+                error: profileRestored
+                  ? "Unable to relink this staff profile."
+                  : "Relinking failed and the password-change setting could not be restored. Contact support.",
+              },
+              { status: 409, headers: responseHeaders },
+            )
+          }
+
+          const { data: activatedMembership, error: activationError } = await admin
+            .from("company_memberships")
+            .update({ status: "active" })
+            .eq("company_id", access.companyId)
+            .eq("user_id", userId)
+            .eq("status", "disabled")
+            .select("user_id")
+            .maybeSingle()
+
+          if (activationError || !activatedMembership) {
+            const { error: staffRollbackError } = await admin
+              .from("company_staff_members")
+              .update({
+                linked_user_id: null,
+                status: "Inactive",
+                updated_by: access.userId,
+              })
+              .eq("company_id", access.companyId)
+              .eq("id", staffId)
+              .eq("linked_user_id", userId)
+
+            const profileRestored = await rollbackProfileFlag()
+            if (staffRollbackError)
+              console.error("Staff relink rollback failed", staffRollbackError)
+            console.error(
+              "Staff company membership reactivation failed",
+              activationError,
+            )
+
+            return NextResponse.json(
+              {
+                error:
+                  staffRollbackError || !profileRestored
+                    ? "Relinking failed and the account could not be fully restored. Contact support."
+                    : "Unable to restore this company's access.",
+              },
+              { status: 500, headers: responseHeaders },
+            )
+          }
+
+          const { error: authUpdateError } = await admin.auth.admin.updateUserById(
+            userId,
+            {
+              email,
+              password,
+              email_confirm: true,
+              app_metadata: {
+                ...appMetadata,
+                workspace_invite_pending: false,
+                workspace_invite_revoked: false,
+                workspace_account_unlinked: false,
+                workspace_relink_requested_by: null,
+                workspace_relink_company_id: null,
+              },
+            },
+          )
+
+          if (authUpdateError) {
+            const { error: membershipRollbackError } = await admin
+              .from("company_memberships")
+              .update({ status: "disabled" })
+              .eq("company_id", access.companyId)
+              .eq("user_id", userId)
+              .eq("status", "active")
+
+            const { error: staffRollbackError } = await admin
+              .from("company_staff_members")
+              .update({
+                linked_user_id: null,
+                status: "Inactive",
+                updated_by: access.userId,
+              })
+              .eq("company_id", access.companyId)
+              .eq("id", staffId)
+              .eq("linked_user_id", userId)
+
+            const profileRestored = await rollbackProfileFlag()
+            if (membershipRollbackError)
+              console.error(
+                "Staff relink membership rollback failed",
+                membershipRollbackError,
+              )
+            if (staffRollbackError)
+              console.error("Staff relink record rollback failed", staffRollbackError)
+            console.error("Staff relink auth update failed", authUpdateError)
+
+            return NextResponse.json(
+              {
+                error:
+                  membershipRollbackError ||
+                  staffRollbackError ||
+                  !profileRestored
+                    ? "Password setup failed and relinking could not be fully restored. Contact support."
+                    : authUpdateError.code === "email_exists"
+                      ? "That login email is already used by another account."
+                      : "Unable to set the default password for this account.",
+              },
+              {
+                status: authUpdateError.code === "email_exists" ? 409 : 400,
+                headers: responseHeaders,
+              },
+            )
+          }
+
+          const { error: invitationCleanupError } = await admin
+            .from("workspace_invitations")
+            .delete()
+            .eq("company_id", access.companyId)
+            .eq("user_id", userId)
+            .is("accepted_at", null)
+
+          return NextResponse.json(
+            {
+              success: true,
+              passwordChangeRequired: true,
+              ...(invitationCleanupError
+                ? {
+                    warning:
+                      "The account was relinked, but an older invitation could not be revoked.",
+                  }
+                : {}),
+            },
+            { headers: responseHeaders },
+          )
+        }
+
+        if (
+          body.passwordMode !== undefined &&
+          body.passwordMode !== "email-link"
+        )
+          return NextResponse.json(
+            { error: "Choose a valid relink password option." },
+            { status: 400, headers: responseHeaders },
+          )
+
         const smtp = getSystemSmtpConfiguration()
 
         if (!smtp)

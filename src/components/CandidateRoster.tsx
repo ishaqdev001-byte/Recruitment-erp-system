@@ -19,6 +19,7 @@ import {
 } from "lucide-react"
 
 import { matchesSearch } from "@/lib/search"
+import { getSmsSegmentInfo } from "@/lib/sms-segments"
 
 import { clearClientApiCache, fetchClientCached } from "@/lib/client-api-cache"
 
@@ -1007,6 +1008,27 @@ export default function CandidateRoster({
   const [bulkSmsError, setBulkSmsError] = useState("")
 
   const [bulkSmsNotice, setBulkSmsNotice] = useState("")
+  const [bulkSmsCurrency, setBulkSmsCurrency] = useState<string | null>(null)
+  const [bulkSmsUnitPrice, setBulkSmsUnitPrice] = useState<number | null>(null)
+  const [bulkSmsPricingError, setBulkSmsPricingError] = useState("")
+
+  useEffect(() => {
+    if (!showBulkSms) return
+    let active = true
+    void fetch("/api/communications/sms/credit", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json() as { currency?: string | null; unitPrice?: number | null; pricingError?: string | null; error?: string }
+        if (!response.ok) throw new Error(payload.error ?? "SMS pricing is unavailable.")
+        if (!active) return
+        setBulkSmsCurrency(payload.currency ?? null)
+        setBulkSmsUnitPrice(payload.unitPrice ?? null)
+        setBulkSmsPricingError(payload.pricingError ?? "")
+      })
+      .catch((error: unknown) => {
+        if (active) setBulkSmsPricingError(error instanceof Error ? error.message : "SMS pricing is unavailable.")
+      })
+    return () => { active = false }
+  }, [showBulkSms])
 
   const [drawerCandidate, setDrawerCandidate] =
     useState<CandidateRecord | null>(null)
@@ -2766,6 +2788,12 @@ export default function CandidateRoster({
   const canSelectCandidates =
     canManageCandidateWorkflow || Boolean(permissions.canSendBulkSms)
 
+  const bulkSmsSegmentInfo = getSmsSegmentInfo(bulkSmsMessage)
+  const bulkSmsEstimatedCharge =
+    bulkSmsUnitPrice === null
+      ? null
+      : bulkSmsUnitPrice * bulkSmsSegmentInfo.segments * selectedIds.length
+
   const sendBulkSms = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
@@ -2803,6 +2831,8 @@ export default function CandidateRoster({
         retryable?: boolean
 
         status?: string
+
+        billing?: { amount: number; currency: string; segments: number; recipients: number; settled: boolean }
       }
 
       if (!response.ok) {
@@ -2840,7 +2870,7 @@ export default function CandidateRoster({
           payload.recipients === 1 ? "" : "s"
         }. ${payload.agentsNotified ?? 0} agent${
           payload.agentsNotified === 1 ? " received" : "s received"
-        } a note.`,
+        } a note.${payload.billing ? ` Candidate SMS charge: ${new Intl.NumberFormat(undefined, { style: "currency", currency: payload.billing.currency }).format(payload.billing.amount)}.` : ""} Accountless agent update SMS, if sent, is charged separately.`,
       )
 
       window.setTimeout(() => setBulkSmsNotice(""), 6000)
@@ -5402,7 +5432,8 @@ export default function CandidateRoster({
             >
               {selectedIds.length} candidate
               {selectedIds.length === 1 ? "" : "s"} selected. SMSUG charges the
-              account balance. Maximum 3,000 candidates per send.
+              company SMS credit per segment. SMSUG delivery is Uganda-only.
+              Maximum 3,000 candidates per send.
             </div>
             <label
               className="mt-4 block text-xs font-700"
@@ -5427,10 +5458,38 @@ export default function CandidateRoster({
                   color: "var(--foreground)",
                 }}
               />
-              <span className="mt-1 block text-right font-normal">
-                {bulkSmsMessage.length}/480
+              <span className="mt-1 flex justify-between font-normal">
+                <span>
+                  {bulkSmsSegmentInfo.segments} segment
+                  {bulkSmsSegmentInfo.segments === 1 ? "" : "s"} per recipient
+                  {" · "}
+                  {bulkSmsSegmentInfo.encoding}
+                  {" · "}
+                  {bulkSmsSegmentInfo.remainingCharacters} characters remaining
+                </span>
+                <span>{bulkSmsMessage.length}/480</span>
               </span>
             </label>
+            {bulkSmsSegmentInfo.segments > 1 && (
+              <p className="mt-2 text-xs text-amber-600">
+                This message consumes multiple billable SMS segments per recipient.
+              </p>
+            )}
+            {bulkSmsEstimatedCharge !== null && bulkSmsCurrency && (
+              <p className="mt-2 text-xs" style={{ color: "var(--foreground)" }}>
+                Estimated candidate-message charge:{" "}
+                {new Intl.NumberFormat(undefined, {
+                  style: "currency",
+                  currency: bulkSmsCurrency,
+                }).format(bulkSmsEstimatedCharge)}
+                . Accountless agent update SMS, if sent, is charged separately.
+              </p>
+            )}
+            {bulkSmsPricingError && (
+              <p role="status" className="mt-2 text-xs text-amber-600">
+                SMS pricing could not be loaded: {bulkSmsPricingError}
+              </p>
+            )}
             {bulkSmsError && (
               <p role="alert" className="mt-3 text-sm text-red-500">
                 {bulkSmsError}

@@ -116,6 +116,8 @@ export const PERMISSION_TO_VIEWS: Record<string, Set<View>> = {
   "communications.email.read": new Set(["communications"]),
   "communications.email.send": new Set(["communications"]),
   "communications.sms.send": new Set(["communications"]),
+  "communications.sms.credit.view": new Set(["communications"]),
+  "communications.sms.credit.manage": new Set(["communications"]),
   "communications.whatsapp.read": new Set(["communications"]),
   "communications.whatsapp.send": new Set(["communications"]),
   "communications.whatsapp.manage": new Set(["communications"]),

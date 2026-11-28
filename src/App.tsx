@@ -1416,6 +1416,21 @@ export default function App() {
 
   const [hrReminderError, setHrReminderError] = useState("")
 
+  const handlePersonalDetailsComplete = useCallback(
+    (complete: boolean) => {
+      setHrPersonalDetailsComplete(complete)
+
+      if (
+        complete &&
+        (hrPersonalDetailsComplete !== true || hrProfileUpdateRequired)
+      ) {
+        setHrProfileUpdateRequired(false)
+        setView("dashboard")
+      }
+    },
+    [hrPersonalDetailsComplete, hrProfileUpdateRequired],
+  )
+
   const [authView, setAuthView] =
     useState<"landing" | "login" | "register" | "verify" | "invite" | "reset-password">(
       "login",
@@ -4401,7 +4416,7 @@ export default function App() {
             companyId={session?.companyId ?? ""}
             isOwner={session?.role === "Chairman"}
             forcePersonalDetailsUpdate={hrProfileUpdateRequired}
-            onPersonalDetailsComplete={setHrPersonalDetailsComplete}
+            onPersonalDetailsComplete={handlePersonalDetailsComplete}
           />
         )
 
@@ -4714,15 +4729,7 @@ export default function App() {
         companyId={session.companyId}
         isOwner={false}
         forcePersonalDetailsUpdate={hrProfileUpdateRequired}
-        onPersonalDetailsComplete={(complete) => {
-          setHrPersonalDetailsComplete(complete)
-
-          if (complete) {
-            setHrProfileUpdateRequired(false)
-
-            setView("dashboard")
-          }
-        }}
+        onPersonalDetailsComplete={handlePersonalDetailsComplete}
       />
     )
   }

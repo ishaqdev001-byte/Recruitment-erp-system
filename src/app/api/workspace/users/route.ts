@@ -586,6 +586,8 @@ async function sendWorkspaceInvitationEmail(options: {
 
   actionLink: string
 
+  verificationCode: string
+
   requiresPasswordSetup?: boolean
 }) {
   const transport = nodemailer.createTransport({
@@ -617,13 +619,14 @@ async function sendWorkspaceInvitationEmail(options: {
   const roleName = escapeEmailHtml(options.roleName)
 
   const actionLink = escapeEmailHtml(options.actionLink)
+  const verificationCode = escapeEmailHtml(options.verificationCode)
   const passwordSetupRequired = options.requiresPasswordSetup !== false
   const nextStepText = passwordSetupRequired
-    ? "Accept the invitation and set up your password:"
-    : "Accept the invitation using your existing account. Your current password will not change:"
+    ? "Open the invitation page and enter this verification code to set up your password:"
+    : "Open the invitation page and enter this verification code. Your current password will not change:"
   const nextStepHtml = passwordSetupRequired
-    ? "Accept the invitation and set up your password:"
-    : "Accept the invitation using your existing account. Your current password will not change:"
+    ? "Open the invitation page and enter this verification code to set up your password:"
+    : "Open the invitation page and enter this verification code. Your current password will not change:"
 
   try {
     const delivery = await transport.sendMail({
@@ -633,9 +636,9 @@ async function sendWorkspaceInvitationEmail(options: {
 
       subject: `You are invited to join ${options.companyName}`,
 
-      text: `Hello ${options.fullName},\n\nYou have been invited to join ${options.companyName} as ${options.roleName}.\n\n${nextStepText} ${options.actionLink}\n\nIf you were not expecting this invitation, you can ignore this message.`,
+      text: `Hello ${options.fullName},\n\nYou have been invited to join ${options.companyName} as ${options.roleName}.\n\n${nextStepText}\n\nInvitation code: ${options.verificationCode}\n\nOpen this page to continue: ${options.actionLink}\n\nInvitation codes expire after 30 minutes. If this code expires, ask the company administrator to resend the invitation.\n\nIf you were not expecting this invitation, you can ignore this message.`,
 
-      html: `<h2>You have been invited to join ${companyName}</h2><p>Hello ${fullName},</p><p>You have been invited to join <strong>${companyName}</strong> as <strong>${roleName}</strong>.</p><p>${nextStepHtml}</p><p><a href="${actionLink}">Accept invitation</a></p><p>If you were not expecting this invitation, you can ignore this message.</p>`,
+      html: `<h2>You have been invited to join ${companyName}</h2><p>Hello ${fullName},</p><p>You have been invited to join <strong>${companyName}</strong> as <strong>${roleName}</strong>.</p><p>${nextStepHtml}</p><p style="font-size:24px;font-weight:bold;letter-spacing:4px">${verificationCode}</p><p><a href="${actionLink}">Open invitation</a></p><p>Invitation codes expire after 30 minutes. If this code expires, ask the company administrator to resend the invitation.</p><p>If you were not expecting this invitation, you can ignore this message.</p>`,
     })
 
     if (delivery.accepted.length === 0 || delivery.rejected.length > 0) {
@@ -646,6 +649,16 @@ async function sendWorkspaceInvitationEmail(options: {
   } finally {
     transport.close()
   }
+}
+
+function buildInvitationLandingUrl(
+  redirectUrl: URL,
+  verificationType: "invite" | "magiclink",
+) {
+  const landingUrl = new URL(redirectUrl)
+  landingUrl.searchParams.set("invite_otp", "1")
+  landingUrl.searchParams.set("invite_otp_type", verificationType)
+  return landingUrl
 }
 
 function parseRequestedPermissions(value: unknown): string[] | null {
@@ -1531,6 +1544,11 @@ export async function POST(request: Request) {
 
       redirectUrl.searchParams.set("invitation_id", invitationId)
 
+      const invitationLandingUrl = buildInvitationLandingUrl(
+        redirectUrl,
+        "invite",
+      )
+
       const { data: inviteData, error: inviteError } =
         await admin.auth.admin.generateLink({
           type: "invite",
@@ -1546,13 +1564,13 @@ export async function POST(request: Request) {
               role_name: roleResult.data.name,
             },
 
-            redirectTo: redirectUrl.toString(),
+            redirectTo: invitationLandingUrl.toString(),
           },
         })
 
-      const actionLink = inviteData?.properties?.action_link
+      const verificationCode = inviteData?.properties?.email_otp
 
-      if (inviteError || !inviteData.user || !actionLink) {
+      if (inviteError || !inviteData.user || !verificationCode) {
         return NextResponse.json(
           {
             error: inviteError?.message.toLowerCase().includes("already")
@@ -1726,7 +1744,9 @@ export async function POST(request: Request) {
 
           roleName: roleResult.data.name,
 
-          actionLink,
+          actionLink: invitationLandingUrl.toString(),
+
+          verificationCode,
         })
       } catch (emailError) {
         console.error("Agent invitation email delivery failed", emailError)
@@ -4504,18 +4524,23 @@ export async function POST(request: Request) {
           return true
         }
 
+        const invitationLandingUrl = buildInvitationLandingUrl(
+          redirectUrl,
+          "magiclink",
+        )
+
         const { data: linkData, error: linkError } =
           await admin.auth.admin.generateLink({
             type: "magiclink",
 
             email,
 
-            options: { redirectTo: redirectUrl.toString() },
+            options: { redirectTo: invitationLandingUrl.toString() },
           })
 
-        const actionLink = linkData?.properties?.action_link
+        const verificationCode = linkData?.properties?.email_otp
 
-        if (linkError || !actionLink) {
+        if (linkError || !verificationCode) {
           const rollbackSucceeded = await rollbackRelink()
 
           console.error(
@@ -4549,7 +4574,9 @@ export async function POST(request: Request) {
 
             roleName: targetRoleName ?? "team member",
 
-            actionLink,
+            actionLink: invitationLandingUrl.toString(),
+
+            verificationCode,
           })
         } catch (emailError) {
           const rollbackSucceeded = await rollbackRelink()
@@ -4738,18 +4765,23 @@ export async function POST(request: Request) {
 
         redirectUrl.searchParams.set("invitation_id", invitationId)
 
+        const invitationLandingUrl = buildInvitationLandingUrl(
+          redirectUrl,
+          "magiclink",
+        )
+
         const { data: linkData, error: linkError } =
           await admin.auth.admin.generateLink({
             type: "magiclink",
 
             email: authUser.user.email,
 
-            options: { redirectTo: redirectUrl.toString() },
+            options: { redirectTo: invitationLandingUrl.toString() },
           })
 
-        const actionLink = linkData?.properties?.action_link
+        const verificationCode = linkData?.properties?.email_otp
 
-        if (linkError || !actionLink) {
+        if (linkError || !verificationCode) {
           const { error: cleanupError } = await admin
 
             .from("workspace_invitations")
@@ -4919,7 +4951,9 @@ export async function POST(request: Request) {
 
             roleName: targetRoleName ?? "team member",
 
-            actionLink,
+            actionLink: invitationLandingUrl.toString(),
+
+            verificationCode,
 
             requiresPasswordSetup:
               authUser.user.app_metadata?.workspace_invite_pending === true ||
@@ -6250,6 +6284,11 @@ export async function POST(request: Request) {
 
       redirectUrl.searchParams.set("invitation_id", invitationId)
 
+      const inviteLandingUrl = buildInvitationLandingUrl(
+        redirectUrl,
+        "invite",
+      )
+
       const smtp = getSystemSmtpConfiguration()
 
       if (!smtp)
@@ -6277,12 +6316,14 @@ export async function POST(request: Request) {
               role_name: role.name,
             },
 
-            redirectTo: redirectUrl.toString(),
+            redirectTo: inviteLandingUrl.toString(),
           },
         })
 
       let invitationUser = inviteData?.user ?? null
-      let inviteActionLink = inviteData?.properties?.action_link ?? ""
+      let invitationVerificationCode =
+        inviteData?.properties?.email_otp ?? ""
+      let invitationVerificationType: "invite" | "magiclink" = "invite"
       let existingAccount = false
 
       if (inviteError) {
@@ -6421,11 +6462,18 @@ export async function POST(request: Request) {
           await admin.auth.admin.generateLink({
             type: "magiclink",
             email,
-            options: { redirectTo: redirectUrl.toString() },
+            options: {
+              redirectTo: buildInvitationLandingUrl(
+                redirectUrl,
+                "magiclink",
+              ).toString(),
+            },
           })
 
-        inviteActionLink = existingLinkData?.properties?.action_link ?? ""
-        if (existingLinkError || !inviteActionLink) {
+        invitationVerificationCode =
+          existingLinkData?.properties?.email_otp ?? ""
+        invitationVerificationType = "magiclink"
+        if (existingLinkError || !invitationVerificationCode) {
           console.error(
             "Existing account invitation link generation failed",
             existingLinkError,
@@ -6441,7 +6489,7 @@ export async function POST(request: Request) {
 
         invitationUser = existingUser
         existingAccount = true
-      } else if (!invitationUser || !inviteActionLink) {
+      } else if (!invitationUser || !invitationVerificationCode) {
         if (invitationUser?.id) {
           const { error: cleanupError } = await admin.auth.admin.deleteUser(
             invitationUser.id,
@@ -6460,9 +6508,9 @@ export async function POST(request: Request) {
         )
       }
 
-      if (!invitationUser) {
+      if (!invitationUser || !invitationVerificationCode) {
         return NextResponse.json(
-          { error: "Unable to verify the invited account." },
+          { error: "Unable to generate the invitation verification code." },
           { status: 502, headers: responseHeaders },
         )
       }
@@ -6693,7 +6741,12 @@ export async function POST(request: Request) {
 
           roleName: role.name,
 
-          actionLink: inviteActionLink,
+          actionLink: buildInvitationLandingUrl(
+            redirectUrl,
+            invitationVerificationType,
+          ).toString(),
+
+          verificationCode: invitationVerificationCode,
 
           requiresPasswordSetup:
             !existingAccount ||

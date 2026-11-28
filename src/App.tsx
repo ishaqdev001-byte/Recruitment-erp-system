@@ -1459,6 +1459,15 @@ export default function App() {
 
   const [inviteEmail, setInviteEmail] = useState("")
 
+  const [inviteOtpRequired, setInviteOtpRequired] = useState(false)
+
+  const [inviteOtpEmail, setInviteOtpEmail] = useState("")
+
+  const [inviteOtpCode, setInviteOtpCode] = useState("")
+
+  const [inviteOtpType, setInviteOtpType] =
+    useState<"invite" | "magiclink">("invite")
+
   const [inviteId, setInviteId] = useState("")
 
   const [inviteCompanyId, setInviteCompanyId] = useState("")
@@ -1900,6 +1909,64 @@ export default function App() {
           hashParams.get("access_token") && hashParams.get("refresh_token"),
         )
 
+      const authCallbackErrorCode = hashParams.get("error_code")
+      const authCallbackErrorDescription =
+        hashParams.get("error_description")?.toLowerCase() ?? ""
+      const expiredInviteCallback =
+        inviteLink &&
+        (authCallbackErrorCode === "otp_expired" ||
+          authCallbackErrorDescription.includes("expired"))
+
+      if (expiredInviteCallback) {
+        setAuthView("invite")
+        setInviteRequiresPasswordSetup(false)
+        setInviteError(
+          "This invitation link has expired or was already used. Ask the company Chairman to resend it from Users & Roles. Invitation links are valid for 30 minutes.",
+        )
+
+        const cleanUrl = new URL(window.location.href)
+        cleanUrl.hash = ""
+        window.history.replaceState(
+          null,
+          "",
+          `${cleanUrl.pathname}${cleanUrl.search}`,
+        )
+        setAuthLoading(false)
+        setInviteLoading(false)
+        setInviteVerificationPhase(null)
+        return
+      }
+
+      const inviteOtpMode =
+        inviteLink && currentUrl.searchParams.get("invite_otp") === "1"
+
+      if (inviteOtpMode && !hasAuthCallback) {
+        setAuthView("invite")
+        setInviteOtpRequired(true)
+        setInviteOtpEmail("")
+        setInviteOtpCode("")
+        setInviteOtpType(
+          currentUrl.searchParams.get("invite_otp_type") === "magiclink"
+            ? "magiclink"
+            : "invite",
+        )
+        setInviteId(currentInviteId)
+        setInviteEmail("")
+        setInviteCompanyId("")
+        setInviteCompanyName("")
+        setInviteRoleName("")
+        setInviteRequiresPasswordSetup(true)
+        setInviteError(
+          currentInviteId
+            ? ""
+            : "This invitation link is missing its invitation reference. Ask the company administrator to resend it.",
+        )
+        setInviteLoading(false)
+        setInviteVerificationPhase(null)
+        setAuthLoading(false)
+        return
+      }
+
       if (inviteLink) {
         setAuthView("invite")
         setInviteLoading(true)
@@ -2225,7 +2292,12 @@ export default function App() {
       } catch (error) {
         if (!cancelled && error instanceof Error) {
           if (inviteLink) {
-            setInviteError(error.message)
+            setInviteError(
+              error.name === "AuthSessionMissingError" ||
+                error.message === "Auth session missing!"
+                ? "Your invitation sign-in session is missing or expired. Open the latest invitation email, or ask the company Chairman to resend it from Users & Roles."
+                : error.message,
+            )
             setInviteLoading(false)
             setInviteVerificationPhase(null)
           } else if (recoveryLink)
@@ -3737,7 +3809,12 @@ export default function App() {
 
     setInviteError("")
 
-    if (!inviteCompanyId) {
+    if (!inviteId) {
+      setInviteError("Please wait until this invitation has been verified.")
+      return
+    }
+
+    if (!inviteOtpRequired && !inviteCompanyId) {
       setInviteError(
         inviteLoading
           ? "Please wait while we verify your company assignment."
@@ -3747,8 +3824,13 @@ export default function App() {
       return
     }
 
-    if (!inviteId) {
-      setInviteError("Please wait until this invitation has been verified.")
+    if (
+      inviteOtpRequired &&
+      (!inviteOtpEmail.trim() || !/^\d{6}$/.test(inviteOtpCode.trim()))
+    ) {
+      setInviteError(
+        "Enter the invited email address and the six-digit code from the invitation email.",
+      )
       return
     }
 
@@ -3756,6 +3838,69 @@ export default function App() {
 
     try {
       const supabase = createSupabaseBrowserClient()
+
+      if (inviteOtpRequired) {
+        const email = inviteOtpEmail.trim().toLowerCase()
+        const { data, error } = await supabase.auth.verifyOtp({
+          email,
+          token: inviteOtpCode.trim(),
+          type: inviteOtpType,
+        })
+
+        if (error || !data.user) {
+          throw new Error(
+            error?.message ??
+              "The invitation code could not be verified. Ask the company administrator to resend the invitation.",
+          )
+        }
+
+        const validationResponse = await fetch(
+          `/api/workspace/invitations/${encodeURIComponent(inviteId)}`,
+          { cache: "no-store" },
+        )
+        const validation = (await validationResponse.json()) as {
+          invitationId?: string
+          companyId?: string
+          companyName?: string
+          roleName?: string
+          requiresPasswordSetup?: boolean
+          error?: string
+        }
+
+        if (
+          !validationResponse.ok ||
+          !validation.invitationId ||
+          !validation.companyId
+        ) {
+          throw new Error(
+            validation.error ??
+              "This invitation is invalid or has expired. Ask the company administrator to resend it.",
+          )
+        }
+
+        setInviteOtpRequired(false)
+        setInviteOtpCode("")
+        setInviteOtpEmail("")
+        setInviteEmail(data.user.email ?? email)
+        setInviteId(validation.invitationId)
+        setInviteCompanyId(validation.companyId)
+        setInviteCompanyName(validation.companyName ?? "")
+        setInviteRoleName(validation.roleName ?? "")
+        setInviteRequiresPasswordSetup(
+          validation.requiresPasswordSetup !== false,
+        )
+        setInviteError("")
+
+        const completedUrl = new URL(window.location.href)
+        completedUrl.searchParams.delete("invite_otp")
+        completedUrl.searchParams.delete("invite_otp_type")
+        window.history.replaceState(
+          null,
+          "",
+          `${completedUrl.pathname}${completedUrl.search}`,
+        )
+        return
+      }
 
       const {
         data: { user },
@@ -3873,10 +4018,13 @@ export default function App() {
         `${completedUrl.pathname}${completedUrl.search}`,
       )
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to verify invitation."
       setInviteError(
-        error instanceof Error
-          ? error.message
-          : "Unable to finish your invitation.",
+        inviteOtpRequired &&
+          /expired|invalid|already used/i.test(message)
+          ? "This code is invalid, expired, or already used. Ask the company administrator to resend the invitation."
+          : message,
       )
     } finally {
       setInviteSaving(false)
@@ -4519,6 +4667,11 @@ export default function App() {
         onResetPassword={handlePasswordReset}
         resetPasswordEmail={resetPasswordEmail}
         inviteEmail={inviteEmail}
+        inviteOtpRequired={inviteOtpRequired}
+        inviteOtpEmail={inviteOtpEmail}
+        inviteOtpCode={inviteOtpCode}
+        onInviteOtpEmailChange={setInviteOtpEmail}
+        onInviteOtpCodeChange={setInviteOtpCode}
         inviteId={inviteId}
         inviteCompanyId={inviteCompanyId}
         inviteCompanyName={inviteCompanyName}
@@ -5114,6 +5267,16 @@ function AuthenticationExperience({
 
   inviteEmail,
 
+  inviteOtpRequired,
+
+  inviteOtpEmail,
+
+  inviteOtpCode,
+
+  onInviteOtpEmailChange,
+
+  onInviteOtpCodeChange,
+
   inviteId,
 
   inviteCompanyId,
@@ -5195,6 +5358,16 @@ function AuthenticationExperience({
   onResetPassword: (event: FormEvent) => void
 
   inviteEmail: string
+
+  inviteOtpRequired: boolean
+
+  inviteOtpEmail: string
+
+  inviteOtpCode: string
+
+  onInviteOtpEmailChange: (email: string) => void
+
+  onInviteOtpCodeChange: (code: string) => void
 
   inviteId: string
 
@@ -5364,14 +5537,20 @@ function AuthenticationExperience({
             style={{ color: "var(--foreground)" }}
           >
             {inviteRequiresPasswordSetup
-              ? "Set up your password"
-              : "Accept your invitation"}
+              ? inviteOtpRequired
+                ? "Verify your invitation"
+                : "Set up your password"
+              : inviteOtpRequired
+                ? "Verify your invitation"
+                : "Accept your invitation"}
           </h1>
           <p
             className="mt-2 text-sm"
             style={{ color: "var(--muted-foreground)" }}
           >
-            {inviteRequiresPasswordSetup
+            {inviteOtpRequired
+              ? "Enter the invited email address and six-digit code from your invitation email. This verifies your access before you set up or use your account."
+              : inviteRequiresPasswordSetup
               ? "Your invitation is for this company and position."
               : "This account already has a password. Accepting this invitation will not change it."}
           </p>
@@ -5393,6 +5572,8 @@ function AuthenticationExperience({
                 {inviteCompanyName ||
                   (inviteVerificationPhase === "sign-in"
                     ? "Verifying sign-in…"
+                    : inviteOtpRequired
+                      ? "Shown after verification"
                     : "Verifying invitation…")}
               </dd>
             </div>
@@ -5410,11 +5591,13 @@ function AuthenticationExperience({
                 {inviteRoleName ||
                   (inviteVerificationPhase === "sign-in"
                     ? "Waiting for sign-in…"
+                    : inviteOtpRequired
+                      ? "Shown after verification"
                     : "Verifying invitation…")}
               </dd>
             </div>
           </dl>
-          {inviteEmail && (
+          {inviteEmail && !inviteOtpRequired && (
             <p
               className="mt-4 border px-3 py-2 text-sm"
               style={{
@@ -5427,7 +5610,52 @@ function AuthenticationExperience({
             </p>
           )}
           <form onSubmit={onAcceptInvitation} className="mt-5 space-y-4">
-            {inviteRequiresPasswordSetup && (
+            {inviteOtpRequired && (
+              <>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Invited email address
+                  <input
+                    required
+                    type="email"
+                    autoComplete="email"
+                    disabled={inviteSaving}
+                    value={inviteOtpEmail}
+                    onChange={(event) =>
+                      onInviteOtpEmailChange(event.target.value)
+                    }
+                    className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                    style={formInputStyle}
+                  />
+                </label>
+                <label
+                  className="block text-xs font-700 uppercase tracking-wider"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  Six-digit invitation code
+                  <input
+                    required
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    disabled={inviteSaving}
+                    value={inviteOtpCode}
+                    onChange={(event) =>
+                      onInviteOtpCodeChange(
+                        event.target.value.replace(/\D/g, "").slice(0, 6),
+                      )
+                    }
+                    className="mt-1 w-full border px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none"
+                    style={formInputStyle}
+                  />
+                </label>
+              </>
+            )}
+            {inviteRequiresPasswordSetup && !inviteOtpRequired && (
               <>
                 <label
                   className="block text-xs font-700 uppercase tracking-wider"
@@ -5501,7 +5729,13 @@ function AuthenticationExperience({
             <button
               type="submit"
               disabled={
-                inviteLoading || inviteSaving || !inviteCompanyId || !inviteId
+                inviteLoading ||
+                inviteSaving ||
+                !inviteId ||
+                (inviteOtpRequired
+                  ? !inviteOtpEmail.trim() ||
+                    !/^\d{6}$/.test(inviteOtpCode.trim())
+                  : !inviteCompanyId)
               }
               className="w-full px-4 py-3 text-sm font-600 disabled:cursor-not-allowed disabled:opacity-50"
               style={{
@@ -5513,12 +5747,16 @@ function AuthenticationExperience({
               {inviteLoading
                 ? "Verifying invitation…"
                 : inviteSaving
-                  ? inviteRequiresPasswordSetup
-                    ? "Setting password…"
-                    : "Accepting invitation…"
-                  : inviteRequiresPasswordSetup
-                    ? "Set password and continue"
-                    : "Accept invitation"}
+                  ? inviteOtpRequired
+                    ? "Verifying code…"
+                    : inviteRequiresPasswordSetup
+                      ? "Setting password…"
+                      : "Accepting invitation…"
+                  : inviteOtpRequired
+                    ? "Verify invitation code"
+                    : inviteRequiresPasswordSetup
+                      ? "Set password and continue"
+                      : "Accept invitation"}
             </button>
           </form>
         </div>

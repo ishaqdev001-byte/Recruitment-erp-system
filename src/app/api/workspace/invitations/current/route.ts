@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { getSupabaseServerUser } from "@/lib/server/auth-session";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -9,8 +10,8 @@ const responseHeaders = { "Cache-Control": "private, no-store" };
 export async function GET() {
   try {
     const supabase = await createSupabaseServerClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: "Authentication required." }, { status: 401, headers: responseHeaders });
+    const user = await getSupabaseServerUser(supabase);
+    if (!user) return NextResponse.json({ error: "Your invitation sign-in session is missing or expired. Ask the company administrator to resend the invitation." }, { status: 401, headers: responseHeaders });
 
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

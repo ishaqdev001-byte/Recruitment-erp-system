@@ -131,9 +131,9 @@ After applying the company root folder access migration, run `npm run storage:or
 
 Set `NEXT_PUBLIC_SITE_URL` to the canonical app origin used in invitation emails and company signup verification, and add that origin to the Supabase Auth redirect URL allow list. It defaults to the current request origin when unset.
 
-Set Supabase Auth's email OTP expiry to 1800 seconds (30 minutes) in `supabase/config.toml` and the hosted project. The hosted Auth `mailer_otp_exp` setting applies to all email OTP links, including invitations, signup confirmations, and password recovery. Workspace invitation acceptance records also expire after 30 minutes.
+Set Supabase Auth's email OTP expiry to 1800 seconds (30 minutes) in `supabase/config.toml` and the hosted project. The hosted Auth `mailer_otp_exp` setting applies to all email OTP links, including invitations, signup confirmations, and password recovery. Workspace invitation acceptance records also expire after 30 minutes. App-managed invitations deliver a 6-digit code; invitees enter it on the app page, so automated email link scanners do not consume the one-time token.
 
-User invitations from Users & Roles generate Supabase Auth links and deliver them through server-only `SYSTEM_SMTP_HOST`, `SYSTEM_SMTP_PORT`, `SYSTEM_SMTP_USER`, `SYSTEM_SMTP_PASS`, and optional `SYSTEM_SMTP_FROM`. Allow the canonical app origin and company-slug redirects in Supabase Auth URL Configuration. The hosted Supabase Auth **Invite user** template applies to invitations sent directly from the Supabase Dashboard; app-managed invitations use the company-and-role branded email sent by the application.
+User invitations from Users & Roles generate Supabase Auth verification codes and deliver them through server-only `SYSTEM_SMTP_HOST`, `SYSTEM_SMTP_PORT`, `SYSTEM_SMTP_USER`, `SYSTEM_SMTP_PASS`, and optional `SYSTEM_SMTP_FROM`. The company-and-role branded email links to the app invitation page, where invitees enter the code; the code expires after 30 minutes. Allow the canonical app origin and company-slug redirects in Supabase Auth URL Configuration. The hosted Supabase Auth **Invite user** template applies to invitations sent directly from the Supabase Dashboard; app-managed invitations use the company-and-role branded email sent by the application.
 
 ## Styling
 

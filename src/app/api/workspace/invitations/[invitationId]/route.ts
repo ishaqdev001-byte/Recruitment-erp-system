@@ -2,6 +2,8 @@ import { createClient } from "@supabase/supabase-js"
 
 import { NextResponse } from "next/server"
 
+import { getSupabaseServerUser } from "@/lib/server/auth-session"
+
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
 export const runtime = "nodejs"
@@ -26,14 +28,12 @@ async function getInvitation(invitationId: string) {
 
   const supabase = await createSupabaseServerClient()
 
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser()
+  const user = await getSupabaseServerUser(supabase)
 
-  if (authError || !user)
+  if (!user)
     return {
-      error: "Open the invitation link from your email to continue.",
+      error:
+        "Your invitation sign-in session is missing or expired. Ask the company administrator to resend the invitation.",
       status: 401 as const,
     }
 
@@ -151,14 +151,12 @@ async function getInvitation(invitationId: string) {
 async function getLegacyInvitation() {
   const supabase = await createSupabaseServerClient()
 
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser()
+  const user = await getSupabaseServerUser(supabase)
 
-  if (authError || !user)
+  if (!user)
     return {
-      error: "Open the invitation link from your email to continue.",
+      error:
+        "Your invitation sign-in session is missing or expired. Ask the company administrator to resend the invitation.",
       status: 401 as const,
     }
 

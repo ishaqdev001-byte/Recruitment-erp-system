@@ -8,7 +8,7 @@ import {
   getWorkingDaysInMonth,
 } from "@/lib/payroll/transport-allowance";
 import { loadCompanyWorkCalendar } from "@/lib/server/company-work-calendar";
-import { deleteCompanyDriveFile, uploadCompanyDriveFile } from "@/lib/storage/interserver";
+import { CompanyStorageQuotaExceededError, deleteCompanyDriveFile, uploadCompanyDriveFile } from "@/lib/storage/interserver";
 import {
   getUnpaidLeavePayPeriods,
   leaveCoversDate,
@@ -500,6 +500,9 @@ export async function POST(request: Request) {
   } catch (error) {
     if (payslipPath) {
       try { await deleteCompanyDriveFile(payslipPath); } catch (cleanupError) { console.error("Payslip cleanup failed", cleanupError); }
+    }
+    if (error instanceof CompanyStorageQuotaExceededError) {
+      return NextResponse.json({ error: error.message }, { status: 413, headers });
     }
     console.error("Paycheck recording failed", error);
     const databaseError = error as { code?: string; message?: string };

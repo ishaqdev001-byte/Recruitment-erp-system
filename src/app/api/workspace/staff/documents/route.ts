@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { DocumentInputError, MAX_DOCUMENT_SIZE, validateDocumentUpload } from "@/lib/server/documents";
 import { getLinkedStaffAccess } from "@/lib/server/staff-profile";
-import { deleteCompanyDriveFile, uploadCompanyDriveFile } from "@/lib/storage/interserver";
+import { CompanyStorageQuotaExceededError, deleteCompanyDriveFile, uploadCompanyDriveFile } from "@/lib/storage/interserver";
 
 export const runtime = "nodejs";
 const headers = { "Cache-Control": "private, no-store" };
@@ -60,6 +60,7 @@ export async function POST(request: Request) {
       try { await deleteCompanyDriveFile(storagePath); } catch (cleanupError) { console.error("HR document cleanup failed", cleanupError); }
     }
     if (error instanceof DocumentInputError) return NextResponse.json({ error: error.message }, { status: error.status, headers });
+    if (error instanceof CompanyStorageQuotaExceededError) return NextResponse.json({ error: error.message }, { status: 413, headers });
     console.error("HR document upload failed", error);
     return NextResponse.json({ error: "Personal document upload failed." }, { status: 503, headers });
   }

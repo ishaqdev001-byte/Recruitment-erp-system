@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { DocumentInputError, isUuid, MAX_DOCUMENT_SIZE, storageFolderName, validateDriveFileUpload } from "@/lib/server/documents";
 import { canAccessDriveCategory, drivePermissions, getDriveAccess, getDriveActorNames, type DriveCategory } from "@/lib/server/company-drive";
 import { syncFinanceDrive } from "@/lib/server/company-drive-finance";
-import { deleteCompanyDriveFile, uploadCompanyDriveFile } from "@/lib/storage/interserver";
+import { CompanyStorageQuotaExceededError, deleteCompanyDriveFile, uploadCompanyDriveFile } from "@/lib/storage/interserver";
 
 export const runtime = "nodejs";
 const responseHeaders = { "Cache-Control": "private, no-store" };
@@ -349,6 +349,7 @@ export async function POST(request: Request) {
       }
     }
     if (error instanceof DocumentInputError) return privateJson({ error: error.message }, error.status);
+    if (error instanceof CompanyStorageQuotaExceededError) return privateJson({ error: error.message }, 413);
     console.error("Company drive upload failed", error);
     return privateJson({ error: "Unable to upload and sync this file." }, 503);
   }

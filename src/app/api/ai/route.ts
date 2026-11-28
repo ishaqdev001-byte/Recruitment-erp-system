@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { createDocumentStoragePath } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { deleteInterServerFile, uploadInterServerFile } from "@/lib/storage/interserver";
+import { CompanyStorageQuotaExceededError, deleteInterServerFile, uploadInterServerFile } from "@/lib/storage/interserver";
 
 export const runtime = "nodejs";
 
@@ -286,7 +286,9 @@ export async function POST(request: Request) {
       document,
       fileName,
       saved: !storageError,
-      storageWarning: storageError ? "Draft generated, but it could not be saved in candidate documents." : undefined,
+      storageWarning: storageError instanceof CompanyStorageQuotaExceededError
+        ? storageError.message
+        : storageError ? "Draft generated, but it could not be saved in candidate documents." : undefined,
       usageTokens,
     }, { headers });
   } catch (error) {

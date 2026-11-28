@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { createDocumentStoragePath, DocumentInputError, MAX_DOCUMENT_SIZE, isDocumentType, isUuid, validateDocumentUpload } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { deleteInterServerFile, hasInterServerStorageConfig, uploadInterServerFile } from "@/lib/storage/interserver";
+import { CompanyStorageQuotaExceededError, deleteInterServerFile, hasInterServerStorageConfig, uploadInterServerFile } from "@/lib/storage/interserver";
 
 export const runtime = "nodejs";
 
@@ -164,6 +164,7 @@ export async function POST(request: Request, context: RouteContext<"/api/candida
       }
     }
     if (error instanceof DocumentInputError) return privateJson({ error: error.message }, error.status);
+    if (error instanceof CompanyStorageQuotaExceededError) return privateJson({ error: error.message }, 413);
     const message = error instanceof Error ? error.message : "Unknown storage error";
     console.error("Candidate document upload failed", error);
     if (/InterServer (?:FTP )?authentication failed|InterServer storage configuration|InterServer storage base path|INTERSERVER_STORAGE/i.test(message)) {

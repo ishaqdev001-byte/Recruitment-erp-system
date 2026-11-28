@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createDocumentStoragePath, DocumentInputError, isDocumentType, isUuid, MAX_DOCUMENT_SIZE, safeDownloadName, validateDocumentUpload } from "@/lib/server/documents";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { deleteInterServerFile, downloadInterServerFile, hasInterServerStorageConfig, uploadInterServerFile } from "@/lib/storage/interserver";
+import { CompanyStorageQuotaExceededError, deleteInterServerFile, downloadInterServerFile, hasInterServerStorageConfig, uploadInterServerFile } from "@/lib/storage/interserver";
 
 export const runtime = "nodejs";
 
@@ -183,6 +183,7 @@ export async function PUT(request: Request, context: RouteContext<"/api/candidat
       }
     }
     if (error instanceof DocumentInputError) return privateJson({ error: error.message }, error.status);
+    if (error instanceof CompanyStorageQuotaExceededError) return privateJson({ error: error.message }, 413);
     console.error("Candidate document replacement failed", error);
     return privateJson({ error: "Unable to replace document." }, 503);
   }

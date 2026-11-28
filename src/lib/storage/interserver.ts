@@ -3,6 +3,7 @@ import "server-only";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
+import { createClient } from "@supabase/supabase-js";
 import { Client as FtpClient } from "basic-ftp";
 import { candidateStorageFolderName } from "@/lib/server/documents";
 
@@ -35,6 +36,10 @@ async function deleteFallbackStorageFile(storagePath: string) {
 
 function isStorageConnectionError(message: string) {
   return /InterServer (?:SFTP|FTP) authentication failed|getConnection|All configured authentication methods failed|authentication|ECONNREFUSED|ECONNRESET|timed out/i.test(message);
+}
+
+function isRemotePathNotFoundError(message: string) {
+  return /no such file|not found|does not exist|cannot find the file/i.test(message);
 }
 
 export function hasInterServerStorageConfig() {
@@ -120,6 +125,213 @@ async function withFtp<T>(operation: (client: FtpClient) => Promise<T>): Promise
   }
 }
 
+const COMPANY_STORAGE_ID_PATTERN =
+  /^company\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\//i;
+
+export class CompanyStorageQuotaExceededError extends Error {
+  constructor() {
+    super("This company has reached its allocated storage limit. Contact Recruit Admin to increase the allocation.");
+    this.name = "CompanyStorageQuotaExceededError";
+  }
+}
+
+function getCompanyStorageId(storagePath: string) {
+  const match = COMPANY_STORAGE_ID_PATTERN.exec(storagePath);
+  if (!match) throw new Error("Company storage reference is invalid.");
+  return match[1];
+}
+
+async function reserveCompanyStorageDelta(companyId: string, byteDelta: number) {
+  if (!Number.isSafeInteger(byteDelta)) {
+    throw new Error("Company storage byte count is outside the supported range.");
+  }
+  if (byteDelta === 0) return;
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) {
+    throw new Error("Company storage allocation checks require server Supabase admin configuration.");
+  }
+  const admin = createClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const { data: reserved, error } = await admin.rpc(
+    "recruit_admin_reserve_company_storage",
+    { requested_company_id: companyId, byte_delta: byteDelta },
+  );
+  if (error) {
+    console.error("Company storage allocation check failed", error);
+    throw new Error("Unable to verify this company's storage allocation. Apply the Recruit Admin storage migration and try again.");
+  }
+  if (reserved !== true) throw new CompanyStorageQuotaExceededError();
+}
+
+async function getLocalFileSize(storagePath: string) {
+  try {
+    const info = await fs.stat(fallbackStorageFilePath(storagePath));
+    return info.isFile() ? info.size : 0;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return 0;
+    }
+    throw error;
+  }
+}
+
+async function getExistingStorageFileSize(storagePath: string, remotePath: string) {
+  try {
+    return await withFtp(async (client) => {
+      try {
+        return await client.size(remotePath);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (isRemotePathNotFoundError(message)) return 0;
+        throw error;
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (isStorageConnectionError(message)) {
+      return getLocalFileSize(storagePath);
+    }
+    throw error;
+  }
+}
+
+async function reserveUploadStorage(storagePath: string, remotePath: string, newFileSize: number) {
+  const companyId = getCompanyStorageId(storagePath);
+  const previousFileSize = await getExistingStorageFileSize(storagePath, remotePath);
+  const byteDelta = newFileSize - previousFileSize;
+  await reserveCompanyStorageDelta(companyId, byteDelta);
+  return { companyId, byteDelta };
+}
+
+async function rollbackStorageDelta(companyId: string, byteDelta: number) {
+  try {
+    await reserveCompanyStorageDelta(companyId, -byteDelta);
+  } catch (rollbackError) {
+    console.error("Company storage accounting rollback failed", rollbackError);
+  }
+}
+
+async function scanLocalCompanyStorage(companyId: string) {
+  const companyRoot = fallbackStorageFilePath(`company/${companyId}`);
+  const pendingDirectories = [companyRoot];
+  let bytes = 0;
+  let fileCount = 0;
+
+  while (pendingDirectories.length > 0) {
+    const directory = pendingDirectories.pop()!;
+    let entries;
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        pendingDirectories.push(entryPath);
+      } else if (entry.isFile()) {
+        const info = await fs.stat(entryPath);
+        bytes += info.size;
+        fileCount += 1;
+      }
+    }
+  }
+
+  return { bytes, fileCount };
+}
+
+async function scanRemoteCompanyStorage(client: FtpClient, companyId: string, basePath: string) {
+  const root = path.posix.resolve(basePath, "company", companyId);
+  const allowedRoot = path.posix.resolve(basePath, "company");
+  if (!root.startsWith(`${allowedRoot}/`)) {
+    throw new Error("Company storage path is outside the configured storage root.");
+  }
+
+  const pendingDirectories = [root];
+  let bytes = 0;
+  let fileCount = 0;
+
+  while (pendingDirectories.length > 0) {
+    const directory = pendingDirectories.pop()!;
+    let entries;
+    try {
+      entries = await client.list(directory);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isRemotePathNotFoundError(message) && directory === root) {
+        const parent = path.posix.dirname(root);
+        const companyParent = path.posix.dirname(parent);
+        try {
+          const siblings = await client.list(parent);
+          if (!siblings.some((entry) => entry.name === companyId && entry.isDirectory)) {
+            continue;
+          }
+        } catch (parentError) {
+          const parentMessage = parentError instanceof Error ? parentError.message : String(parentError);
+          if (!isRemotePathNotFoundError(parentMessage)) throw parentError;
+          const topLevelEntries = await client.list(companyParent);
+          if (!topLevelEntries.some((entry) => entry.name === path.posix.basename(parent) && entry.isDirectory)) {
+            continue;
+          }
+          throw error;
+        }
+      }
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (entry.name === "." || entry.name === "..") continue;
+      const entryPath = path.posix.resolve(directory, entry.name);
+      if (!entryPath.startsWith(`${root}/`)) {
+        throw new Error("InterServer returned a path outside the company storage root.");
+      }
+      if (entry.isDirectory) {
+        pendingDirectories.push(entryPath);
+      } else if (entry.isFile) {
+        bytes += entry.size;
+        fileCount += 1;
+      }
+    }
+  }
+
+  return { bytes, fileCount };
+}
+
+export async function measureCompanyStorage(companyIds: string[]) {
+  const uniqueIds = [...new Set(companyIds)];
+  if (uniqueIds.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) {
+    throw new Error("Company storage measurement received an invalid company id.");
+  }
+
+  const measured = new Map(uniqueIds.map((id) => [id, { bytes: 0, fileCount: 0 }]));
+  if (hasInterServerStorageConfig()) {
+    const { basePath } = getStorageConfig();
+    await withFtp(async (client) => {
+      for (const companyId of uniqueIds) {
+        measured.set(companyId, await scanRemoteCompanyStorage(client, companyId, basePath));
+      }
+    });
+  }
+
+  for (const companyId of uniqueIds) {
+    const localUsage = await scanLocalCompanyStorage(companyId);
+    const current = measured.get(companyId)!;
+    measured.set(companyId, {
+      bytes: current.bytes + localUsage.bytes,
+      fileCount: current.fileCount + localUsage.fileCount,
+    });
+  }
+
+  return measured;
+}
+
 async function downloadFtpFile(client: FtpClient, remotePath: string) {
   const chunks: Buffer[] = [];
   const destination = new Writable({
@@ -134,8 +346,9 @@ async function downloadFtpFile(client: FtpClient, remotePath: string) {
 }
 
 export async function uploadInterServerFile(storagePath: string, content: Buffer) {
+  const remotePath = getRemotePath(storagePath);
+  const reservation = await reserveUploadStorage(storagePath, remotePath, content.byteLength);
   try {
-    const remotePath = getRemotePath(storagePath);
     await withFtp(async (client) => {
       await client.ensureDir(path.posix.dirname(remotePath));
       await client.uploadFrom(Readable.from([content]), remotePath);
@@ -144,9 +357,15 @@ export async function uploadInterServerFile(storagePath: string, content: Buffer
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (isStorageConnectionError(message)) {
-      await writeFallbackStorageFile(storagePath, content);
+      try {
+        await writeFallbackStorageFile(storagePath, content);
+      } catch (fallbackError) {
+        await rollbackStorageDelta(reservation.companyId, reservation.byteDelta);
+        throw fallbackError;
+      }
       return;
     }
+    await rollbackStorageDelta(reservation.companyId, reservation.byteDelta);
     throw error;
   }
 }
@@ -166,14 +385,16 @@ export async function downloadInterServerFile(storagePath: string) {
 }
 
 export async function deleteInterServerFile(storagePath: string) {
+  const remotePath = getRemotePath(storagePath);
+  const previousFileSize = await getExistingStorageFileSize(storagePath, remotePath);
+  const companyId = getCompanyStorageId(storagePath);
   try {
-    const remotePath = getRemotePath(storagePath);
     await withFtp(async (client) => {
       try {
         await client.remove(remotePath);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!/not found|no such file|550/i.test(message)) {
+        if (!isRemotePathNotFoundError(message)) {
           throw error;
         }
       }
@@ -182,15 +403,18 @@ export async function deleteInterServerFile(storagePath: string) {
     const message = error instanceof Error ? error.message : "";
     if (isStorageConnectionError(message)) {
       await deleteFallbackStorageFile(storagePath);
+      await reserveCompanyStorageDelta(companyId, -previousFileSize);
       return;
     }
     throw error;
   }
+  await reserveCompanyStorageDelta(companyId, -previousFileSize);
 }
 
 export async function uploadCompanyDriveFile(storagePath: string, content: Buffer) {
+  const remotePath = getCompanyDriveRemotePath(storagePath);
+  const reservation = await reserveUploadStorage(storagePath, remotePath, content.byteLength);
   try {
-    const remotePath = getCompanyDriveRemotePath(storagePath);
     await withFtp(async (client) => {
       await client.ensureDir(path.posix.dirname(remotePath));
       await client.uploadFrom(Readable.from([content]), remotePath);
@@ -199,9 +423,15 @@ export async function uploadCompanyDriveFile(storagePath: string, content: Buffe
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (isStorageConnectionError(message)) {
-      await writeFallbackStorageFile(storagePath, content);
+      try {
+        await writeFallbackStorageFile(storagePath, content);
+      } catch (fallbackError) {
+        await rollbackStorageDelta(reservation.companyId, reservation.byteDelta);
+        throw fallbackError;
+      }
       return;
     }
+    await rollbackStorageDelta(reservation.companyId, reservation.byteDelta);
     throw error;
   }
 }
@@ -221,14 +451,16 @@ export async function downloadCompanyDriveFile(storagePath: string) {
 }
 
 export async function deleteCompanyDriveFile(storagePath: string) {
+  const remotePath = getCompanyDriveRemotePath(storagePath);
+  const previousFileSize = await getExistingStorageFileSize(storagePath, remotePath);
+  const companyId = getCompanyStorageId(storagePath);
   try {
-    const remotePath = getCompanyDriveRemotePath(storagePath);
     await withFtp(async (client) => {
       try {
         await client.remove(remotePath);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!/not found|no such file|550/i.test(message)) {
+        if (!isRemotePathNotFoundError(message)) {
           throw error;
         }
       }
@@ -237,10 +469,12 @@ export async function deleteCompanyDriveFile(storagePath: string) {
     const message = error instanceof Error ? error.message : "";
     if (isStorageConnectionError(message)) {
       await deleteFallbackStorageFile(storagePath);
+      await reserveCompanyStorageDelta(companyId, -previousFileSize);
       return;
     }
     throw error;
   }
+  await reserveCompanyStorageDelta(companyId, -previousFileSize);
 }
 
 export async function ensureInterServerCandidateFolders(companyId: string, candidateId: string, candidateName: string) {
